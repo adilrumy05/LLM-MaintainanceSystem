@@ -2,38 +2,38 @@
 import { useState } from 'react';
 import { useRole } from '../../hooks/useRole';
 
-const STEPS = [
-  {
-    title: 'Power-down & Lockout/Tagout',
-    desc: 'Isolate Unit #403 from power. Apply LOTO tags per OSHA 29 CFR 1910.147.',
-    simplDesc: 'Turn off and lock out the machine so it cannot start. Put a tag on it.',
-    tag: 'CRITICAL SAFETY', tagClass: 'badge-red', difficulty: 'high',
-  },
-  {
-    title: 'Positioning & Support',
-    desc: 'Position maintenance platform. Secure engine on support cradle.',
-    simplDesc: 'Set up the work platform and make sure the engine is held steady.',
-    tag: 'STANDARD', tagClass: 'badge-gray', difficulty: 'low',
-  },
-  {
-    title: 'Panel Fastener Removal',
-    desc: 'Remove 12× M8 hex bolts (torque: 25 Nm). Store in labelled tray.',
-    simplDesc: 'Remove the 12 bolts holding the panel. Keep them in a labelled tray so nothing gets lost.',
-    tag: null, tagClass: null, difficulty: 'medium',
-  },
-  {
-    title: 'Cover Lift-off & Inspection',
-    desc: 'Lift cover with 2-person assist. Inspect seals and gaskets for wear.',
-    simplDesc: 'Lift the cover with another person helping. Look for any damaged seals.',
-    tag: null, tagClass: null, difficulty: 'medium',
-  },
-];
+// const STEPS = [
+//   {
+//     title: 'Power-down & Lockout/Tagout',
+//     desc: 'Isolate Unit #403 from power. Apply LOTO tags per OSHA 29 CFR 1910.147.',
+//     simplDesc: 'Turn off and lock out the machine so it cannot start. Put a tag on it.',
+//     tag: 'CRITICAL SAFETY', tagClass: 'badge-red', difficulty: 'high',
+//   },
+//   {
+//     title: 'Positioning & Support',
+//     desc: 'Position maintenance platform. Secure engine on support cradle.',
+//     simplDesc: 'Set up the work platform and make sure the engine is held steady.',
+//     tag: 'STANDARD', tagClass: 'badge-gray', difficulty: 'low',
+//   },
+//   {
+//     title: 'Panel Fastener Removal',
+//     desc: 'Remove 12× M8 hex bolts (torque: 25 Nm). Store in labelled tray.',
+//     simplDesc: 'Remove the 12 bolts holding the panel. Keep them in a labelled tray so nothing gets lost.',
+//     tag: null, tagClass: null, difficulty: 'medium',
+//   },
+//   {
+//     title: 'Cover Lift-off & Inspection',
+//     desc: 'Lift cover with 2-person assist. Inspect seals and gaskets for wear.',
+//     simplDesc: 'Lift the cover with another person helping. Look for any damaged seals.',
+//     tag: null, tagClass: null, difficulty: 'medium',
+//   },
+// ];
 
-const DIFFICULTY_BADGE = {
-  high:   { label: 'High difficulty',   cls: 'badge-red'    },
-  medium: { label: 'Medium difficulty', cls: 'badge-yellow' },
-  low:    { label: 'Low difficulty',    cls: 'badge-green'  },
-};
+// const DIFFICULTY_BADGE = {
+//   high:   { label: 'High difficulty',   cls: 'badge-red'    },
+//   medium: { label: 'Medium difficulty', cls: 'badge-yellow' },
+//   low:    { label: 'Low difficulty',    cls: 'badge-green'  },
+// };
 
 export default function RecommendationReview({ recommendation, onApprove, onReject }) {
   const [showReasoning, setShowReasoning] = useState(false);
@@ -92,26 +92,25 @@ export default function RecommendationReview({ recommendation, onApprove, onReje
       )}
 
       {/* Steps */}
-      <div className="card-label">Disassembly Procedure</div>
-      {STEPS.map((step, i) => (
+      <div className="card-label">Generated Procedure</div>
+      
+      {/* {STEPS.map((step, i) => (
         <div key={i} className="step-item">
           <div className="step-num">{i + 1}</div>
           <div className="step-content">
             <div className="step-title">{step.title}</div>
-
-            {/* Beginners see simplified description */}
             <div className="step-desc">
               {isJunior ? step.simplDesc : step.desc}
             </div>
 
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '5px' }}>
-              {/* Safety tag */}
+
               {step.tag && (
                 <span className={`badge ${step.tagClass}`} style={{ display: 'inline-flex' }}>
                   {step.tagClass === 'badge-red' ? '⚠ ' : ''}{step.tag}
                 </span>
               )}
-              {/* Difficulty badge — intermediate and beginner only */}
+
               {needsGuidance && (
                 <span className={`badge ${DIFFICULTY_BADGE[step.difficulty].cls}`} style={{ display: 'inline-flex' }}>
                   {DIFFICULTY_BADGE[step.difficulty].label}
@@ -120,10 +119,56 @@ export default function RecommendationReview({ recommendation, onApprove, onReje
             </div>
           </div>
         </div>
-      ))}
+      ))} */}
+      
+      <div style={{ marginBottom: '16px' }}>
+        {(recommendation.text || '')
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line)
+          .map((line, i) => {
+            const cleanLine = line.replace(/\*\*/g, '');
+
+            const isHeading =
+              cleanLine.endsWith(':') ||
+              cleanLine.startsWith('Task:') ||
+              cleanLine.startsWith('Safety First') ||
+              cleanLine.startsWith('Preparation') ||
+              cleanLine.startsWith('The Inspection Process') ||
+              cleanLine.startsWith('Documentation and Next Steps');
+
+            const isBullet =
+              cleanLine.startsWith('*') ||
+              cleanLine.startsWith('-') ||
+              /^\d+\./.test(cleanLine);
+
+            return (
+              <div
+                key={i}
+                style={{
+                  marginBottom: '10px',
+                  paddingLeft: isBullet ? '10px' : '0',
+                  borderLeft: isBullet ? '2px solid rgba(172,114,235,0.25)' : 'none',
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: isHeading ? '13px' : '12px',
+                    fontWeight: isHeading ? '700' : '400',
+                    color: isHeading ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    lineHeight: '1.7',
+                  }}
+                >
+                  {cleanLine}
+                </div>
+              </div>
+            );
+          })}
+      </div>
 
       <div className="section-divider" />
 
+      
       {/* Sources — all roles */}
       <div className="card-label">📎 Source Citations</div>
       {recommendation.sources.map((src, i) => (

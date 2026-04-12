@@ -4,6 +4,7 @@ import QueryInput from '../components/dashboard/QueryInput';
 import AgentStatus from '../components/agents/AgentStatus';
 import RecommendationReview from '../components/dashboard/RecommendationReview';
 import { useRole } from '../hooks/useRole';
+import { submitQuery } from '../services/api';
 
 function VoicePulse({ listening }) {
   return (
@@ -129,23 +130,47 @@ export default function Dashboard() {
     setListening(false);
   };
 
+  // const handleSubmitQuery = async (queryText) => {
+  //   saveToHistory(queryText);
+  //   setQuery(queryText);
+  //   setRecommendation(null);
+  //   setIsProcessing(true);
+  //   await new Promise(r => setTimeout(r, 4000));
+  //   const result = {
+  //     text: 'Step-by-step disassembly procedure generated.',
+  //     sources: [
+  //       { title: 'FedEx Manual X-1000',   page: 42, section: '5.2' },
+  //       { title: 'OSHA 29 CFR 1910.147',  page: 12, section: '3.1' },
+  //     ],
+  //     reasoning: 'Retrieved from engine manual; safety validation passed.',
+  //   };
+  //   setRecommendation(result);
+  //   setIsProcessing(false);
+  //   speak('Recommendation ready. Please review and approve or reject.');
+  // };
   const handleSubmitQuery = async (queryText) => {
-    saveToHistory(queryText);
-    setQuery(queryText);
-    setRecommendation(null);
-    setIsProcessing(true);
-    await new Promise(r => setTimeout(r, 4000));
-    const result = {
-      text: 'Step-by-step disassembly procedure generated.',
-      sources: [
-        { title: 'FedEx Manual X-1000',   page: 42, section: '5.2' },
-        { title: 'OSHA 29 CFR 1910.147',  page: 12, section: '3.1' },
-      ],
-      reasoning: 'Retrieved from engine manual; safety validation passed.',
-    };
-    setRecommendation(result);
-    setIsProcessing(false);
-    speak('Recommendation ready. Please review and approve or reject.');
+    try {
+      saveToHistory(queryText);
+      setQuery(queryText);
+      setRecommendation(null);
+      setIsProcessing(true);
+
+      const result = await submitQuery(queryText);
+      console.log("Backend result:", result);
+
+      setRecommendation(result);
+      speak('Recommendation ready. Please review and approve or reject.');
+    } catch (error) {
+      console.error('Query failed:', error);
+      // alert('Failed to get response from backend.');
+      const message =
+        error?.response?.data?.details?.error?.message ||
+        error?.response?.data?.error ||
+        'Failed to get response from backend.';
+      alert(message);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleApprove = () => {
