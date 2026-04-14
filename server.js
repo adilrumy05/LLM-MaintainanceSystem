@@ -149,32 +149,81 @@
 //   console.log(`Backend running at http://localhost:${PORT}`);
 // });
 
-// OPENROUTER API INTEGRATION
+// OPENROUTER API INTEGRATION with RAG
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const fs = require('fs');
+const path = require('path');
 
 dotenv.config();
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
+const RETRIEVAL_SERVICE_URL = process.env.RETRIEVAL_SERVICE_URL || 'http://localhost:8001';
+const PROMPT_FILE_PATH = path.join(__dirname, 'latest_prompt.txt');
+
 app.post('/api/query', async (req, res) => {
   try {
-    const { query } = req.body;
+    const {
+      query,
+      docGroup,
+      classification,
+      category1,
+      category2,
+      topK = 5
+    } = req.body;
 
     if (!query || !query.trim()) {
       return res.status(400).json({ error: 'Query is required.' });
     }
 
     const apiKey = process.env.OPENROUTER_API_KEY;
-
     if (!apiKey) {
       return res.status(500).json({ error: 'Missing OPENROUTER_API_KEY in environment variables.' });
     }
 
+    // ── Step 1: Get RAG context from Python retrieval service ─────────────────
+    console.log(`Calling retrieval service for: "${query}"`);
+    const retrievalResponse = await fetch(`${RETRIEVAL_SERVICE_URL}/retrieve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question: query,
+        document_group_id: docGroup || null,
+        classification: classification || null,
+        category_level_1: category1 || null,
+        category_level_2: category2 || null,
+        top_k: topK,
+      }),
+    });
+
+    if (!retrievalResponse.ok) {
+      const errText = await retrievalResponse.text();
+      console.error('Retrieval service error:', retrievalResponse.status, errText);
+      return res.status(503).json({
+        error: 'Retrieval service unavailable',
+        details: errText,
+      });
+    }
+
+    const retrievalData = await retrievalResponse.json();
+    const finalPrompt = retrievalData.prompt;
+
+    console.log(`Retrieved ${retrievalData.context_blocks.length} context blocks`);
+
+    // ── Save latest prompt to file (overwrites) ──────────────────────────────
+    fs.writeFile(PROMPT_FILE_PATH, finalPrompt, 'utf8', (err) => {
+      if (err) {
+        console.error('Failed to write latest prompt file:', err);
+      } else {
+        console.log(`Latest prompt saved to ${PROMPT_FILE_PATH}`);
+      }
+    });
+
+    // ── Step 2: Send enriched prompt to OpenRouter ────────────────────────────
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -182,17 +231,12 @@ app.post('/api/query', async (req, res) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        // model: 'google/gemma-4-31b-it:free',
-        // model: 'openai/gpt-4o-mini',
-        model: 'openai/gpt-oss-20b:free',
+        // model: 'openai/gpt-oss-20b:free',   // or any model you prefer
+        model: 'google/gemma-4-26b-a4b-it:free',  
         messages: [
           {
-            role: 'system',
-            content: 'You are a maintenance assistant. Give a clear, safe, step-by-step response to technical inspection and maintenance tasks.'
-          },
-          {
-            role: 'user',
-            content: query
+            role: "user",
+            content: finalPrompt
           }
         ]
       }),
@@ -200,25 +244,25 @@ app.post('/api/query', async (req, res) => {
 
     const data = await response.json();
     console.log('OpenRouter status:', response.status);
-    console.log('OpenRouter raw response:', JSON.stringify(data, null, 2));
 
     if (!response.ok) {
+      console.error('OpenRouter error:', JSON.stringify(data, null, 2));
       return res.status(response.status).json({
         error: 'OpenRouter API request failed',
         details: data,
       });
     }
 
-    const text =
-      data?.choices?.[0]?.message?.content || 'No response text returned.';
+    const text = data?.choices?.[0]?.message?.content || 'No response text returned.';
 
+    // ── Step 3: Return LLM answer + sources from retrieval ───────────────────
     res.json({
       text,
-      sources: [
-        { title: 'OpenRouter API Response', page: '-', section: '-' }
-      ],
-      reasoning: 'Generated via OpenRouter API',
+      sources: retrievalData.sources,   // Real document sources
+      context_blocks: retrievalData.context_blocks, // Optional debug info
+      reasoning: 'Generated via OpenRouter with RAG context',
     });
+
   } catch (error) {
     console.error('Server error:', error);
     res.status(500).json({
@@ -228,6 +272,7 @@ app.post('/api/query', async (req, res) => {
   }
 });
 
+// Keep the approve / reject / health endpoints unchanged
 app.post('/api/approve', (req, res) => {
   console.log('Approved:', req.body);
   res.json({ status: 'approved' });
@@ -242,7 +287,8 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-const PORT = 8000;
+const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
-  console.log(`Backend running at http://localhost:${PORT}`);
+  console.log(`Node backend running at http://localhost:${PORT}`);
+  console.log(`Expecting retrieval service at ${RETRIEVAL_SERVICE_URL}`);
 });

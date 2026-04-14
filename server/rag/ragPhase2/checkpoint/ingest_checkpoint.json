@@ -1,0 +1,24 @@
+{
+  "last_updated": "2026-04-10T00:37:05.002384",
+  "done": {
+    "panasonic_aircon_CS-E12QD3EAW|CS-E12QD3EAW_SM_PAPAMY1406071CE": {
+      "document_group_id": "panasonic_aircon_CS-E12QD3EAW",
+      "filename": "CS-E12QD3EAW_SM_PAPAMY1406071CE",
+      "classification": "MANUAL",
+      "n_parents": 69,
+      "n_children": 125,
+      "n_tables": 0,
+      "timestamp": "2026-04-10T00:35:56.835005"
+    },
+    "panasonic_aircon_CS-PW24KE|CS-PW24KE_service_manual_PHAAM0810057C2": {
+      "document_group_id": "panasonic_aircon_CS-PW24KE",
+      "filename": "CS-PW24KE_service_manual_PHAAM0810057C2",
+      "classification": "MANUAL",
+      "n_parents": 36,
+      "n_children": 64,
+      "n_tables": 0,
+      "timestamp": "2026-04-10T00:37:05.002384"
+    }
+  },
+  "failed": {}
+}

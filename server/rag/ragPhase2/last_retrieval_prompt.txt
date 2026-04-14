@@ -1,0 +1,34 @@
+You are a helpful technical assistant. Answer the question using ONLY the context provided below. If the context does not contain enough information, say so. Cite page numbers where relevant.
+
+=== CONTEXT ===
+[TOC section matched: 20. After completion of installation or service, confirm there is no leakage or refrigerant gas. It may generate toxic gas when the refrigerant contacts with fire]
+
+[1] [parent] page 90 — panasonic_aircon_CS-E12QD3EAW / CS-E12QD3EAW_SM_PAPAMY1406071CE
+(context parent)
+# 18.3 Piping Length Correction Factor
+
+The characteristic of the unit has to be corrected in accordance with the piping length.
+
+# 18.3.1 Cooling Capacity
+
+# 18.3.2 Heating Capacity
+
+Note: The graphs show the factor after added right amount of additional refrigerant.
+---
+
+[2] [child] page 90 — panasonic_aircon_CS-E12QD3EAW / CS-E12QD3EAW_SM_PAPAMY1406071CE
+score: 0.630
+# 18.3 Piping Length Correction Factor
+
+The characteristic of the unit has to be corrected in accordance with the piping length.
+
+# 18.3.1 Cooling Capacity
+
+# 18.3.2 Heating Capacity
+
+Note: The graphs show the factor after added right amount of additional refrigerant.
+---
+=== QUESTION ===
+What is the cooling capacity?
+
+=== ANSWER ===
