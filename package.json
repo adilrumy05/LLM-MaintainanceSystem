@@ -12,9 +12,13 @@
     "electron:build": "npm run build && electron-builder"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/cli": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
     "axios": "^1.13.6",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "pdf-lib": "^1.17.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.2"

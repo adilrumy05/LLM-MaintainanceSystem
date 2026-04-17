@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">FedEx Copilot</string>
+    <string name="title_activity_main">FedEx Copilot</string>
+    <string name="package_name">com.fedex.copilot</string>
+    <string name="custom_url_scheme">com.fedex.copilot</string>
+</resources>
