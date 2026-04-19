@@ -1,12 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  FlatList,
-  Alert,
-  SafeAreaView,
+  View, Text, StyleSheet, TouchableOpacity,
+  FlatList, Alert, SafeAreaView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
@@ -14,14 +9,14 @@ import { db } from "./firebaseConfig";
 import { useRouter } from "expo-router";
 
 const ROLE_CONFIG = {
-  admin:               { label: "Admin",        color: "#AFA9EC", bg: "#26215C" },
-  worker_expert:       { label: "Expert",       color: "#5DCAA5", bg: "#085041" },
-  worker_intermediate: { label: "Intermediate", color: "#EF9F27", bg: "#412402" },
-  worker_beginner:     { label: "Beginner",     color: "#85B7EB", bg: "#042C53" },
+  admin:               { label: "Admin",        color: "#7c3aed", bg: "#ede9fe" },
+  worker_expert:       { label: "Expert",       color: "#7c3aed", bg: "#ede9fe" },
+  worker_intermediate: { label: "Intermediate", color: "#7c3aed", bg: "#ede9fe" },
+  worker_beginner:     { label: "Beginner",     color: "#7c3aed", bg: "#ede9fe" },
 };
 
 function getRoleStyle(role_id) {
-  return ROLE_CONFIG[role_id] || { label: role_id || "Unknown", color: "#888780", bg: "#2C2C2A" };
+  return ROLE_CONFIG[role_id] || { label: role_id || "Unknown", color: "#7c3aed", bg: "#ede9fe" };
 }
 
 function getInitials(name) {
@@ -30,13 +25,6 @@ function getInitials(name) {
   return parts.length >= 2
     ? (parts[0][0] + parts[1][0]).toUpperCase()
     : name.slice(0, 2).toUpperCase();
-}
-
-const AVATAR_COLORS = ["#26215C", "#085041", "#412402", "#042C53", "#3B6D11"];
-function getAvatarColor(id) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash += id.charCodeAt(i);
-  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 }
 
 export default function UserManagementScreen() {
@@ -56,9 +44,7 @@ export default function UserManagementScreen() {
     }
   };
 
-  useEffect(() => {
-    fetchUsers();
-  }, []);
+  useEffect(() => { fetchUsers(); }, []);
 
   const deleteUser = (id, name) => {
     Alert.alert(
@@ -67,13 +53,12 @@ export default function UserManagementScreen() {
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Delete",
-          style: "destructive",
+          text: "Delete", style: "destructive",
           onPress: async () => {
             try {
               await deleteDoc(doc(db, "Users", id));
               fetchUsers();
-            } catch (error) {
+            } catch {
               Alert.alert("Error", "Could not delete user.");
             }
           },
@@ -85,12 +70,11 @@ export default function UserManagementScreen() {
   const renderUser = ({ item }) => {
     const role = getRoleStyle(item.role_id);
     const initials = getInitials(item.username);
-    const avatarBg = getAvatarColor(item.id);
 
     return (
       <View style={styles.userCard}>
         <View style={styles.cardTop}>
-          <View style={[styles.avatar, { backgroundColor: avatarBg }]}>
+          <View style={styles.avatar}>
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <View style={styles.userInfo}>
@@ -110,7 +94,7 @@ export default function UserManagementScreen() {
             onPress={() => router.push({ pathname: '/userform', params: { user: JSON.stringify(item) } })}
             activeOpacity={0.75}
           >
-            <Ionicons name="pencil-outline" size={14} color="#AFA9EC" />
+            <Ionicons name="pencil-outline" size={14} color="#7c3aed" />
             <Text style={styles.editBtnText}>Edit</Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -118,7 +102,7 @@ export default function UserManagementScreen() {
             onPress={() => deleteUser(item.id, item.username)}
             activeOpacity={0.75}
           >
-            <Ionicons name="trash-outline" size={14} color="#ff6b6b" />
+            <Ionicons name="trash-outline" size={14} color="#f87171" />
             <Text style={styles.deleteBtnText}>Delete</Text>
           </TouchableOpacity>
         </View>
@@ -130,9 +114,10 @@ export default function UserManagementScreen() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
 
+        {/* Top Bar */}
         <View style={styles.topBar}>
           <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Ionicons name="chevron-back" size={18} color="#AFA9EC" />
+            <Ionicons name="chevron-back" size={18} color="#7c3aed" />
           </TouchableOpacity>
           <View style={styles.topCenter}>
             <Text style={styles.topLabel}>MANAGEMENT</Text>
@@ -143,6 +128,7 @@ export default function UserManagementScreen() {
           </View>
         </View>
 
+        {/* List */}
         <FlatList
           data={users}
           keyExtractor={(item) => item.id}
@@ -151,12 +137,13 @@ export default function UserManagementScreen() {
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
-              <Ionicons name="people-outline" size={40} color="#3a3a50" />
+              <Ionicons name="people-outline" size={40} color="#c4b5fd" />
               <Text style={styles.emptyText}>No users found</Text>
             </View>
           }
         />
 
+        {/* Add Button */}
         <TouchableOpacity
           style={styles.addBtn}
           onPress={() => router.push('/userform')}
@@ -172,33 +159,33 @@ export default function UserManagementScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea:       { flex: 1, backgroundColor: "#13131a" },
-  container:      { flex: 1, backgroundColor: "#13131a", paddingHorizontal: 16, paddingTop: 16 },
-  topBar:         { flexDirection: "row", alignItems: "center", marginBottom: 20 },
-  backBtn:        { width: 36, height: 36, borderRadius: 10, backgroundColor: "#1c1c26", borderWidth: 0.5, borderColor: "#2a2a38", alignItems: "center", justifyContent: "center" },
-  topCenter:      { flex: 1, alignItems: "center" },
-  topLabel:       { fontSize: 10, color: "#6b6b80", letterSpacing: 1.2 },
-  topTitle:       { fontSize: 18, fontWeight: "500", color: "#ffffff" },
-  countBadge:     { width: 36, height: 36, borderRadius: 10, backgroundColor: "#26215C", alignItems: "center", justifyContent: "center" },
-  countText:      { fontSize: 13, fontWeight: "500", color: "#AFA9EC" },
-  listContent:    { paddingBottom: 100 },
-  userCard:       { backgroundColor: "#1c1c26", borderRadius: 16, padding: 14, marginBottom: 10, borderWidth: 0.5, borderColor: "#2a2a38" },
-  cardTop:        { flexDirection: "row", alignItems: "center", gap: 12 },
-  avatar:         { width: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  avatarText:     { color: "#fff", fontSize: 14, fontWeight: "500" },
-  userInfo:       { flex: 1 },
-  userName:       { fontSize: 14, fontWeight: "500", color: "#e8e8f0", marginBottom: 2 },
-  userEmail:      { fontSize: 11, color: "#6b6b80" },
-  roleBadge:      { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 },
-  roleText:       { fontSize: 10, fontWeight: "500" },
-  divider:        { height: 0.5, backgroundColor: "#2a2a38", marginVertical: 12 },
-  actions:        { flexDirection: "row", gap: 8 },
-  editBtn:        { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#26215C", borderRadius: 8, paddingVertical: 8 },
-  editBtnText:    { color: "#AFA9EC", fontSize: 12, fontWeight: "500" },
-  deleteBtn:      { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#2a1a1a", borderRadius: 8, paddingVertical: 8, borderWidth: 0.5, borderColor: "#3a1a1a" },
-  deleteBtnText:  { color: "#ff6b6b", fontSize: 12, fontWeight: "500" },
-  emptyWrap:      { alignItems: "center", marginTop: 60, gap: 12 },
-  emptyText:      { color: "#3a3a50", fontSize: 14 },
-  addBtn:         { position: "absolute", bottom: 24, left: 16, right: 16, backgroundColor: "#534AB7", borderRadius: 14, height: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
-  addBtnText:     { color: "#ffffff", fontSize: 15, fontWeight: "600" },
+  safeArea:      { flex: 1, backgroundColor: "#f5f3ff" },
+  container:     { flex: 1, backgroundColor: "#f5f3ff", paddingHorizontal: 16, paddingTop: 16 },
+  topBar:        { flexDirection: "row", alignItems: "center", marginBottom: 20 },
+  backBtn:       { width: 36, height: 36, borderRadius: 10, backgroundColor: "#ede9fe", borderWidth: 1, borderColor: "#ddd6fe", alignItems: "center", justifyContent: "center" },
+  topCenter:     { flex: 1, alignItems: "center" },
+  topLabel:      { fontSize: 10, color: "#7c3aed", letterSpacing: 1.2, fontWeight: "700" },
+  topTitle:      { fontSize: 18, fontWeight: "700", color: "#1e1b4b" },
+  countBadge:    { width: 36, height: 36, borderRadius: 10, backgroundColor: "#7c3aed", alignItems: "center", justifyContent: "center" },
+  countText:     { fontSize: 13, fontWeight: "700", color: "#ffffff" },
+  listContent:   { paddingBottom: 100 },
+  userCard:      { backgroundColor: "#ffffff", borderRadius: 16, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: "#ede9fe", elevation: 1 },
+  cardTop:       { flexDirection: "row", alignItems: "center", gap: 12 },
+  avatar:        { width: 42, height: 42, borderRadius: 12, backgroundColor: "#7c3aed", alignItems: "center", justifyContent: "center" },
+  avatarText:    { color: "#fff", fontSize: 14, fontWeight: "700" },
+  userInfo:      { flex: 1 },
+  userName:      { fontSize: 14, fontWeight: "600", color: "#1e1b4b", marginBottom: 2 },
+  userEmail:     { fontSize: 11, color: "#7c3aed" },
+  roleBadge:     { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
+  roleText:      { fontSize: 11, fontWeight: "600" },
+  divider:       { height: 1, backgroundColor: "#ede9fe", marginVertical: 12 },
+  actions:       { flexDirection: "row", gap: 8 },
+  editBtn:       { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#ede9fe", borderRadius: 10, paddingVertical: 10 },
+  editBtnText:   { color: "#7c3aed", fontSize: 13, fontWeight: "600" },
+  deleteBtn:     { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#fef2f2", borderRadius: 10, paddingVertical: 10, borderWidth: 1, borderColor: "#fecaca" },
+  deleteBtnText: { color: "#f87171", fontSize: 13, fontWeight: "600" },
+  emptyWrap:     { alignItems: "center", marginTop: 60, gap: 12 },
+  emptyText:     { color: "#c4b5fd", fontSize: 14 },
+  addBtn:        { position: "absolute", bottom: 24, left: 16, right: 16, backgroundColor: "#7c3aed", borderRadius: 14, height: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  addBtnText:    { color: "#ffffff", fontSize: 15, fontWeight: "600" },
 });
