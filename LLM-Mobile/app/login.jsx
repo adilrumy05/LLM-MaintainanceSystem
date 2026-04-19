@@ -4,12 +4,15 @@ import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { C } from './theme';
+import { auth, db } from './firebaseConfig';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
-const USERS = {
-  'admin':        { password: '123', role: 'admin' },
-  'expert':       { password: '123', role: 'expert' },
-  'intermediate': { password: '123', role: 'intermediate' },
-  'beginner':     { password: '123', role: 'beginner' },
+const ROLE_MAP = {
+  'admin':               'admin',
+  'worker_expert':       'expert',
+  'worker_intermediate': 'intermediate',
+  'worker_beginner':     'beginner',
 };
 
 export default function Login() {
@@ -21,17 +24,21 @@ export default function Login() {
   const handleSubmit = async () => {
     if (!email || !password) return;
     setLoading(true);
-    await new Promise(r => setTimeout(r, 600));
-
-    const user = USERS[email.toLowerCase().trim()];
-    if (!user || user.password !== password) {
-      setLoading(false);
-      Alert.alert('Login Failed', 'Invalid username or password.');
-      return;
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const uid = userCredential.user.uid;
+      const userDoc = await getDoc(doc(db, 'Users', uid));
+      if (userDoc.exists()) {
+        const rawRole = userDoc.data().role_id;
+        const role = ROLE_MAP[rawRole] || 'beginner';
+        await AsyncStorage.setItem('user', JSON.stringify({ email: email.trim(), role }));
+        router.replace(role === 'admin' ? '/adminnew' : '/dashboard');
+      } else {
+        Alert.alert('Error', 'User not found in database.');
+      }
+    } catch (error) {
+      Alert.alert('Login Failed', error.message);
     }
-
-    await AsyncStorage.setItem('user', JSON.stringify({ email, role: user.role }));
-    router.replace(user.role === 'admin' ? '/admin' : '/dashboard');
     setLoading(false);
   };
 
@@ -44,14 +51,15 @@ export default function Login() {
         <Text style={s.title}>Group 6 Copilot</Text>
         <Text style={s.subtitle}>Maintenance Disassembly Assistant{'\n'}Sign in to continue</Text>
         <View style={s.card}>
-          <Text style={s.label}>USERNAME</Text>
+          <Text style={s.label}>EMAIL</Text>
           <TextInput
             style={s.input}
-            placeholder="admin / expert / intermediate / beginner"
+            placeholder="your@email.com"
             placeholderTextColor={C.textMuted}
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
+            keyboardType="email-address"
           />
           <Text style={s.label}>PASSWORD</Text>
           <TextInput
