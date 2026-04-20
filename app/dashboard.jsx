@@ -7,9 +7,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { C } from './theme';
+import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { submitQuery } from '../services/api';
+import * as ImagePicker from 'expo-image-picker';
 
 export default function Dashboard() {
   const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
@@ -18,6 +19,8 @@ export default function Dashboard() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSidebar, setShowSidebar]   = useState(false);
   const [loaded, setLoaded]             = useState(false);
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const cancelRef                       = useRef(false);
   const flatListRef                     = useRef(null);
   const router                          = useRouter();
   const { role, isJunior, isIntermediate } = useRole();
@@ -26,7 +29,6 @@ export default function Dashboard() {
   const messages   = activeChat?.messages || [];
   const isEmpty    = messages.length === 0;
 
-  // Load chats for this role from AsyncStorage
   useEffect(() => {
     if (!role) return;
     const loadChats = async () => {
@@ -47,7 +49,6 @@ export default function Dashboard() {
     loadChats();
   }, [role]);
 
-  // Save chats for this role to AsyncStorage whenever chats change
   useEffect(() => {
     if (!role || !loaded) return;
     AsyncStorage.setItem(`chats_${role}`, JSON.stringify(chats)).catch(e =>
@@ -55,8 +56,8 @@ export default function Dashboard() {
     );
   }, [chats, role, loaded]);
 
-  const addMessage = (from, text) => {
-    const msg = { id: Date.now().toString() + Math.random(), from, text };
+  const addMessage = (from, text, sources = []) => {
+    const msg = { id: Date.now().toString() + Math.random(), from, text, sources };
     setChats(prev => prev.map(c =>
       c.id === activeChatId
         ? { ...c, messages: [...c.messages, msg] }
@@ -69,6 +70,7 @@ export default function Dashboard() {
     const queryText = (overrideText || inputValue).trim();
     if (!queryText || isProcessing) return;
     setInputValue('');
+    cancelRef.current = false;
 
     const raw = await AsyncStorage.getItem('queryHistory');
     const existing = JSON.parse(raw || '[]');
@@ -81,13 +83,42 @@ export default function Dashboard() {
 
     try {
       const result = await submitQuery(queryText);
-      addMessage('bot', result.text);
+      if (!cancelRef.current) {
+        addMessage('bot', result.text, result.sources || []);
+      }
     } catch {
-      await new Promise(r => setTimeout(r, 2000));
-      addMessage('bot', '1. Power down the system.\n2. Remove the four bolts on the engine cover using a 10mm socket.\n3. Carefully lift the cover straight up.');
+      if (!cancelRef.current) {
+        await new Promise(r => setTimeout(r, 2000));
+        addMessage('bot', '1. Power down the system.\n2. Remove the four bolts on the engine cover using a 10mm socket.\n3. Carefully lift the cover straight up.');
+      }
     }
 
     setIsProcessing(false);
+  };
+
+  const handleCancel = () => {
+    cancelRef.current = true;
+    setIsProcessing(false);
+    addMessage('bot', '⚠️ Response stopped. You can continue the conversation.');
+  };
+
+  const handleFilePick = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Please allow access to your files.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      allowsEditing: false,
+      quality: 1,
+    });
+    if (!result.canceled && result.assets?.[0]) {
+      const file = result.assets[0];
+      setUploadedFile(file);
+      addMessage('user', `📎 Attached: ${file.fileName || 'file'}`);
+      addMessage('bot', `✅ File received! You can now ask questions about it.`);
+    }
   };
 
   const handleNewChat = () => {
@@ -96,6 +127,7 @@ export default function Dashboard() {
     setActiveChatId(newId);
     setShowSidebar(false);
     setInputValue('');
+    setUploadedFile(null);
   };
 
   const handleSwitchChat = (id) => {
@@ -148,6 +180,16 @@ export default function Dashboard() {
         )}
         <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBot]}>
           <Text style={[s.bubbleText, isUser && s.bubbleTextUser]}>{item.text}</Text>
+          {item.sources?.length > 0 && (
+            <View style={s.sourcesBox}>
+              <Text style={s.sourcesLabel}>📎 SOURCES</Text>
+              {item.sources.map((src, i) => (
+                <Text key={i} style={s.sourceItem}>
+                  • {src.title}{src.page ? ` — p.${src.page}` : ''}{src.section ? ` §${src.section}` : ''}
+                </Text>
+              ))}
+            </View>
+          )}
         </View>
         {isUser && (
           <View style={s.avatarUser}>
@@ -161,7 +203,7 @@ export default function Dashboard() {
   return (
     <SafeAreaView style={s.safe}>
 
-      {/* Sidebar overlay */}
+      {/* Sidebar */}
       {showSidebar && (
         <View style={s.overlay}>
           <TouchableOpacity style={s.overlayBg} onPress={() => setShowSidebar(false)} />
@@ -224,8 +266,8 @@ export default function Dashboard() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        {/* Welcome screen */}
         {isEmpty ? (
           <View style={s.welcomeContainer}>
             <View style={s.logoCircle}>
@@ -247,7 +289,7 @@ export default function Dashboard() {
           />
         )}
 
-        {/* Typing indicator */}
+        {/* Typing indicator with cancel */}
         {isProcessing && (
           <View style={s.typingRow}>
             <View style={s.avatar}>
@@ -257,11 +299,27 @@ export default function Dashboard() {
               <ActivityIndicator size="small" color={C.primary} />
               <Text style={s.typingText}>Analyzing...</Text>
             </View>
+            <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
+              <Text style={s.cancelText}>✕ Stop</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* File badge */}
+        {uploadedFile && (
+          <View style={s.fileBadge}>
+            <Text style={s.fileBadgeText} numberOfLines={1}>📎 {uploadedFile.fileName || 'Attached file'}</Text>
+            <TouchableOpacity onPress={() => setUploadedFile(null)}>
+              <Text style={s.fileBadgeRemove}>✕</Text>
+            </TouchableOpacity>
           </View>
         )}
 
         {/* Input bar */}
         <View style={s.inputBar}>
+          <TouchableOpacity style={s.iconBtn} onPress={handleFilePick} disabled={isProcessing}>
+            <Text style={s.iconBtnText}>📎</Text>
+          </TouchableOpacity>
           <TextInput
             style={s.input}
             placeholder="Ask a maintenance question..."
@@ -309,7 +367,7 @@ const s = StyleSheet.create({
   newChatIcon:        { fontSize: 20 },
   banner:             { borderWidth: 1, padding: 10 },
   bannerText:         { fontSize: 11, lineHeight: 16, paddingHorizontal: 16 },
-  welcomeContainer:   { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 40 },
+  welcomeContainer:   { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 0 },
   logoCircle:         { width: 80, height: 80, borderRadius: 40, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   logoIcon:           { fontSize: 36 },
   welcomeTitle:       { color: C.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
@@ -327,10 +385,20 @@ const s = StyleSheet.create({
   bubbleBot:          { backgroundColor: C.card, borderWidth: 1, borderColor: C.cardBorder, borderBottomLeftRadius: 4 },
   bubbleText:         { color: C.text, fontSize: 14, lineHeight: 20 },
   bubbleTextUser:     { color: '#fff' },
-  typingRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8 },
-  typingBubble:       { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 16, padding: 10, gap: 8, borderWidth: 1, borderColor: C.cardBorder },
+  sourcesBox:         { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: '#ddd6fe' },
+  sourcesLabel:       { fontSize: 9, fontWeight: '700', color: '#7c3aed', letterSpacing: 1, marginBottom: 4 },
+  sourceItem:         { fontSize: 11, color: '#6d28d9', marginBottom: 2 },
+  typingRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+  typingBubble:       { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 16, padding: 10, gap: 8, borderWidth: 1, borderColor: C.cardBorder, flex: 1 },
   typingText:         { color: C.textMuted, fontSize: 12 },
-  inputBar:           { flexDirection: 'row', alignItems: 'flex-end', padding: 12, borderTopWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card, gap: 8 },
+  cancelBtn:          { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  cancelText:         { color: '#f87171', fontSize: 12, fontWeight: '700' },
+  fileBadge:          { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 6, backgroundColor: C.primaryLight, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6, gap: 8 },
+  fileBadgeText:      { color: C.primary, fontSize: 12, flex: 1, fontWeight: '600' },
+  fileBadgeRemove:    { color: C.primary, fontSize: 14, fontWeight: '700' },
+  inputBar:           { flexDirection: 'row', alignItems: 'flex-end', padding: 10, paddingBottom: 10, borderTopWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card, gap: 6 },
+  iconBtn:            { width: 36, height: 36, borderRadius: 18, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  iconBtnText:        { fontSize: 16 },
   input:              { flex: 1, backgroundColor: C.inputBg, color: C.text, borderRadius: 20, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 120 },
   sendBtn:            { backgroundColor: C.primary, borderRadius: 20, paddingHorizontal: 18, paddingVertical: 10, marginBottom: 2 },
   sendBtnDisabled:    { backgroundColor: '#c4b5fd' },
