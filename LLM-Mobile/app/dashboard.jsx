@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   FlatList, ActivityIndicator, Alert, StyleSheet,
-  KeyboardAvoidingView, Platform
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -41,9 +41,7 @@ export default function Dashboard() {
             setActiveChatId(saved[0].id);
           }
         }
-      } catch (e) {
-        console.log('Error loading chats:', e);
-      }
+      } catch (e) { console.log('Error loading chats:', e); }
       setLoaded(true);
     };
     loadChats();
@@ -59,9 +57,7 @@ export default function Dashboard() {
   const addMessage = (from, text, sources = []) => {
     const msg = { id: Date.now().toString() + Math.random(), from, text, sources };
     setChats(prev => prev.map(c =>
-      c.id === activeChatId
-        ? { ...c, messages: [...c.messages, msg] }
-        : c
+      c.id === activeChatId ? { ...c, messages: [...c.messages, msg] } : c
     ));
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
   };
@@ -83,16 +79,13 @@ export default function Dashboard() {
 
     try {
       const result = await submitQuery(queryText);
-      if (!cancelRef.current) {
-        addMessage('bot', result.text, result.sources || []);
-      }
+      if (!cancelRef.current) addMessage('bot', result.text, result.sources || []);
     } catch {
       if (!cancelRef.current) {
         await new Promise(r => setTimeout(r, 2000));
         addMessage('bot', '1. Power down the system.\n2. Remove the four bolts on the engine cover using a 10mm socket.\n3. Carefully lift the cover straight up.');
       }
     }
-
     setIsProcessing(false);
   };
 
@@ -104,15 +97,8 @@ export default function Dashboard() {
 
   const handleFilePick = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'Please allow access to your files.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
-      allowsEditing: false,
-      quality: 1,
-    });
+    if (status !== 'granted') { Alert.alert('Permission Denied', 'Please allow access to your files.'); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: false, quality: 1 });
     if (!result.canceled && result.assets?.[0]) {
       const file = result.assets[0];
       setUploadedFile(file);
@@ -130,15 +116,11 @@ export default function Dashboard() {
     setUploadedFile(null);
   };
 
-  const handleSwitchChat = (id) => {
-    setActiveChatId(id);
-    setShowSidebar(false);
-  };
+  const handleSwitchChat = (id) => { setActiveChatId(id); setShowSidebar(false); };
 
   const handleDeleteChat = (id) => {
     if (chats.length === 1) {
-      const fresh = [{ id: '1', messages: [] }];
-      setChats(fresh);
+      setChats([{ id: '1', messages: [] }]);
       setActiveChatId('1');
       setShowSidebar(false);
       return;
@@ -152,15 +134,13 @@ export default function Dashboard() {
   const handleLogout = () => {
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout', style: 'destructive', onPress: async () => {
-          await AsyncStorage.removeItem('user');
-          setChats([{ id: '1', messages: [] }]);
-          setActiveChatId('1');
-          setShowSidebar(false);
-          router.replace('/login');
-        }
-      },
+      { text: 'Logout', style: 'destructive', onPress: async () => {
+        await AsyncStorage.removeItem('user');
+        setChats([{ id: '1', messages: [] }]);
+        setActiveChatId('1');
+        setShowSidebar(false);
+        router.replace('/login');
+      }},
     ]);
   };
 
@@ -173,11 +153,7 @@ export default function Dashboard() {
     const isUser = item.from === 'user';
     return (
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
-        {!isUser && (
-          <View style={s.avatar}>
-            <Text style={s.avatarText}>⚡</Text>
-          </View>
-        )}
+        {!isUser && <View style={s.avatar}><Text style={s.avatarText}>⚡</Text></View>}
         <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBot]}>
           <Text style={[s.bubbleText, isUser && s.bubbleTextUser]}>{item.text}</Text>
           {item.sources?.length > 0 && (
@@ -191,157 +167,148 @@ export default function Dashboard() {
             </View>
           )}
         </View>
-        {isUser && (
-          <View style={s.avatarUser}>
-            <Text style={s.avatarText}>👤</Text>
-          </View>
-        )}
+        {isUser && <View style={s.avatarUser}><Text style={s.avatarText}>👤</Text></View>}
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={s.safe}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
+    >
+      <SafeAreaView style={s.safe}>
 
-      {/* Sidebar */}
-      {showSidebar && (
-        <View style={s.overlay}>
-          <TouchableOpacity style={s.overlayBg} onPress={() => setShowSidebar(false)} />
-          <View style={s.sidebar}>
-            <Text style={s.sidebarTitle}>Chats</Text>
-            <TouchableOpacity style={s.newChatBtn} onPress={handleNewChat}>
-              <Text style={s.newChatText}>+ New Chat</Text>
-            </TouchableOpacity>
+        {/* Sidebar */}
+        {showSidebar && (
+          <View style={s.overlay}>
+            <TouchableOpacity style={s.overlayBg} onPress={() => setShowSidebar(false)} />
+            <View style={s.sidebar}>
+              <Text style={s.sidebarTitle}>Chats</Text>
+              <TouchableOpacity style={s.newChatBtn} onPress={handleNewChat}>
+                <Text style={s.newChatText}>+ New Chat</Text>
+              </TouchableOpacity>
+              <FlatList
+                data={[...chats].reverse()}
+                keyExtractor={c => c.id}
+                renderItem={({ item }) => (
+                  <View style={[s.chatItem, item.id === activeChatId && s.chatItemActive]}>
+                    <TouchableOpacity style={{ flex: 1 }} onPress={() => handleSwitchChat(item.id)}>
+                      <Text style={s.chatItemText} numberOfLines={1}>{getChatTitle(item)}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleDeleteChat(item.id)}>
+                      <Text style={s.deleteText}>🗑</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              />
+              <TouchableOpacity style={s.logoutSidebar} onPress={handleLogout}>
+                <Text style={s.logoutSidebarText}>Logout</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Header */}
+        <View style={s.header}>
+          <TouchableOpacity style={s.menuBtn} onPress={() => setShowSidebar(true)}>
+            <Text style={s.menuIcon}>☰</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={s.headerTitle}>Maintenance Copilot</Text>
+            <Text style={s.headerRole}>{role?.toUpperCase()} ACCESS</Text>
+          </View>
+          <TouchableOpacity style={s.newChatIconBtn} onPress={handleNewChat}>
+            <Text style={s.newChatIcon}>✏️</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Role banners */}
+        {isJunior && (
+          <View style={[s.banner, { borderColor: C.blue, backgroundColor: C.blueBg }]}>
+            <Text style={[s.bannerText, { color: C.blue }]}>💡 Always consult a senior technician before performing any work.</Text>
+          </View>
+        )}
+        {isIntermediate && (
+          <View style={[s.banner, { borderColor: '#fcd34d', backgroundColor: '#fef9c3' }]}>
+            <Text style={[s.bannerText, { color: '#d97706' }]}>⚠️ Escalate HIGH difficulty tasks to an Expert Technician.</Text>
+          </View>
+        )}
+
+        {/* Message area */}
+        <View style={s.messageArea}>
+          {isEmpty ? (
+            <View style={s.welcomeContainer}>
+              <View style={s.logoCircle}><Text style={s.logoIcon}>⚡</Text></View>
+              <Text style={s.welcomeTitle}>Maintenance Copilot</Text>
+              <Text style={s.welcomeSub}>Your AI-powered maintenance assistant.</Text>
+              <Text style={s.welcomeSub2}>Ask me anything about equipment, procedures, or safety.</Text>
+            </View>
+          ) : (
             <FlatList
-              data={[...chats].reverse()}
-              keyExtractor={c => c.id}
-              renderItem={({ item }) => (
-                <View style={[s.chatItem, item.id === activeChatId && s.chatItemActive]}>
-                  <TouchableOpacity style={{ flex: 1 }} onPress={() => handleSwitchChat(item.id)}>
-                    <Text style={s.chatItemText} numberOfLines={1}>{getChatTitle(item)}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => handleDeleteChat(item.id)}>
-                    <Text style={s.deleteText}>🗑</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={item => item.id}
+              renderItem={renderMessage}
+              contentContainerStyle={s.msgList}
+              onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
             />
-            <TouchableOpacity style={s.logoutSidebar} onPress={handleLogout}>
-              <Text style={s.logoutSidebarText}>Logout</Text>
+          )}
+
+          {/* Typing indicator */}
+          {isProcessing && (
+            <View style={s.typingRow}>
+              <View style={s.avatar}><Text style={s.avatarText}>⚡</Text></View>
+              <View style={s.typingBubble}>
+                <ActivityIndicator size="small" color={C.primary} />
+                <Text style={s.typingText}>Analyzing...</Text>
+              </View>
+              <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
+                <Text style={s.cancelText}>✕ Stop</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        {/* Input area */}
+        <View style={s.inputWrapper}>
+          {uploadedFile && (
+            <View style={s.fileBadge}>
+              <Text style={s.fileBadgeText} numberOfLines={1}>📎 {uploadedFile.fileName || 'Attached file'}</Text>
+              <TouchableOpacity onPress={() => setUploadedFile(null)}>
+                <Text style={s.fileBadgeRemove}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          <View style={s.inputBar}>
+            <TouchableOpacity style={s.iconBtn} onPress={handleFilePick} disabled={isProcessing}>
+              <Text style={s.iconBtnText}>📎</Text>
+            </TouchableOpacity>
+            <TextInput
+              style={s.input}
+              placeholder="Ask a maintenance question..."
+              placeholderTextColor={C.textMuted}
+              value={inputValue}
+              onChangeText={setInputValue}
+              multiline
+              editable={!isProcessing}
+              onFocus={() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 300)}
+            />
+            <TouchableOpacity
+              style={[s.sendBtn, (!inputValue.trim() || isProcessing) && s.sendBtnDisabled]}
+              onPress={() => handleSend()}
+              disabled={!inputValue.trim() || isProcessing}
+            >
+              <Text style={s.sendBtnText}>Send</Text>
             </TouchableOpacity>
           </View>
         </View>
-      )}
 
-      {/* Header */}
-      <View style={s.header}>
-        <TouchableOpacity style={s.menuBtn} onPress={() => setShowSidebar(true)}>
-          <Text style={s.menuIcon}>☰</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={s.headerTitle}>Maintenance Copilot</Text>
-          <Text style={s.headerRole}>{role?.toUpperCase()} ACCESS</Text>
-        </View>
-        <TouchableOpacity style={s.newChatIconBtn} onPress={handleNewChat}>
-          <Text style={s.newChatIcon}>✏️</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Role banners */}
-      {isJunior && (
-        <View style={[s.banner, { borderColor: C.blue, backgroundColor: C.blueBg }]}>
-          <Text style={[s.bannerText, { color: C.blue }]}>
-            💡 Always consult a senior technician before performing any work.
-          </Text>
-        </View>
-      )}
-      {isIntermediate && (
-        <View style={[s.banner, { borderColor: '#fcd34d', backgroundColor: '#fef9c3' }]}>
-          <Text style={[s.bannerText, { color: '#d97706' }]}>
-            ⚠️ Escalate HIGH difficulty tasks to an Expert Technician.
-          </Text>
-        </View>
-      )}
-
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 80}
-      >
-        {/* Welcome screen */}
-        {isEmpty ? (
-          <View style={s.welcomeContainer}>
-            <View style={s.logoCircle}>
-              <Text style={s.logoIcon}>⚡</Text>
-            </View>
-            <Text style={s.welcomeTitle}>Maintenance Copilot</Text>
-            <Text style={s.welcomeSub}>Your AI-powered maintenance assistant.</Text>
-            <Text style={s.welcomeSub2}>Ask me anything about equipment, procedures, or safety.</Text>
-          </View>
-        ) : (
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={item => item.id}
-            renderItem={renderMessage}
-            contentContainerStyle={s.msgList}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-            keyboardShouldPersistTaps="handled"
-          />
-        )}
-
-        {/* Typing indicator with cancel */}
-        {isProcessing && (
-          <View style={s.typingRow}>
-            <View style={s.avatar}>
-              <Text style={s.avatarText}>⚡</Text>
-            </View>
-            <View style={s.typingBubble}>
-              <ActivityIndicator size="small" color={C.primary} />
-              <Text style={s.typingText}>Analyzing...</Text>
-            </View>
-            <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
-              <Text style={s.cancelText}>✕ Stop</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* File badge */}
-        {uploadedFile && (
-          <View style={s.fileBadge}>
-            <Text style={s.fileBadgeText} numberOfLines={1}>📎 {uploadedFile.fileName || 'Attached file'}</Text>
-            <TouchableOpacity onPress={() => setUploadedFile(null)}>
-              <Text style={s.fileBadgeRemove}>✕</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Input bar */}
-        <View style={s.inputBar}>
-          <TouchableOpacity style={s.iconBtn} onPress={handleFilePick} disabled={isProcessing}>
-            <Text style={s.iconBtnText}>📎</Text>
-          </TouchableOpacity>
-          <TextInput
-            style={s.input}
-            placeholder="Ask a maintenance question..."
-            placeholderTextColor={C.textMuted}
-            value={inputValue}
-            onChangeText={setInputValue}
-            multiline
-            editable={!isProcessing}
-            onFocus={() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 300)}
-          />
-          <TouchableOpacity
-            style={[s.sendBtn, (!inputValue.trim() || isProcessing) && s.sendBtnDisabled]}
-            onPress={() => handleSend()}
-            disabled={!inputValue.trim() || isProcessing}
-          >
-            <Text style={s.sendBtnText}>Send</Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-
-    </SafeAreaView>
+      </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -368,7 +335,8 @@ const s = StyleSheet.create({
   newChatIcon:        { fontSize: 20 },
   banner:             { borderWidth: 1, padding: 10 },
   bannerText:         { fontSize: 11, lineHeight: 16, paddingHorizontal: 16 },
-  welcomeContainer:   { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 80 },
+  messageArea:        { flex: 1 },
+  welcomeContainer:   { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
   logoCircle:         { width: 80, height: 80, borderRadius: 40, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   logoIcon:           { fontSize: 36 },
   welcomeTitle:       { color: C.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
@@ -394,10 +362,11 @@ const s = StyleSheet.create({
   typingText:         { color: C.textMuted, fontSize: 12 },
   cancelBtn:          { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   cancelText:         { color: '#f87171', fontSize: 12, fontWeight: '700' },
-  fileBadge:          { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 6, backgroundColor: C.primaryLight, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6, gap: 8 },
+  inputWrapper:       { backgroundColor: C.card, borderTopWidth: 1, borderColor: C.cardBorder },
+  fileBadge:          { flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginTop: 8, backgroundColor: C.primaryLight, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6, gap: 8 },
   fileBadgeText:      { color: C.primary, fontSize: 12, flex: 1, fontWeight: '600' },
   fileBadgeRemove:    { color: C.primary, fontSize: 14, fontWeight: '700' },
-  inputBar:           { flexDirection: 'row', alignItems: 'flex-end', padding: 10, marginHorizontal: 16, marginBottom: 16, borderWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card, gap: 6, borderRadius: 20 },
+  inputBar:           { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
   iconBtn:            { width: 36, height: 36, borderRadius: 18, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   iconBtnText:        { fontSize: 16 },
   input:              { flex: 1, backgroundColor: C.inputBg, color: C.text, borderRadius: 20, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 120 },

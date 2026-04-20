@@ -2,7 +2,7 @@ import { Tabs, usePathname } from 'expo-router';
 import { Text, View, ActivityIndicator } from 'react-native';
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { C } from './theme';
+import { C } from '../theme';
 
 export default function Layout() {
   const [role, setRole]       = useState(null);
@@ -35,8 +35,13 @@ export default function Layout() {
       tabBarActiveTintColor:   C.tabActive,
       tabBarInactiveTintColor: C.tabInactive,
     }}>
-      <Tabs.Screen name="index"     options={{ href: null }} />
-      <Tabs.Screen name="login"     options={{ href: null }} />
+      <Tabs.Screen name="index"          options={{ href: null }} />
+      <Tabs.Screen name="login"          options={{ href: null }} />
+      <Tabs.Screen name="beginner"       options={{ href: null }} />
+      <Tabs.Screen name="expert"         options={{ href: null }} />
+      <Tabs.Screen name="intermediate"   options={{ href: null }} />
+      <Tabs.Screen name="usermanagement" options={{ href: null }} />
+      <Tabs.Screen name="userform"       options={{ href: null }} />
       <Tabs.Screen name="dashboard" options={{
         title: 'Dashboard',
         tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>⚡</Text>
