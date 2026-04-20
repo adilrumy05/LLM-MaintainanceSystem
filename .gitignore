@@ -37,3 +37,6 @@ latest_prompt.txt
 
 __pycache__/
 *.pyc
+
+checkpoint/
+models/

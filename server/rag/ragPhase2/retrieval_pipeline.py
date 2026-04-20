@@ -303,6 +303,15 @@ class RetrievalPipeline:
         # ── 2. Search children + tables ───────────────────────────────────
         raw_hits: List[Dict] = []
 
+        print(f"Retrieving with filters:\n"
+            f"  document_group_id={document_group_id}\n"
+            f"  filename={filename}\n"
+            f"  classification={classification}\n"
+            f"  category_level_1={category_level_1}\n"
+            f"  category_level_2={category_level_2}\n"
+            f"  chunk_types={types}\n"
+            f"  top_k={k}  score_min={min_score}")
+
         for chunk_type in types:
             hits = vs.search(
                 query=question,

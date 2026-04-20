@@ -303,6 +303,66 @@ class VectorStore:
             {"id": r.id, "score": r.score, "payload": r.payload or {}}
             for r in response.points
         ]
+    
+    def get_known_filters(self):
+        seen_groups = set()
+        seen_files = set()
+        offset = None
+
+        while True:
+            result = self.client.scroll(
+                collection_name=self.collection,
+                limit=1000,
+                offset=offset,
+                with_payload=["document_group_id", "filename"],
+                with_vectors=False,
+            )
+
+            if isinstance(result, tuple):
+                batch, offset = result
+            else:
+                batch = result.points
+                offset = result.next_page_offset
+
+            for p in batch:
+                payload = p.payload or {}
+                if payload.get("document_group_id"):
+                    seen_groups.add(payload["document_group_id"])
+                if payload.get("filename"):
+                    seen_files.add(payload["filename"])
+
+            if not offset:
+                break
+
+        return {
+            "document_group_ids": sorted(seen_groups),
+            "filenames": sorted(seen_files),
+        }
+    
+    def extract_filters(query: str, known_groups=None, known_files=None):
+        known_groups = known_groups or []
+        known_files = known_files or []
+
+        q = query.lower()
+        matched_group = None
+        matched_file = None
+
+        for g in known_groups:
+            if g.lower() in q:
+                matched_group = g
+                logger.info(f"✅ Matched document_group_id: {matched_group}")
+                break
+
+        for f in known_files:
+            if f.lower() in q:
+                matched_file = f
+                logger.info(f"📄 Matched filename: {matched_file}")
+                break
+
+        if not matched_group and not matched_file:
+            logger.info("⚠️ No filters matched in query")
+
+        return {"matched_group": matched_group, "matched_file": matched_file}
 
     def fetch_parent(self, parent_id: str) -> Optional[Dict[str, Any]]:
         """

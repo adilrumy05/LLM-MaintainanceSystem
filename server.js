@@ -156,6 +156,7 @@ const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
 
+
 dotenv.config();
 
 const app = express();
@@ -185,6 +186,16 @@ app.post('/api/query', async (req, res) => {
       return res.status(500).json({ error: 'Missing OPENROUTER_API_KEY in environment variables.' });
     }
 
+    // ✅ GET FILTERS INSIDE REQUEST
+    const known = await getKnownFilters();
+
+    // ✅ extract from query
+    const { matchedGroup, matchedFile } = extractFilters(
+      query,
+      known.document_group_ids,
+      known.filenames
+    );
+
     // ── Step 1: Get RAG context from Python retrieval service ─────────────────
     console.log(`Calling retrieval service for: "${query}"`);
     const retrievalResponse = await fetch(`${RETRIEVAL_SERVICE_URL}/retrieve`, {
@@ -192,7 +203,8 @@ app.post('/api/query', async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         question: query,
-        document_group_id: docGroup || null,
+        document_group_id: matchedGroup || docGroup || null,
+        filename: matchedFile || null,
         classification: classification || null,
         category_level_1: category1 || null,
         category_level_2: category2 || null,
@@ -231,8 +243,8 @@ app.post('/api/query', async (req, res) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        // model: 'openai/gpt-oss-20b:free',   // or any model you prefer
-        model: 'google/gemma-4-26b-a4b-it:free',  
+        model: 'openai/gpt-oss-20b:free',   // or any model you prefer
+        // model: 'google/gemma-4-26b-a4b-it:free',  
         messages: [
           {
             role: "user",
@@ -292,3 +304,33 @@ app.listen(PORT, () => {
   console.log(`Node backend running at http://localhost:${PORT}`);
   console.log(`Expecting retrieval service at ${RETRIEVAL_SERVICE_URL}`);
 });
+
+function extractFilters(query, knownGroups = [], knownFiles = []) {
+  const q = query.toLowerCase();
+
+  let matchedGroup = null;
+  let matchedFile = null;
+
+  for (const g of knownGroups) {
+    if (q.includes(g.toLowerCase())) {
+      matchedGroup = g;
+      break;
+    }
+  }
+
+  for (const f of knownFiles) {
+    if (q.includes(f.toLowerCase())) {
+      matchedFile = f;
+      break;
+    }
+  }
+
+  return { matchedGroup, matchedFile };
+}
+
+async function getKnownFilters() {
+  const res = await fetch(`${RETRIEVAL_SERVICE_URL}/filters`);
+  if (!res.ok) return { document_group_ids: [], filenames: [] };
+  return await res.json();
+}
+
