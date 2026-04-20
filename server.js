@@ -182,9 +182,10 @@ app.post('/api/query', async (req, res) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        // model: 'google/gemma-4-31b-it:free',
-        // model: 'openai/gpt-4o-mini',
-        model: 'openai/gpt-oss-20b:free',
+        // model: 'openai/gpt-oss-20b:free',
+        // model: 'google/gemma-3-27b-it:free',
+        // model: 'meta-llama/llama-3.3-70b-instruct:free',
+        model: 'nvidia/nemotron-3-super-120b-a12b:free',
         messages: [
           {
             role: 'system',
