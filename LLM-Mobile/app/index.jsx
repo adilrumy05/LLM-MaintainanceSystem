@@ -2,7 +2,7 @@ import { Redirect } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { C } from './theme';
+import { C } from '../theme';
 
 export default function Index() {
   const [user, setUser]       = useState(null);
@@ -24,3 +24,5 @@ export default function Index() {
   if (!user) return <Redirect href="/login" />;
   return <Redirect href={user.role === 'admin' ? '/admin' : '/dashboard'} />;
 }
+
+

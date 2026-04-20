@@ -5,7 +5,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
-import { db } from "./firebaseConfig";
+import { db } from "../firebaseConfig";
 import { useRouter } from "expo-router";
 
 const ROLE_CONFIG = {
@@ -123,8 +123,13 @@ export default function UserManagementScreen() {
             <Text style={styles.topLabel}>MANAGEMENT</Text>
             <Text style={styles.topTitle}>Users</Text>
           </View>
-          <View style={styles.countBadge}>
-            <Text style={styles.countText}>{users.length}</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity style={styles.refreshBtn} onPress={fetchUsers}>
+              <Ionicons name="refresh-outline" size={18} color="#7c3aed" />
+            </TouchableOpacity>
+            <View style={styles.countBadge}>
+              <Text style={styles.countText}>{users.length}</Text>
+            </View>
           </View>
         </View>
 
@@ -163,6 +168,7 @@ const styles = StyleSheet.create({
   container:     { flex: 1, backgroundColor: "#f5f3ff", paddingHorizontal: 16, paddingTop: 16 },
   topBar:        { flexDirection: "row", alignItems: "center", marginBottom: 20 },
   backBtn:       { width: 36, height: 36, borderRadius: 10, backgroundColor: "#ede9fe", borderWidth: 1, borderColor: "#ddd6fe", alignItems: "center", justifyContent: "center" },
+  refreshBtn:    { width: 36, height: 36, borderRadius: 10, backgroundColor: "#ede9fe", borderWidth: 1, borderColor: "#ddd6fe", alignItems: "center", justifyContent: "center" },
   topCenter:     { flex: 1, alignItems: "center" },
   topLabel:      { fontSize: 10, color: "#7c3aed", letterSpacing: 1.2, fontWeight: "700" },
   topTitle:      { fontSize: 18, fontWeight: "700", color: "#1e1b4b" },
@@ -189,3 +195,5 @@ const styles = StyleSheet.create({
   addBtn:        { position: "absolute", bottom: 24, left: 16, right: 16, backgroundColor: "#7c3aed", borderRadius: 14, height: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   addBtnText:    { color: "#ffffff", fontSize: 15, fontWeight: "600" },
 });
+
+

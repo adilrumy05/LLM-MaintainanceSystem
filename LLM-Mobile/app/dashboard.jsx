@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { C } from './theme';
+import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { submitQuery } from '../services/api';
 
@@ -26,7 +26,6 @@ export default function Dashboard() {
   const messages   = activeChat?.messages || [];
   const isEmpty    = messages.length === 0;
 
-  // Load chats for this role from AsyncStorage
   useEffect(() => {
     if (!role) return;
     const loadChats = async () => {
@@ -47,7 +46,6 @@ export default function Dashboard() {
     loadChats();
   }, [role]);
 
-  // Save chats for this role to AsyncStorage whenever chats change
   useEffect(() => {
     if (!role || !loaded) return;
     AsyncStorage.setItem(`chats_${role}`, JSON.stringify(chats)).catch(e =>
@@ -224,6 +222,7 @@ export default function Dashboard() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 20}
       >
         {/* Welcome screen */}
         {isEmpty ? (
@@ -309,7 +308,7 @@ const s = StyleSheet.create({
   newChatIcon:        { fontSize: 20 },
   banner:             { borderWidth: 1, padding: 10 },
   bannerText:         { fontSize: 11, lineHeight: 16, paddingHorizontal: 16 },
-  welcomeContainer:   { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 40 },
+  welcomeContainer:   { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingBottom: 80 },
   logoCircle:         { width: 80, height: 80, borderRadius: 40, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   logoIcon:           { fontSize: 36 },
   welcomeTitle:       { color: C.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
@@ -330,7 +329,7 @@ const s = StyleSheet.create({
   typingRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8 },
   typingBubble:       { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 16, padding: 10, gap: 8, borderWidth: 1, borderColor: C.cardBorder },
   typingText:         { color: C.textMuted, fontSize: 12 },
-  inputBar:           { flexDirection: 'row', alignItems: 'flex-end', padding: 12, borderTopWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card, gap: 8 },
+  inputBar:           { flexDirection: 'row', alignItems: 'flex-end', padding: 12, marginHorizontal: 16, marginBottom: 16, borderWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card, gap: 8, borderRadius: 20 },
   input:              { flex: 1, backgroundColor: C.inputBg, color: C.text, borderRadius: 20, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 120 },
   sendBtn:            { backgroundColor: C.primary, borderRadius: 20, paddingHorizontal: 18, paddingVertical: 10, marginBottom: 2 },
   sendBtnDisabled:    { backgroundColor: '#c4b5fd' },

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs } from "firebase/firestore";
-import { db } from "./firebaseConfig";
+import { db } from "../firebaseConfig";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -169,3 +169,5 @@ const styles = StyleSheet.create({
   badge:        { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
   badgeText:    { fontSize: 11, fontWeight: "600" },
 });
+
+

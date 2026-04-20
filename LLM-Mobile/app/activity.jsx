@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { C } from './theme';
+import { C } from '../theme';
 
 const ALL_ALERTS = [
   { id: 1, type: 'alert',    icon: '🚨', title: 'Time Threshold Exceeded',  message: 'Disassembly on Unit #403 has exceeded time threshold. Supervisor has been automatically notified.', timestamp: '2 min ago',  status: 'Sent',         statusColor: C.green, statusBg: '#dcfce7' },
@@ -149,3 +149,5 @@ const s = StyleSheet.create({
   emptyState:    { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 16, padding: 40, alignItems: 'center', backgroundColor: C.card },
   countText:     { color: C.textMuted, fontSize: 10, textAlign: 'center', marginTop: 8 },
 });
+
+

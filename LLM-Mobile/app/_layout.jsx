@@ -2,7 +2,7 @@ import { Tabs, usePathname } from 'expo-router';
 import { Text, View, ActivityIndicator } from 'react-native';
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { C } from './theme';
+import { C } from '../theme';
 
 export default function Layout() {
   const [role, setRole]       = useState(null);
@@ -41,7 +41,6 @@ export default function Layout() {
       <Tabs.Screen name="beginner"       options={{ href: null }} />
       <Tabs.Screen name="expert"         options={{ href: null }} />
       <Tabs.Screen name="intermediate"   options={{ href: null }} />
-      <Tabs.Screen name="adminnew"       options={{ href: null }} />
       <Tabs.Screen name="usermanagement" options={{ href: null }} />
       <Tabs.Screen name="userform"       options={{ href: null }} />
 
@@ -67,3 +66,5 @@ export default function Layout() {
     </Tabs>
   );
 }
+
+

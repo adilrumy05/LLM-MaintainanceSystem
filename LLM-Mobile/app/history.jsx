@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Alert, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { C } from './theme';
+import { C } from '../theme';
 
 export default function History() {
   const [history, setHistory] = useState([]);
@@ -134,3 +134,5 @@ const s = StyleSheet.create({
   deleteBtn:     { padding: 4 },
   deleteBtnText: { color: C.textMuted, fontSize: 13 },
 });
+
+
