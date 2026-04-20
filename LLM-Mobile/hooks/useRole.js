@@ -1,0 +1,34 @@
+import { useState, useEffect, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from 'expo-router';
+
+export function useRole() {
+  const [role, setRole]       = useState('beginner');
+  const [loading, setLoading] = useState(true);
+
+  const loadRole = async () => {
+    const raw  = await AsyncStorage.getItem('user');
+    const user = JSON.parse(raw || '{}');
+    if (user?.role) setRole(user.role);
+    else setRole('beginner');
+    setLoading(false);
+  };
+
+  useEffect(() => { loadRole(); }, []);
+
+  useFocusEffect(useCallback(() => { loadRole(); }, []));
+
+  return {
+    role,
+    loading,
+    isAdmin:         role === 'admin',
+    isExpert:        role === 'expert',
+    isIntermediate:  role === 'intermediate',
+    isBeginner:      role === 'beginner',
+    canApprove:      ['admin', 'expert', 'intermediate'].includes(role),
+    canSeeReasoning: ['admin', 'expert'].includes(role),
+    canSeeAgents:    ['admin', 'expert'].includes(role),
+    needsGuidance:   ['beginner', 'intermediate'].includes(role),
+    isJunior:        role === 'beginner',
+  };
+}

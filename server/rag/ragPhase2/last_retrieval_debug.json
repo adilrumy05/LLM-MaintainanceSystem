@@ -1,0 +1,40 @@
+{
+  "question": "What is the cooling capacity?",
+  "toc_section": "20. After completion of installation or service, confirm there is no leakage or refrigerant gas. It may generate toxic gas when the refrigerant contacts with fire",
+  "sources": [
+    {
+      "document_group_id": "panasonic_aircon_CS-E12QD3EAW",
+      "filename": "CS-E12QD3EAW_SM_PAPAMY1406071CE",
+      "page": 90,
+      "classification": "MANUAL"
+    }
+  ],
+  "raw_hits": [
+    {
+      "score": 0.63025355,
+      "chunk_type": "child",
+      "page": 90,
+      "doc_group": "panasonic_aircon_CS-E12QD3EAW",
+      "filename": "CS-E12QD3EAW_SM_PAPAMY1406071CE",
+      "text_preview": "# 18.3 Piping Length Correction Factor\n\nThe characteristic of the unit has to be corrected in accordance with the piping length.\n\n# 18.3.1 Cooling Capacity\n\n# 18.3.2 Heating Capacity\n\nNote: The graphs"
+    }
+  ],
+  "context_blocks": [
+    {
+      "chunk_type": "parent",
+      "score": 0.0,
+      "page": 90,
+      "doc_group": "panasonic_aircon_CS-E12QD3EAW",
+      "filename": "CS-E12QD3EAW_SM_PAPAMY1406071CE",
+      "text": "# 18.3 Piping Length Correction Factor\n\nThe characteristic of the unit has to be corrected in accordance with the piping length.\n\n# 18.3.1 Cooling Capacity\n\n# 18.3.2 Heating Capacity\n\nNote: The graphs show the factor after added right amount of additional refrigerant."
+    },
+    {
+      "chunk_type": "child",
+      "score": 0.63025355,
+      "page": 90,
+      "doc_group": "panasonic_aircon_CS-E12QD3EAW",
+      "filename": "CS-E12QD3EAW_SM_PAPAMY1406071CE",
+      "text": "# 18.3 Piping Length Correction Factor\n\nThe characteristic of the unit has to be corrected in accordance with the piping length.\n\n# 18.3.1 Cooling Capacity\n\n# 18.3.2 Heating Capacity\n\nNote: The graphs show the factor after added right amount of additional refrigerant."
+    }
+  ]
+}
