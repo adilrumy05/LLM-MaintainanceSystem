@@ -149,7 +149,9 @@
 //   console.log(`Backend running at http://localhost:${PORT}`);
 // });
 
-// OPENROUTER API INTEGRATION with RAG
+
+
+// OPENROUTER API INTEGRATION with RAG Server,js
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -176,6 +178,8 @@ app.post('/api/query', async (req, res) => {
       category2,
       topK = 5
     } = req.body;
+
+    console.log('📥 Query received:', query);
 
     if (!query || !query.trim()) {
       return res.status(400).json({ error: 'Query is required.' });
@@ -304,7 +308,7 @@ app.get('/api/health', (req, res) => {
 });
 
 const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Node backend running at http://localhost:${PORT}`);
   console.log(`Expecting retrieval service at ${RETRIEVAL_SERVICE_URL}`);
 });

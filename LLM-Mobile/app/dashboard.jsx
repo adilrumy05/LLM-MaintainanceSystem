@@ -63,29 +63,51 @@ export default function Dashboard() {
   };
 
   const handleSend = async (overrideText) => {
+    console.log('🚀 handleSend called');
     const queryText = (overrideText || inputValue).trim();
-    if (!queryText || isProcessing) return;
+    console.log('📝 queryText:', queryText);
+    console.log('🔍 isProcessing:', isProcessing);
+    
+    if (!queryText || isProcessing) {
+      console.log('⛔ blocked - empty query or processing');
+      return;
+    }
+    
+    console.log('✅ passed validation');
     setInputValue('');
     cancelRef.current = false;
 
+    console.log('💾 saving to queryHistory...');
     const raw = await AsyncStorage.getItem('queryHistory');
     const existing = JSON.parse(raw || '[]');
     await AsyncStorage.setItem('queryHistory', JSON.stringify(
       [{ id: Date.now(), text: queryText, timestamp: new Date().toISOString() }, ...existing].slice(0, 50)
     ));
 
+    console.log('➕ adding user message');
     addMessage('user', queryText);
     setIsProcessing(true);
+    console.log('🔄 isProcessing set to true');
 
     try {
+      console.log('📡 calling submitQuery...');
       const result = await submitQuery(queryText);
-      if (!cancelRef.current) addMessage('bot', result.text, result.sources || []);
-     } catch (err) {
+      console.log('✅ submitQuery succeeded, result:', result);
       if (!cancelRef.current) {
-      addMessage('bot', `❌ Error: ${err.message || 'Could not reach the server. Make sure backend is running.'}`);
-    }
+        console.log('🤖 adding bot message');
+        addMessage('bot', result.text, result.sources || []);
+      } else {
+        console.log('⚠️ cancelled, not adding bot message');
+      }
+    } catch (err) {
+      console.error('❌ submitQuery error:', err);
+      if (!cancelRef.current) {
+        console.log('⚠️ adding error message to chat');
+        addMessage('bot', `❌ Error: ${err.message || 'Could not reach the server. Make sure backend is running.'}`);
+      }
     }
     setIsProcessing(false);
+    console.log('🏁 handleSend finished');
   };
 
   const handleCancel = () => {
@@ -221,6 +243,7 @@ export default function Dashboard() {
           <TouchableOpacity style={s.newChatIconBtn} onPress={handleNewChat}>
             <Text style={s.newChatIcon}>✏️</Text>
           </TouchableOpacity>
+          
         </View>
 
         {/* Role banners */}
@@ -271,6 +294,25 @@ export default function Dashboard() {
             </View>
           )}
         </View>
+
+
+        {/* Temporary test button */}
+        <TouchableOpacity 
+          style={{ backgroundColor: '#dc2626', padding: 10, margin: 10, borderRadius: 8, alignItems: 'center' }}
+          onPress={async () => {
+            console.log('🔵 Test button pressed');
+            try {
+              const result = await submitQuery('test query');
+              console.log('✅ Test result:', result);
+              Alert.alert('Test Success', 'Check Metro logs');
+            } catch (err) {
+              console.error('❌ Test error:', err);
+              Alert.alert('Test Failed', err.message);
+            }
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: 'bold' }}>TEST API</Text>
+        </TouchableOpacity>
 
         {/* Input area */}
         <View style={s.inputWrapper}>
