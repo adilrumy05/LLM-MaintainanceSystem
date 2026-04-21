@@ -80,11 +80,10 @@ export default function Dashboard() {
     try {
       const result = await submitQuery(queryText);
       if (!cancelRef.current) addMessage('bot', result.text, result.sources || []);
-    } catch {
+     } catch (err) {
       if (!cancelRef.current) {
-        await new Promise(r => setTimeout(r, 2000));
-        addMessage('bot', '1. Power down the system.\n2. Remove the four bolts on the engine cover using a 10mm socket.\n3. Carefully lift the cover straight up.');
-      }
+      addMessage('bot', `❌ Error: ${err.message || 'Could not reach the server. Make sure backend is running.'}`);
+    }
     }
     setIsProcessing(false);
   };

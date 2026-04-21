@@ -53,11 +53,11 @@ No manual context was retrieved for this query. Answer based on general knowledg
     const llmResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Authorization': `Bearer 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`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'openai/gpt-3.5-turbo',
+        model: 'openrouter/free',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: query }
@@ -90,4 +90,4 @@ app.post('/api/reject', (req, res) => res.json({ status: 'rejected' }));
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = 8000;
-app.listen(PORT, () => console.log(`Backend running at http://localhost:${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Backend running at http://0.0.0.0:${PORT}`));

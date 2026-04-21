@@ -5,13 +5,13 @@ echo ============================================
 
 :: Step 1: Start Qdrant (Docker)
 echo [1/4] Starting Qdrant vector database...
-start cmd /k "docker start heuristic_spence"
+start cmd /k "docker start qdrant"
 timeout /t 5 /nobreak
 
 :: Step 2: Start FastAPI retrieval service
 echo [2/4] Starting FastAPI retrieval service on port 8001...
-start cmd /k "cd C:\Users\Prince\Documents\GitHub\LLM-MaintainanceSystem && set EMBEDDING_MODEL=./models/bge-base-en-v1.5 && set QDRANT_URL=http://localhost:6333 && set EXTRACTION_DIR=C:\Users\Prince\Desktop\content_extraction && python -m uvicorn server.rag.retrieval.retrieval_service:app --reload --port 8001"
-timeout /t 5 /nobreak
+start cmd /k "cd C:\Users\Prince\Documents\GitHub\LLM-MaintainanceSystem && python -m uvicorn server.rag.retrieval.retrieval_service:app --reload --port 8001"
+timeout /t 8 /nobreak
 
 :: Step 3: Start Node.js backend
 echo [3/4] Starting Node.js backend on port 8000...
@@ -28,7 +28,7 @@ echo  All services started!
 echo ============================================
 echo  Qdrant     : http://localhost:6333
 echo  FastAPI    : http://localhost:8001
-echo  Backend    : http://172.17.99.155:8000
+echo  Backend    : http://172.17.108.46:8000
 echo  Expo Go    : Scan QR code in Expo terminal
 echo ============================================
 echo.
