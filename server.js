@@ -157,6 +157,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
+const { logAuditRecord } = require('./server/services/auditLogger');
 
 
 dotenv.config();
@@ -172,6 +173,8 @@ app.post('/api/query', async (req, res) => {
   try {
     const {
       query,
+      userId,        
+      sessionId,     
       docGroup,
       classification,
       category1,
@@ -190,10 +193,10 @@ app.post('/api/query', async (req, res) => {
       return res.status(500).json({ error: 'Missing OPENROUTER_API_KEY in environment variables.' });
     }
 
-    // ✅ GET FILTERS INSIDE REQUEST
+    // GET FILTERS INSIDE REQUEST
     const known = await getKnownFilters();
 
-    // ✅ extract from query
+    // extract from query
     const { matchedGroup, matchedFile } = extractFilters(
       query,
       known.document_group_ids,
@@ -247,12 +250,8 @@ app.post('/api/query', async (req, res) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        // model: 'openai/gpt-oss-20b:free',
+        model: 'openai/gpt-oss-20b:free',
         // model: 'google/gemma-3-27b-it:free',
-        // model: 'meta-llama/llama-3.3-70b-instruct:free',
-        model: 'nvidia/nemotron-3-super-120b-a12b:free',
-        // model: 'openai/gpt-oss-20b:free',   // or any model you prefer
-        // model: 'google/gemma-4-26b-a4b-it:free',  
         messages: [
           {
             role: "user",
@@ -274,6 +273,19 @@ app.post('/api/query', async (req, res) => {
     }
 
     const text = data?.choices?.[0]?.message?.content || 'No response text returned.';
+
+    // ── NEW STEP: Fire the Audit Logger (Session Based) ──────────────────────
+    try {
+      await logAuditRecord(
+        query, 
+        text, 
+        retrievalData.sources, 
+        userId || "anonymous",
+        sessionId 
+      );
+    } catch (auditErr) {
+      console.error("[AUDIT LOGGING FAILED]:", auditErr);
+    }
 
     // ── Step 3: Return LLM answer + sources from retrieval ───────────────────
     res.json({
@@ -305,6 +317,22 @@ app.post('/api/reject', (req, res) => {
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+// ── ENDPOINT TO SERVE LOCAL CHAT TRANSCRIPTS TO THE MOBILE APP ──────
+app.get('/api/transcript', (req, res) => {
+  const fileName = req.query.path;
+  if (!fileName) return res.status(400).json({ error: 'File name required.' });
+
+  // Use path.basename to strip out any folder paths for security
+  const safeFileName = path.basename(fileName); 
+  const fullPath = path.join(__dirname, 'chat_transcripts', safeFileName);
+
+  if (fs.existsSync(fullPath)) {
+    res.sendFile(fullPath);
+  } else {
+    res.status(404).json({ error: 'Transcript file not found on server.' });
+  }
 });
 
 const PORT = process.env.PORT || 8000;
@@ -341,4 +369,3 @@ async function getKnownFilters() {
   if (!res.ok) return { document_group_ids: [], filenames: [] };
   return await res.json();
 }
-

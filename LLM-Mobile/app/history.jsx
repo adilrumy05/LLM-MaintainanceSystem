@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebaseConfig'; // Your teammate's Firebase setup
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { db } from '../firebaseConfig'; 
 import { C } from '../theme';
-
-// Update this to match your computer's IP address (same as in your api.js)
-const BACKEND_URL = 'http://172.20.10.4:8000'; 
+import { API_BASE_URL } from '../services/api'; 
 
 export default function History() {
   const [logs, setLogs] = useState([]);
@@ -19,22 +17,23 @@ export default function History() {
   const [fetchingTranscript, setFetchingTranscript] = useState(false);
 
   useEffect(() => { 
-    fetchAuditLogs(); 
-  }, []);
+      setLoading(true);
+      
+      const q = query(collection(db, 'audit_logs'), orderBy('last_updated', 'desc'));
+      
+      // onSnapshot keeps a live connection open
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setLogs(data);
+        setLoading(false);
+      }, (error) => {
+        console.error("Error with real-time logs:", error);
+        Alert.alert("Error", "Lost connection to Firebase live updates.");
+        setLoading(false);
+      });
 
-  const fetchAuditLogs = async () => {
-    setLoading(true);
-    try {
-      const q = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'));
-      const snapshot = await getDocs(q);
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setLogs(data);
-    } catch (error) {
-      console.error("Error fetching logs:", error);
-      Alert.alert("Error", "Failed to connect to Firebase Audit Database.");
-    }
-    setLoading(false);
-  };
+      return () => unsubscribe();
+    }, []);
 
   const openLogDetails = (log) => {
     setSelectedLog(log);
@@ -45,9 +44,9 @@ export default function History() {
   const retrieveReport = async (pointer) => {
     setFetchingTranscript(true);
     try {
-      // The pointer is "chat_transcripts/transcript-123.json". We just want the filename.
       const filename = pointer.split('/').pop();
-      const response = await fetch(`${BACKEND_URL}/api/transcript?path=${filename}`);
+      const baseUrl = API_BASE_URL.replace('/api', ''); 
+      const response = await fetch(`${baseUrl}/api/transcript?path=${filename}`);
       
       if (!response.ok) throw new Error("Failed to fetch transcript from server.");
       
@@ -68,9 +67,6 @@ export default function History() {
             <Text style={s.pageTitle}>Audit History</Text>
             <Text style={s.pageSub}>Live database records</Text>
           </View>
-          <TouchableOpacity style={s.refreshBtn} onPress={fetchAuditLogs}>
-            <Text style={s.refreshBtnText}>↻ Refresh</Text>
-          </TouchableOpacity>
         </View>
 
         {loading ? (
@@ -85,8 +81,8 @@ export default function History() {
           logs.map(log => (
             <TouchableOpacity key={log.id} style={s.logCard} onPress={() => openLogDetails(log)}>
               <View style={s.cardHeader}>
-                <Text style={s.logIdText}>ID: {log.log_id.substring(0, 13)}...</Text>
-                <Text style={s.timestampText}>{log.timestamp}</Text>
+                <Text style={s.logIdText}>ID: {log.log_id.substring(0, 15)}...</Text>
+                <Text style={s.timestampText}>{log.last_updated}</Text>
               </View>
               <View style={s.cardBody}>
                 <Text style={s.cardDetail}><Text style={s.bold}>User:</Text> {log.user_id}</Text>
@@ -110,27 +106,29 @@ export default function History() {
           <ScrollView style={s.modalContent}>
             {selectedLog && (
               <View style={s.detailsBox}>
-                <Text style={s.detailItem}><Text style={s.bold}>Log ID:</Text> {selectedLog.log_id}</Text>
-                <Text style={s.detailItem}><Text style={s.bold}>Time:</Text> {selectedLog.timestamp}</Text>
+                <Text style={s.detailItem}><Text style={s.bold}>Session ID:</Text> {selectedLog.log_id}</Text>
+                <Text style={s.detailItem}><Text style={s.bold}>Last Updated:</Text> {selectedLog.last_updated}</Text>
                 <Text style={s.detailItem}><Text style={s.bold}>User ID:</Text> {selectedLog.user_id}</Text>
-                <Text style={s.detailItem}><Text style={s.bold}>Action:</Text> {selectedLog.action}</Text>
                 <Text style={s.detailItem}><Text style={s.bold}>Status:</Text> {selectedLog.status}</Text>
-                <Text style={s.detailItem}><Text style={s.bold}>Pointer:</Text> {selectedLog.chat_pointer}</Text>
               </View>
             )}
 
-            {/* Render the chat transcript if it has been fetched */}
-            {transcript && (
+            {/* Render the chat array! */}
+            {transcript && transcript.messages && (
               <View style={s.transcriptBox}>
                 <Text style={s.transcriptHeader}>Chat Transcript</Text>
-                <View style={s.bubbleUser}>
-                  <Text style={s.bubbleLabel}>User Prompt:</Text>
-                  <Text style={s.bubbleText}>{transcript.user_prompt}</Text>
-                </View>
-                <View style={s.bubbleAi}>
-                  <Text style={s.bubbleLabel}>AI Response:</Text>
-                  <Text style={s.bubbleText}>{transcript.ai_response}</Text>
-                </View>
+                {transcript.messages.map((msg, index) => (
+                  <View key={index} style={{ marginBottom: 20 }}>
+                    <View style={s.bubbleUser}>
+                      <Text style={s.bubbleLabel}>User ({msg.timestamp}):</Text>
+                      <Text style={s.bubbleText}>{msg.user_prompt}</Text>
+                    </View>
+                    <View style={s.bubbleAi}>
+                      <Text style={s.bubbleLabel}>AI Response:</Text>
+                      <Text style={s.bubbleText}>{msg.ai_response}</Text>
+                    </View>
+                  </View>
+                ))}
               </View>
             )}
           </ScrollView>

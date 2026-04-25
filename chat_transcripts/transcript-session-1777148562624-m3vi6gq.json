@@ -1,0 +1,66 @@
+{
+  "messages": [
+    {
+      "timestamp": "2026-04-25 20:26:38",
+      "user_prompt": "test query",
+      "ai_response": "I’m sorry, but the provided context does not contain information relevant to “test query.”",
+      "sources_used": [
+        {
+          "document_group_id": "panasonic_aircon_CS-E12QD3EAW",
+          "filename": "CS-E12QD3EAW_SM_PAPAMY1406071CE",
+          "page": 87,
+          "classification": "MANUAL"
+        },
+        {
+          "document_group_id": "panasonic_aircon_E7JKEW",
+          "filename": "CS-E7JKEW_SM_PHAAM0810051C2",
+          "page": 14,
+          "classification": "MANUAL"
+        },
+        {
+          "document_group_id": "panasonic_aircon_CS-E12QD3EAW",
+          "filename": "CS-E12QD3EAW_SM_PAPAMY1406071CE",
+          "page": 5,
+          "classification": "MANUAL"
+        }
+      ]
+    },
+    {
+      "timestamp": "2026-04-25 20:36:40",
+      "user_prompt": "hi",
+      "ai_response": "Hello! If you have any questions, feel free to let me know.",
+      "sources_used": [
+        {
+          "document_group_id": "toshiba_aircon_RAS-M22E2KV2G-A",
+          "filename": "RAS-M22E2KV2G-A RAS-M24E2KV2G-A-1696909076",
+          "page": 41,
+          "classification": "MANUAL"
+        },
+        {
+          "document_group_id": "toshiba_aircon_RAS-M22E2KV2G-A",
+          "filename": "RAS-M22E2KV2G-A RAS-M24E2KV2G-A-1696909076",
+          "page": 21,
+          "classification": "MANUAL"
+        },
+        {
+          "document_group_id": "panasonic_aircon_E7JKEW",
+          "filename": "CS-E7JKEW_SM_PHAAM0810051C2",
+          "page": 62,
+          "classification": "MANUAL"
+        },
+        {
+          "document_group_id": "panasonic_aircon_E7JKEW",
+          "filename": "CS-E7JKEW_SM_PHAAM0810051C2",
+          "page": 76,
+          "classification": "MANUAL"
+        },
+        {
+          "document_group_id": "toshiba_aircon_RAS-22SKV2-A1",
+          "filename": "RAS-22SKV2-A1_and_RAS-22SAV2-A1-1434509223",
+          "page": 45,
+          "classification": "MANUAL"
+        }
+      ]
+    }
+  ]
+}

@@ -43,3 +43,5 @@ models/
 
 .env
 .env.local
+
+serviceAccountKey.json
