@@ -11,6 +11,7 @@ import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { submitQuery } from '../services/api';
 import * as ImagePicker from 'expo-image-picker';
+import Markdown from 'react-native-markdown-display';
 
 export default function Dashboard() {
   const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
@@ -154,7 +155,10 @@ export default function Dashboard() {
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
         {!isUser && <View style={s.avatar}><Text style={s.avatarText}>⚡</Text></View>}
         <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBot]}>
-          <Text style={[s.bubbleText, isUser && s.bubbleTextUser]}>{item.text}</Text>
+          {isUser
+ 		 ? <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
+  		: <Markdown style={markdownStyles}>{item.text}</Markdown>
+	}
           {item.sources?.length > 0 && (
             <View style={s.sourcesBox}>
               <Text style={s.sourcesLabel}>📎 SOURCES</Text>
@@ -202,6 +206,19 @@ export default function Dashboard() {
                   </View>
                 )}
               />
+              <TouchableOpacity style={s.clearAllBtn} onPress={() => {
+                Alert.alert('Clear All Chats', 'Delete all conversations?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Clear All', style: 'destructive', onPress: () => {
+                    setChats([{ id: '1', messages: [] }]);
+                    setActiveChatId('1');
+                    setShowSidebar(false);
+                  }},
+                ]);
+              }}>
+                <Text style={s.clearAllText}>🗑 Clear All Chats</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity style={s.logoutSidebar} onPress={handleLogout}>
                 <Text style={s.logoutSidebarText}>Logout</Text>
               </TouchableOpacity>
@@ -320,6 +337,8 @@ const s = StyleSheet.create({
   newChatBtn:         { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginBottom: 16 },
   newChatText:        { color: '#fff', fontWeight: '700', fontSize: 14 },
   chatItem:           { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, marginBottom: 6, backgroundColor: C.bg },
+  clearAllBtn:        { borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginTop: 8, marginBottom: 8 },
+  clearAllText:       { color: C.red, fontWeight: '700', fontSize: 12 },
   chatItemActive:     { backgroundColor: C.primaryLight },
   chatItemText:       { color: C.text, fontSize: 13, flex: 1 },
   deleteText:         { fontSize: 16, marginLeft: 8 },
@@ -373,3 +392,14 @@ const s = StyleSheet.create({
   sendBtnDisabled:    { backgroundColor: '#c4b5fd' },
   sendBtnText:        { color: '#fff', fontWeight: '700', fontSize: 14 },
 });
+
+const markdownStyles = {
+  body:         { color: C.text, fontSize: 14, lineHeight: 20 },
+  strong:       { fontWeight: '700' },
+  bullet_list:  { marginVertical: 4 },
+  ordered_list: { marginVertical: 4 },
+  code_inline:  { backgroundColor: '#f3f4f6', borderRadius: 4, paddingHorizontal: 4, fontFamily: 'monospace', fontSize: 12 },
+  fence:        { backgroundColor: '#f3f4f6', borderRadius: 8, padding: 10, fontSize: 12, fontFamily: 'monospace' },
+  heading1:     { fontSize: 18, fontWeight: '700', marginVertical: 6 },
+  heading2:     { fontSize: 16, fontWeight: '700', marginVertical: 4 },
+};

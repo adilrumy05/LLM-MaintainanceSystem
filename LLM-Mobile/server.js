@@ -53,7 +53,7 @@ No manual context was retrieved for this query. Answer based on general knowledg
     const llmResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer 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`,
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

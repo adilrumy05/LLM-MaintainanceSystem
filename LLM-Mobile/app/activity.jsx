@@ -1,15 +1,9 @@
 import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { collection, getDocs, orderBy, query } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
 import { C } from '../theme';
-
-const ALL_ALERTS = [
-  { id: 1, type: 'alert',    icon: '🚨', title: 'Time Threshold Exceeded',  message: 'Disassembly on Unit #403 has exceeded time threshold. Supervisor has been automatically notified.', timestamp: '2 min ago',  status: 'Sent',         statusColor: C.green, statusBg: '#dcfce7' },
-  { id: 2, type: 'priority', icon: '📊', title: 'Priority Adjustment',      message: 'Maintenance task ID #1024 has been adjusted to HIGH PRIORITY based on equipment status.',            timestamp: '8 min ago',  status: 'Acknowledged', statusColor: C.blue,  statusBg: '#dbeafe' },
-  { id: 3, type: 'share',    icon: '📗', title: 'Knowledge Base Updated',   message: 'Best practice for engine cover removal (Boeing 767F) has been updated. New torque specs apply.',     timestamp: '15 min ago', status: null,           statusColor: null,    statusBg: null      },
-  { id: 4, type: 'info',     icon: 'ℹ️', title: 'Task Approved & Logged',   message: 'Recommendation for Task #1022 was approved and logged by T. Reyes. Audit entry created.',           timestamp: '32 min ago', status: 'Logged',       statusColor: C.green, statusBg: '#dcfce7' },
-  { id: 5, type: 'alert',    icon: '🚨', title: 'Anomaly Detected',         message: 'Unit #388 — Hydraulic system anomaly detected during pre-flight check. Auto-created.',               timestamp: '1 hr ago',   status: 'Sent',         statusColor: C.green, statusBg: '#dcfce7' },
-];
 
 const TYPE_CONFIG = {
   alert:    { label: 'Alert',    labelColor: C.red,    bg: '#fee2e2' },
@@ -19,10 +13,9 @@ const TYPE_CONFIG = {
 };
 
 const TABS = [
-  { key: 'all',      label: 'All'      },
-  { key: 'alert',    label: 'Alerts'   },
-  { key: 'priority', label: 'Priority' },
-  { key: 'info',     label: 'System'   },
+  { key: 'all',   label: 'All'    },
+  { key: 'alert', label: 'Alerts' },
+  { key: 'info',  label: 'System' },
 ];
 
 export default function Activity() {
@@ -30,9 +23,33 @@ export default function Activity() {
   const [filter, setFilter]   = useState('all');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    setTimeout(() => { setAlerts(ALL_ALERTS); setLoading(false); }, 800);
-  }, []);
+  useEffect(() => { fetchAlerts(); }, []);
+
+  const fetchAlerts = async () => {
+    try {
+      const q = query(collection(db, 'Alerts'), orderBy('createdAt', 'desc'));
+      const snapshot = await getDocs(q);
+      const data = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        timestamp: doc.data().createdAt?.toDate
+          ? formatTime(doc.data().createdAt.toDate())
+          : 'Just now',
+      }));
+      setAlerts(data);
+    } catch (e) {
+      console.log('Error fetching alerts:', e.message);
+    }
+    setLoading(false);
+  };
+
+  const formatTime = (date) => {
+    const diff = Math.floor((Date.now() - new Date(date)) / 1000);
+    if (diff < 60)    return 'Just now';
+    if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return new Date(date).toLocaleDateString();
+  };
 
   const filtered = filter === 'all' ? alerts : alerts.filter(a => a.type === filter);
 
@@ -43,7 +60,7 @@ export default function Activity() {
         <View style={s.headerRow}>
           <View>
             <Text style={s.pageTitle}>Activity & Alerts</Text>
-            <Text style={s.pageSub}>Real-time feed from all active agents</Text>
+            <Text style={s.pageSub}>Real-time feed from all active queries</Text>
           </View>
           <View style={s.liveRow}>
             <View style={s.liveDot} />
@@ -76,11 +93,11 @@ export default function Activity() {
         )}
 
         {!loading && filtered.map(alert => {
-          const cfg = TYPE_CONFIG[alert.type];
+          const cfg = TYPE_CONFIG[alert.type] || TYPE_CONFIG.info;
           return (
             <View key={alert.id} style={s.feedCard}>
               <View style={[s.iconBox, { backgroundColor: cfg.bg }]}>
-                <Text style={{ fontSize: 18 }}>{alert.icon}</Text>
+                <Text style={{ fontSize: 18 }}>{alert.icon || '🔍'}</Text>
               </View>
               <View style={s.feedContent}>
                 <View style={s.feedTopRow}>
@@ -91,13 +108,15 @@ export default function Activity() {
                 </View>
                 <Text style={s.feedTitle}>{alert.title}</Text>
                 <Text style={s.feedMessage}>{alert.message}</Text>
+                {alert.role && (
+                  <Text style={s.roleTag}>Role: {alert.role.toUpperCase()}</Text>
+                )}
                 <View style={s.feedBottom}>
                   {alert.status ? (
-                    <View style={[s.statusBadge, { backgroundColor: alert.statusBg }]}>
-                      <Text style={[s.statusText, { color: alert.statusColor }]}>{alert.status}</Text>
+                    <View style={[s.statusBadge, { backgroundColor: alert.statusBg || '#dcfce7' }]}>
+                      <Text style={[s.statusText, { color: alert.statusColor || C.green }]}>{alert.status}</Text>
                     </View>
                   ) : <View />}
-                  <Text style={s.detailsLink}>View Details →</Text>
                 </View>
               </View>
             </View>
@@ -106,12 +125,8 @@ export default function Activity() {
 
         {!loading && filtered.length === 0 && (
           <View style={s.emptyState}>
-            <Text style={s.muted}>No {filter === 'all' ? '' : filter} alerts at this time</Text>
+            <Text style={s.muted}>No activity yet — queries will appear here</Text>
           </View>
-        )}
-
-        {!loading && filtered.length > 0 && (
-          <Text style={s.countText}>Showing {filtered.length} of {alerts.length} events today</Text>
         )}
 
       </ScrollView>
@@ -142,12 +157,9 @@ const s = StyleSheet.create({
   timestamp:     { color: C.textMuted, fontSize: 11 },
   feedTitle:     { color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 4 },
   feedMessage:   { color: C.textSub, fontSize: 12, lineHeight: 18 },
+  roleTag:       { color: C.primary, fontSize: 10, fontWeight: '700', marginTop: 4 },
   feedBottom:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
   statusBadge:   { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
   statusText:    { fontSize: 10, fontWeight: '700' },
-  detailsLink:   { color: C.primary, fontSize: 11, fontWeight: '600' },
   emptyState:    { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 16, padding: 40, alignItems: 'center', backgroundColor: C.card },
-  countText:     { color: C.textMuted, fontSize: 10, textAlign: 'center', marginTop: 8 },
 });
-
-
