@@ -1,13 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { db } from '../firebaseConfig';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
-// 1. Centralized Export - Now other files can import this!
+// 1. Centralized Export 
 export const API_BASE_URL = 'http://172.20.10.4:8000/api';
 
-// 2. Generate a unique Session ID when the app first loads
+// 2. Generate a unique Session ID 
 const generateSessionId = () => `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 let currentSessionId = generateSessionId();
 
-// Optional: Call this from your UI if you ever add a "New Chat" button!
 export const resetSession = () => {
   currentSessionId = generateSessionId();
 };
@@ -24,6 +25,9 @@ export const submitQuery = async (query) => {
   
   let authHeader = {};
   let loggedInUserId = "anonymous_user";
+  
+  let userRole = 'beginner'; 
+  let userEmail = 'unknown';
 
   try {
     const userJson = await AsyncStorage.getItem('user');
@@ -34,28 +38,51 @@ export const submitQuery = async (query) => {
     }
     if (user) {
       loggedInUserId = user.uid || user.id || user.email || "anonymous_user";
+      userRole = user.role || 'beginner';
+      userEmail = user.email || 'unknown';
     }
   } catch (e) {
     console.warn('Failed to load auth token', e);
   }
 
   try {
+    // 3. YOUR code: Sending the query, user ID, and Session ID to the backend
     const response = await fetchWithTimeout(fullUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...authHeader,
       },
-      // 3. Send the sessionId along with the query
       body: JSON.stringify({ 
         query, 
         userId: loggedInUserId,
-        sessionId: currentSessionId 
+        sessionId: currentSessionId,
+        role: userRole 
       }), 
     }, 120000);
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.json();
+    const data = await response.json();
+
+    try {
+      await addDoc(collection(db, 'Alerts'), {
+        type:      'info',
+        icon:      '🔍',
+        title:     'Query Submitted',
+        message:   `${userRole.toUpperCase()} asked: "${query.slice(0, 100)}"`,
+        status:    'Logged',
+        statusColor: '#16a34a',
+        statusBg:    '#dcfce7',
+        userEmail: userEmail,
+        role: userRole,
+        sources:   data.sources || [],
+        createdAt: serverTimestamp(),
+      });
+    } catch (e) {
+      console.log('Alert log error:', e.message);
+    }
+
+    return data;
   } catch (err) {
     throw err;
   }

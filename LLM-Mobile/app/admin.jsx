@@ -8,6 +8,15 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function AdminScreen() {
   const router = useRouter();
+  // 🔒 Role guard
+useEffect(() => {
+  const checkRole = async () => {
+    const raw = await AsyncStorage.getItem('user');
+    const user = JSON.parse(raw || '{}');
+    if (user?.role !== 'admin') router.replace('/dashboard');
+  };
+  checkRole();
+}, []);
   const [userCount, setUserCount] = useState(0);
   const [activePercent, setActivePercent] = useState(0);
   const [alertsCount, setAlertsCount] = useState(0);

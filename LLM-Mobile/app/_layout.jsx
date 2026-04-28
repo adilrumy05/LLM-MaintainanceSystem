@@ -55,7 +55,7 @@ export default function Layout() {
       }} />
       <Tabs.Screen name="history" options={{
         title: 'History',
-        href: role === 'admin' ? '/history' : null,
+        href: '/history',
         tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>🕐</Text>
       }} />
       <Tabs.Screen name="admin" options={{
