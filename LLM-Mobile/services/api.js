@@ -3,7 +3,7 @@ import { db } from '../firebaseConfig';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 // 1. Centralized Export 
-export const API_BASE_URL = 'http://172.20.10.4:8000/api';
+import { API_BASE_URL } from '@env';
 
 // 2. Generate a unique Session ID 
 const generateSessionId = () => `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;

@@ -1,0 +1,35 @@
+{
+  "messages": [
+    {
+      "timestamp": "2026-04-29 14:47:20",
+      "user_prompt": "How to connect the wiring for the indoor unit panasonic_aircon_E7JKEW",
+      "ai_response": "The indoor‑unit wiring for the Panasonic Aircon E7JKEW is done as follows (refer to the instruction excerpts on pages 55 – 57 of the manual):\n\n1. **Power‑supplying cable**  \n   * Use an approved polychloroprene‑sheathed power supply cord:  \n     * 3 × 1.5 mm² (for 0.75 ~ 1.75 HP),  \n     * 3 × 2.5 mm² (for 2.0 ~ 2.5 HP), or  \n     * 3 × 4.0 mm² (for 3.0 HP).  \n   * The cord must be type 245 IEC 57 or heavier and is connected to the terminal board of the indoor unit. The other end is attached to the isolating devices (disconnecting means) [page 57].\n\n2. **Indoor‑to‑outdoor connecting cable**  \n   * Use a polychloroprene‑sheathed 4 × 1.5 mm² flexible cord, type 245 IEC 57 or a heavier cord.  \n   * Connect the cable between the indoor unit and the outdoor unit through the holder (clamper).  \n   * Color matching: the colour of wires on the outdoor unit must correspond to the respective terminals of the indoor unit (refer to the terminal table on page 55).  \n   * Earth wire: Yellow/Green (Y/G), longer than the other AC wires for safety [page 55].\n\n3. **Connection procedure**  \n   * The connecting cable can be joined to the indoor unit **without removing the front grille**.  \n   * Secure the cable onto the control board with the provided holder (clamper).  \n   * Ensure all connections are tight and that the earth wire is correctly bonded.\n\n4. **Additional notes**  \n   * Follow the colour and terminal number matching strictly.  \n   * Refer to the “connecting cable” diagram in the manual for exact terminal positions.\n\nThese steps provide the complete wiring connection for the indoor unit of the Panasonic E7JKEW model.",
+      "sources_used": [
+        {
+          "document_group_id": "panasonic_aircon_E7JKEW",
+          "filename": "CS-E7JKEW_SM_PHAAM0810051C2",
+          "page": 55,
+          "classification": "MANUAL"
+        },
+        {
+          "document_group_id": "panasonic_aircon_E7JKEW",
+          "filename": "CS-E7JKEW_SM_PHAAM0810051C2",
+          "page": 58,
+          "classification": "MANUAL"
+        },
+        {
+          "document_group_id": "panasonic_aircon_E7JKEW",
+          "filename": "CS-E7JKEW_SM_PHAAM0810051C2",
+          "page": 57,
+          "classification": "MANUAL"
+        },
+        {
+          "document_group_id": "panasonic_aircon_E7JKEW",
+          "filename": "CS-E7JKEW_SM_PHAAM0810051C2",
+          "page": 54,
+          "classification": "MANUAL"
+        }
+      ]
+    }
+  ]
+}

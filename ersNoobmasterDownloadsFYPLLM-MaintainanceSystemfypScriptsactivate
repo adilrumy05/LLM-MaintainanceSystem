@@ -1,0 +1,174 @@
+[33mcommit 07aea3a9c2047c83b20968496382222b4d479ba2[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Sun Apr 26 14:54:05 2026 +0800
+
+    Add sidebar clear chats, role-based prompts, Firebase activity logging, markdown display, role guards
+
+[33mcommit 7e5d6c57b9ac60e84d8d8cd1c0aa80e8ca91d87a[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Tue Apr 21 18:50:28 2026 +0800
+
+    Fix RAG pipeline: correct retrieval endpoint, free LLM model, 0.0.0.0 binding, updated start.bat
+
+[33mcommit c8e186616bdc1de8a0ab92636c8ea15bfdb8b871[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Tue Apr 21 12:49:18 2026 +0800
+
+    Fix RAG pipeline: wire FastAPI retrieval to Node.js backend, fix .env encoding, add model, update start.bat to LAN mode
+
+[33mcommit d5b1d95094cb48f88e1cf70120fef16c761314aa[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Mon Apr 20 18:31:02 2026 +0800
+
+    Fix keyboard layout, remove edgeToEdgeEnabled
+
+[33mcommit 3230bee820d764e80984ab1b560bb5baccda9233[m
+Author: Adil Rumy <104388564@students.swinburne.edu.my>
+Date:   Mon Apr 20 18:09:51 2026 +0800
+
+    Stop tracking env files
+
+[33mcommit a3a284ea9c292c3c054d26f35f2593215e336ad5[m
+Merge: 742a2c7 472d551
+Author: Adil Rumy <104388564@students.swinburne.edu.my>
+Date:   Mon Apr 20 18:09:14 2026 +0800
+
+    Merge remote changes and resolve server.js conflict
+
+[33mcommit 742a2c7a5fa7fabe005bf361f74feb5329b52e7d[m
+Author: Adil Rumy <104388564@students.swinburne.edu.my>
+Date:   Mon Apr 20 18:04:39 2026 +0800
+
+    Save local server changes before pull
+
+[33mcommit 472d551b433b11958ee19ed7bb5708fd5d0b6da7[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Mon Apr 20 17:14:41 2026 +0800
+
+    Fix keyboard layout and input bar positioning
+
+[33mcommit a91fe487dd6cc1f4f41582516e5d9fa0aa1722e7[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Mon Apr 20 14:35:48 2026 +0800
+
+    Final updates
+
+[33mcommit 99a77618a9eea931a81095137114fc4f9d539a13[m
+Author: Andrei~ <102787583@students.swinburne.edu.my>
+Date:   Mon Apr 20 12:20:53 2026 +0800
+
+    Fix retrieval filtering: auto-detect filters from query
+
+[33mcommit 767e86c3003cae97ecf7d24d65a1a9f45b89ef93[m
+Author: Andrei~ <102787583@students.swinburne.edu.my>
+Date:   Sun Apr 19 15:28:21 2026 +0800
+
+    Ignore Python cache files
+
+[33mcommit 0bf6d11bf955c69b8b35115eed830907d75e23d1[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Mon Apr 20 09:57:09 2026 +0800
+
+    Update UI, keyboard handling and Firebase integration
+
+[33mcommit 2f20de6855445d72ed1904ae384edc417b8dc513[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Sun Apr 19 19:09:06 2026 +0800
+
+    Clean up duplicate files
+
+[33mcommit c0f6671204fb113d677684e8af78de51d8624174[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Sun Apr 19 18:38:42 2026 +0800
+
+    Replace admin screen with new purple dashboard
+
+[33mcommit 444ba2bb5fdbe77357be291be7b1b9c4b69cf551[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Sun Apr 19 18:02:38 2026 +0800
+
+    Add Firebase user management screens with Expo Router
+
+[33mcommit 1f97ade46adb93311457f17e354c6fcb1a4c675e[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Sun Apr 19 16:45:47 2026 +0800
+
+    Add React Native mobile app with chat interface and RBAC
+
+[33mcommit b078c86594e751581ceda08351773d4fa8f043d9[m
+Author: Andrei~ <102787583@students.swinburne.edu.my>
+Date:   Tue Apr 14 22:23:55 2026 +0800
+
+    added phase 2 of rag pipeline and added retrival to the LLM
+
+[33mcommit eaacd53367967ffc3c1e4f111041c878059773fb[m
+Author: Andrei~ <102787583@students.swinburne.edu.my>
+Date:   Tue Apr 14 01:13:59 2026 +0800
+
+    WIP: saving changes before pull
+
+[33mcommit de9c209b47b6986130aab42077b89a4eae6fe18e[m
+Author: Andrei~ <102787583@students.swinburne.edu.my>
+Date:   Tue Apr 14 01:13:03 2026 +0800
+
+    Ignore .env file
+
+[33mcommit 4d6bfa33a81c0c5bd15b8721a4e5e0f04ea31817[m
+Author: Adil Rumy <104388564@students.swinburne.edu.my>
+Date:   Tue Apr 14 01:03:13 2026 +0800
+
+    Changed AI models
+
+[33mcommit b1e2abd0c5402d5819266916367d129377378c9c[m
+Author: Adil Rumy <104388564@students.swinburne.edu.my>
+Date:   Mon Apr 13 03:56:49 2026 +0800
+
+    Add environment template and setup updates
+
+[33mcommit eb412571649699b553a780472c7faad2d00c802b[m
+Author: Adil Rumy <104388564@students.swinburne.edu.my>
+Date:   Mon Apr 13 03:47:39 2026 +0800
+
+    Connect Gemini API and render dynamic recommendation output
+
+[33mcommit 0cb75fe804d70787535cdd5a0be9f5a5caa70444[m
+Author: Andrei~ <102787583@students.swinburne.edu.my>
+Date:   Sun Apr 12 00:54:16 2026 +0800
+
+    Add RAG  phase1 files
+
+[33mcommit cc3392795816734591a7ff8e6a4c97ac6650adef[m
+Author: Wlitzzz <104390459@students.swinburne.edu.my>
+Date:   Fri Apr 10 22:42:00 2026 +0800
+
+    manual verification - middleware
+
+[33mcommit a116da0be65b07a9c27f5d38cdb65b38e8cee2c1[m
+Author: Adil Rumy <104388564@students.swinburne.edu.my>
+Date:   Thu Apr 9 22:51:45 2026 +0800
+
+    Add new project folder structure
+
+[33mcommit d70bccface5f4b10bcaf2e957e5f8478941b32bc[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Tue Apr 7 20:02:02 2026 +0800
+
+    Remove release folder from tracking
+
+[33mcommit 32437fd79b1acdae8cab38a0666f03e3f201148c[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Tue Apr 7 19:50:03 2026 +0800
+
+    Add footer, voice mode, role-based UI, history page
+
+[33mcommit f7cbacf7c950b6d9a6f0901a1bab2e0c00b8c37a[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Fri Mar 27 19:07:56 2026 +0800
+
+    Update frontend with latest changes
+
+[33mcommit 9669713d49a175d129585163011fcb7e5b8d4b10[m
+Author: Docsterk <169166007+Docsterk@users.noreply.github.com>
+Date:   Fri Mar 27 18:13:40 2026 +0800
+
+    Initial commit - FedEx Copilot Frontend
