@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { collection, onSnapshot, query, orderBy, where } from 'firebase/firestore';
 import { db } from '../firebaseConfig'; 
 import { C } from '../theme';
-import { API_BASE_URL } from '../services/api'; 
 
 export default function History() {
   const [logs, setLogs] = useState([]);
@@ -13,50 +14,67 @@ export default function History() {
   // Modal & Detail State
   const [selectedLog, setSelectedLog] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const [transcript, setTranscript] = useState(null);
-  const [fetchingTranscript, setFetchingTranscript] = useState(false);
 
-  useEffect(() => { 
-      setLoading(true);
-      
-      const q = query(collection(db, 'audit_logs'), orderBy('last_updated', 'desc'));
-      
-      // onSnapshot keeps a live connection open
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setLogs(data);
-        setLoading(false);
-      }, (error) => {
-        console.error("Error with real-time logs:", error);
-        Alert.alert("Error", "Lost connection to Firebase live updates.");
-        setLoading(false);
-      });
+  useFocusEffect(
+      useCallback(() => { 
+        let unsubscribe; // We need to store this to clean up the listener
 
-      return () => unsubscribe();
-    }, []);
+        const setupLiveListener = async () => {
+          setLoading(true);
+
+          try {
+            // 1. Get the current user from local storage EVERY time the screen opens
+            const userJson = await AsyncStorage.getItem('user');
+            const user = userJson ? JSON.parse(userJson) : null;
+            
+            const userId = user?.uid || user?.id || user?.email || "anonymous_user";
+            const userRole = user?.role || 'beginner';
+
+            // 2. Build the query based on their freshly fetched role
+            const logsRef = collection(db, 'audit_logs');
+            let q;
+
+            if (userRole === 'admin') {
+              // Admins see everything
+              q = query(logsRef, orderBy('last_updated', 'desc'));
+            } else {
+              // Regular users only see their own logs
+              q = query(
+                logsRef, 
+                where('user_id', '==', userId), 
+                orderBy('last_updated', 'desc')
+              );
+            }
+            
+            // 3. Open the live connection
+            unsubscribe = onSnapshot(q, (snapshot) => {
+              const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setLogs(data);
+              setLoading(false);
+            }, (error) => {
+              console.error("Error with real-time logs:", error);
+              Alert.alert("Error", "Lost connection to Firebase live updates.");
+              setLoading(false);
+            });
+
+          } catch (err) {
+            console.error("Failed to load user auth state:", err);
+            setLoading(false);
+          }
+        };
+
+        setupLiveListener();
+
+        // Cleanup: This disconnects the old listener when the user leaves the screen!
+        return () => {
+          if (unsubscribe) unsubscribe();
+        };
+      }, [])
+    );
 
   const openLogDetails = (log) => {
     setSelectedLog(log);
-    setTranscript(null); // Clear any previous transcript
     setModalVisible(true);
-  };
-
-  const retrieveReport = async (pointer) => {
-    setFetchingTranscript(true);
-    try {
-      const filename = pointer.split('/').pop();
-      const baseUrl = API_BASE_URL.replace('/api', ''); 
-      const response = await fetch(`${baseUrl}/api/transcript?path=${filename}`);
-      
-      if (!response.ok) throw new Error("Failed to fetch transcript from server.");
-      
-      const data = await response.json();
-      setTranscript(data);
-    } catch (error) {
-      console.error("Transcript Error:", error);
-      Alert.alert("Error", "Could not retrieve the chat transcript from the server.");
-    }
-    setFetchingTranscript(false);
   };
 
   return (
@@ -114,10 +132,10 @@ export default function History() {
             )}
 
             {/* Render the chat array! */}
-            {transcript && transcript.messages && (
+            {selectedLog && selectedLog.messages && (
               <View style={s.transcriptBox}>
                 <Text style={s.transcriptHeader}>Chat Transcript</Text>
-                {transcript.messages.map((msg, index) => (
+                {selectedLog.messages.map((msg, index) => (
                   <View key={index} style={{ marginBottom: 20 }}>
                     <View style={s.bubbleUser}>
                       <Text style={s.bubbleLabel}>User ({msg.timestamp}):</Text>
@@ -132,23 +150,6 @@ export default function History() {
               </View>
             )}
           </ScrollView>
-
-          {/* Bottom Right Retrieve Button */}
-          <View style={s.modalFooter}>
-            {!transcript && selectedLog?.chat_pointer && (
-              <TouchableOpacity 
-                style={s.retrieveBtn} 
-                onPress={() => retrieveReport(selectedLog.chat_pointer)}
-                disabled={fetchingTranscript}
-              >
-                {fetchingTranscript ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={s.retrieveBtnText}>Retrieve Report</Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
