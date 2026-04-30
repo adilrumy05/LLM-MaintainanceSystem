@@ -2,10 +2,9 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const { logAuditRecord } = require('./server/services/auditLogger');
 const fs = require('fs');
 const path = require('path');
-const { logAuditRecord } = require('./server/services/auditLogger');
-
 
 dotenv.config();
 
@@ -164,22 +163,6 @@ app.post('/api/reject', (req, res) => {
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
-});
-
-// ── ENDPOINT TO SERVE LOCAL CHAT TRANSCRIPTS TO THE MOBILE APP ──────
-app.get('/api/transcript', (req, res) => {
-  const fileName = req.query.path;
-  if (!fileName) return res.status(400).json({ error: 'File name required.' });
-
-  // Use path.basename to strip out any folder paths for security
-  const safeFileName = path.basename(fileName); 
-  const fullPath = path.join(__dirname, 'chat_transcripts', safeFileName);
-
-  if (fs.existsSync(fullPath)) {
-    res.sendFile(fullPath);
-  } else {
-    res.status(404).json({ error: 'Transcript file not found on server.' });
-  }
 });
 
 const PORT = process.env.PORT || 8000;
