@@ -44,10 +44,15 @@ export default function ExpertScreen({ navigation }) {
 
       <Button
         title="Log Out"
-        onPress={() => navigation.replace("Login")}
         color="#d9534f"
+        onPress={async () => {
+          await AsyncStorage.removeItem('user');
+
+          navigation.replace("Login");
+        }}
       />
     </View>
+      
   );
 }
 
