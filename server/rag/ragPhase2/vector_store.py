@@ -251,6 +251,7 @@ class VectorStore:
         category_level_2:        str      = None,
         chunk_type:              str      = None,   # "child", "table"
         page:                    int      = None,
+        model_number: str = None,
     ) -> List[Dict[str, Any]]:
         """
         Embed query and return top-k results with optional filters.
@@ -280,6 +281,7 @@ class VectorStore:
             conditions.append(
                 FieldCondition(key="page", match=MatchValue(value=page))
             )
+        if model_number:      _kw("model_number",      model_number)
 
         query_filter = Filter(must=conditions) if conditions else None
 
@@ -307,6 +309,10 @@ class VectorStore:
     def get_known_filters(self):
         seen_groups = set()
         seen_files = set()
+        seen_classifications = set()
+        seen_cat1 = set()
+        seen_cat2 = set()
+        seen_models = set()
         offset = None
 
         while True:
@@ -314,7 +320,14 @@ class VectorStore:
                 collection_name=self.collection,
                 limit=1000,
                 offset=offset,
-                with_payload=["document_group_id", "filename"],
+                with_payload=[
+                    "document_group_id",
+                    "filename",
+                    "classification",
+                    "category_level_1",
+                    "category_level_2",
+                    "model_number"
+                ],
                 with_vectors=False,
             )
 
@@ -330,6 +343,14 @@ class VectorStore:
                     seen_groups.add(payload["document_group_id"])
                 if payload.get("filename"):
                     seen_files.add(payload["filename"])
+                if payload.get("classification"):
+                    seen_classifications.add(payload["classification"])
+                if payload.get("category_level_1"):
+                    seen_cat1.add(payload["category_level_1"])
+                if payload.get("category_level_2"):
+                    seen_cat2.add(payload["category_level_2"])
+                if payload.get("model_number"):
+                    seen_models.add(payload["model_number"])
 
             if not offset:
                 break
@@ -337,6 +358,10 @@ class VectorStore:
         return {
             "document_group_ids": sorted(seen_groups),
             "filenames": sorted(seen_files),
+            "classifications": sorted(seen_classifications),
+            "category_level_1": sorted(seen_cat1),
+            "category_level_2": sorted(seen_cat2),
+            "model_numbers": sorted(seen_models),
         }
     
     def extract_filters(query: str, known_groups=None, known_files=None):

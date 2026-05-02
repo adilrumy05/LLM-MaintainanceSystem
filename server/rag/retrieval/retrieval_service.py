@@ -117,6 +117,10 @@ async def get_filters():
         return {
             "document_group_ids": filters["document_group_ids"],
             "filenames": filters["filenames"],
+            "classifications": filters["classifications"],
+            "category_level_1": filters["category_level_1"],
+            "category_level_2": filters["category_level_2"],
+            "model_numbers": filters["model_numbers"],
         }
     except HTTPException:
         raise
