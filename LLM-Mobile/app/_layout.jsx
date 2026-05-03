@@ -26,6 +26,8 @@ export default function Layout() {
     </View>
   );
 
+  const isAdmin = role === 'admin';
+
   return (
     <Tabs screenOptions={{
       headerShown: false,
@@ -35,7 +37,7 @@ export default function Layout() {
       tabBarActiveTintColor:   C.tabActive,
       tabBarInactiveTintColor: C.tabInactive,
     }}>
-      {/* Hidden screens */}
+      {/* ── Hidden screens (never in tab bar) ── */}
       <Tabs.Screen name="index"          options={{ href: null }} />
       <Tabs.Screen name="login"          options={{ href: null }} />
       <Tabs.Screen name="beginner"       options={{ href: null }} />
@@ -44,34 +46,40 @@ export default function Layout() {
       <Tabs.Screen name="usermanagement" options={{ href: null }} />
       <Tabs.Screen name="userform"       options={{ href: null }} />
 
-      {/* Tab bar screens — visible to all roles */}
+      {/* ── Navigable via Admin menu only ── */}
+      <Tabs.Screen name="tasks"      options={{ href: null }} />
+      <Tabs.Screen name="analytics"  options={{ href: null }} />
+      <Tabs.Screen name="documents"  options={{ href: null }} />
+
+      {/* ══════════════════════════════════════════════
+          TAB ORDER — Admin:   Dashboard, Activity, History, Admin, Profile
+          TAB ORDER — Others:  Dashboard, Activity, History, Profile
+         ══════════════════════════════════════════════ */}
+
       <Tabs.Screen name="dashboard" options={{
         title: 'Dashboard',
         tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>⚡</Text>
       }} />
+
       <Tabs.Screen name="activity" options={{
         title: 'Activity',
         tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>🔔</Text>
       }} />
+
       <Tabs.Screen name="history" options={{
         title: 'History',
         tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>🕐</Text>
       }} />
+
+      <Tabs.Screen name="admin" options={{
+        title: 'Admin',
+        href: isAdmin ? '/admin' : null,
+        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>⚙️</Text>
+      }} />
+
       <Tabs.Screen name="profile" options={{
         title: 'Profile',
         tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>👤</Text>
-      }} />
-
-      {/* Admin only tabs */}
-      <Tabs.Screen name="admin" options={{
-        title: 'Admin',
-        href: role === 'admin' ? '/admin' : null,
-        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>⚙️</Text>
-      }} />
-      <Tabs.Screen name="analytics" options={{
-        title: 'Analytics',
-        href: role === 'admin' ? '/analytics' : null,
-        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>📊</Text>
       }} />
 
     </Tabs>

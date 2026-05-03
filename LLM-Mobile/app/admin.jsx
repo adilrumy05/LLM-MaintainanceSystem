@@ -1,56 +1,55 @@
-import React, { useEffect, useState } from "react";
+import React, { useState, useCallback } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../firebaseConfig";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function AdminScreen() {
   const router = useRouter();
 
-  // 🔒 Role guard
-  useEffect(() => {
-    const checkRole = async () => {
-      const raw  = await AsyncStorage.getItem('user');
-      const user = JSON.parse(raw || '{}');
-      if (user?.role !== 'admin') router.replace('/dashboard');
-    };
-    checkRole();
-  }, []);
+  const [userCount,     setUserCount]     = useState(0);
+  const [activePercent, setActivePercent] = useState(0);
+  const [alertsCount,   setAlertsCount]   = useState(0);
+  const [sessionCount,  setSessionCount]  = useState(0);
+  const [pendingCount,  setPendingCount]  = useState(0);
 
-  const [userCount,      setUserCount]      = useState(0);
-  const [activePercent,  setActivePercent]  = useState(0);
-  const [alertsCount,    setAlertsCount]    = useState(0);
-  const [sessionCount,   setSessionCount]   = useState(0);
-  const [pendingCount,   setPendingCount]   = useState(0);
+  // 🔒 Role guard + data fetch — runs every time screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      const init = async () => {
+        // Role guard
+        const raw  = await AsyncStorage.getItem('user');
+        const user = JSON.parse(raw || '{}');
+        if (user?.role !== 'admin') { router.replace('/dashboard'); return; }
 
-  useEffect(() => {
-    const fetchMetrics = async () => {
-      try {
-        // Users
-        const userSnapshot = await getDocs(collection(db, "Users"));
-        const users = userSnapshot.docs.map(doc => doc.data());
-        setUserCount(users.length);
-        const activeUsers = users.filter(u => u.isActive).length;
-        setActivePercent(users.length ? Math.round((activeUsers / users.length) * 100) : 0);
+        // Fetch metrics
+        try {
+          // Users
+          const userSnapshot = await getDocs(collection(db, "Users"));
+          const users = userSnapshot.docs.map(doc => doc.data());
+          setUserCount(users.length);
+          const activeUsers = users.filter(u => u.isActive).length;
+          setActivePercent(users.length ? Math.round((activeUsers / users.length) * 100) : 0);
 
-        // Alerts
-        const alertsSnapshot = await getDocs(collection(db, "Alerts"));
-        setAlertsCount(alertsSnapshot.size);
+          // Alerts
+          const alertsSnapshot = await getDocs(collection(db, "Alerts"));
+          setAlertsCount(alertsSnapshot.size);
 
-        // Audit logs
-        const logsSnapshot = await getDocs(collection(db, "audit_logs"));
-        const logs = logsSnapshot.docs.map(doc => doc.data());
-        setSessionCount(logs.length);
-        setPendingCount(logs.filter(l => l.status === 'pending_review').length);
+          // Audit logs
+          const logsSnapshot = await getDocs(collection(db, "audit_logs"));
+          const logs = logsSnapshot.docs.map(doc => doc.data());
+          setSessionCount(logs.length);
+          setPendingCount(logs.filter(l => l.status === 'pending_review').length);
 
-      } catch (error) {
-        console.error("Error fetching metrics:", error);
-      }
-    };
-    fetchMetrics();
-  }, []);
+        } catch (error) {
+          console.error("Error fetching metrics:", error);
+        }
+      };
+      init();
+    }, [])
+  );
 
   const handleLogout = async () => {
     await AsyncStorage.removeItem("user");
@@ -91,6 +90,22 @@ export default function AdminScreen() {
       onPress: () => router.push("/activity"),
     },
     {
+      key: "tasks",
+      title: "Maintenance Tasks",
+      sub: "Create & assign tasks to workers",
+      icon: "checkmark-circle-outline",
+      badge: "Tasks",
+      onPress: () => router.push("/tasks"),
+    },
+    {
+      key: "documents",
+      title: "RAG Document Library",
+      sub: "View manuals loaded in vector store",
+      icon: "library-outline",
+      badge: "RAG",
+      onPress: () => router.push("/documents"),
+    },
+    {
       key: "ai",
       title: "AI Agent Config",
       sub: "System agents & settings",
@@ -113,7 +128,7 @@ export default function AdminScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
         <View style={styles.container}>
 
-          {/* ── Top Bar ─────────────────────────────────────────────── */}
+          {/* ── Top Bar ───────────────────────────────────────────── */}
           <View style={styles.topBar}>
             <View>
               <Text style={styles.greeting}>WELCOME BACK</Text>
@@ -125,7 +140,7 @@ export default function AdminScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* ── Stats Row ───────────────────────────────────────────── */}
+          {/* ── Stats Grid ────────────────────────────────────────── */}
           <View style={styles.statsGrid}>
             <View style={styles.statCard}>
               <Text style={styles.statLabel}>USERS</Text>
@@ -147,10 +162,10 @@ export default function AdminScreen() {
             </View>
           </View>
 
-          {/* ── Section Label ───────────────────────────────────────── */}
+          {/* ── Section Label ─────────────────────────────────────── */}
           <Text style={styles.sectionLabel}>MANAGEMENT</Text>
 
-          {/* ── Menu Cards ──────────────────────────────────────────── */}
+          {/* ── Menu Cards ────────────────────────────────────────── */}
           {menuItems.map(item => (
             <TouchableOpacity
               key={item.key}
@@ -185,13 +200,11 @@ const styles = StyleSheet.create({
   topBarTitle:     { fontSize: 22, fontWeight: "700", color: "#1e1b4b" },
   logoutBtn:       { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#fef2f2", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: "#fecaca" },
   logoutText:      { color: "#f87171", fontSize: 12, fontWeight: "600" },
-
   statsGrid:       { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 20 },
   statCard:        { flex: 1, minWidth: '45%', backgroundColor: "#7c3aed", borderRadius: 14, padding: 14 },
   statCardWarning: { backgroundColor: "#92400e" },
   statLabel:       { fontSize: 9, color: "#ddd6fe", letterSpacing: 0.8, marginBottom: 6, fontWeight: "700" },
   statValue:       { fontSize: 26, fontWeight: "700", color: "#c4b5fd" },
-
   sectionLabel:    { fontSize: 10, color: "#7c3aed", letterSpacing: 1.2, marginBottom: 12, fontWeight: "700" },
   menuCard:        { backgroundColor: "#ffffff", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 10, borderWidth: 1, borderColor: "#ede9fe", elevation: 2 },
   iconWrap:        { width: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#3b0764" },
