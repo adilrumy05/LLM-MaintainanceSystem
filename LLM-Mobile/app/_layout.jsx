@@ -44,7 +44,7 @@ export default function Layout() {
       <Tabs.Screen name="usermanagement" options={{ href: null }} />
       <Tabs.Screen name="userform"       options={{ href: null }} />
 
-      {/* Tab bar screens */}
+      {/* Tab bar screens — visible to all roles */}
       <Tabs.Screen name="dashboard" options={{
         title: 'Dashboard',
         tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>⚡</Text>
@@ -55,16 +55,25 @@ export default function Layout() {
       }} />
       <Tabs.Screen name="history" options={{
         title: 'History',
-        href: '/history',
         tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>🕐</Text>
       }} />
+      <Tabs.Screen name="profile" options={{
+        title: 'Profile',
+        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>👤</Text>
+      }} />
+
+      {/* Admin only tabs */}
       <Tabs.Screen name="admin" options={{
         title: 'Admin',
         href: role === 'admin' ? '/admin' : null,
         tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>⚙️</Text>
       }} />
+      <Tabs.Screen name="analytics" options={{
+        title: 'Analytics',
+        href: role === 'admin' ? '/analytics' : null,
+        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>📊</Text>
+      }} />
+
     </Tabs>
   );
 }
-
-
