@@ -42,11 +42,21 @@ app.post('/api/query', async (req, res) => {
     // GET FILTERS INSIDE REQUEST
     const known = await getKnownFilters();
 
-    // extract from query
-    const { matchedGroup, matchedFile } = extractFilters(
+    const {
+      matchedGroup,
+      matchedFile,
+      matchedClassification,
+      matchedCategory1,
+      matchedCategory2,
+      matchedModel
+    } = extractFilters(
       query,
-      known.document_group_ids,
-      known.filenames
+      known.document_group_ids || [],
+      known.filenames || [],
+      known.classifications || [],
+      known.category_level_1 || [],
+      known.category_level_2 || [],
+      known.model_numbers || []
     );
 
     // ── Step 1: Get RAG context from Python retrieval service ─────────────────
@@ -58,9 +68,10 @@ app.post('/api/query', async (req, res) => {
         question: query,
         document_group_id: matchedGroup || docGroup || null,
         filename: matchedFile || null,
-        classification: classification || null,
-        category_level_1: category1 || null,
-        category_level_2: category2 || null,
+        classification: matchedClassification || classification || null,
+        category_level_1: matchedCategory1 || category1 || null,
+        category_level_2: matchedCategory2 || category2 || null,
+        model_number: matchedModel || null,
         top_k: topK,
       }),
     });
@@ -166,36 +177,70 @@ app.get('/api/health', (req, res) => {
 });
 
 const PORT = process.env.PORT || 8000;
+app.get('/api/documents', async (req, res) => {
+  try {
+    const data = await getKnownFilters();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Node backend running at http://localhost:${PORT}`);
   console.log(`Expecting retrieval service at ${RETRIEVAL_SERVICE_URL}`);
 });
 
-function extractFilters(query, knownGroups = [], knownFiles = []) {
+function extractFilters(query, knownGroups = [], knownFiles = [], knownClassifications = [], knownCat1 = [], knownCat2 = [], knownModels = []) {
   const q = query.toLowerCase();
 
   let matchedGroup = null;
   let matchedFile = null;
+  let matchedClassification = null;
+  let matchedCategory1 = null;
+  let matchedCategory2 = null;
+  let matchedModel = null;
 
   for (const g of knownGroups) {
-    if (q.includes(g.toLowerCase())) {
-      matchedGroup = g;
-      break;
-    }
+    if (q.includes(g.toLowerCase())) { matchedGroup = g; break; }
   }
-
   for (const f of knownFiles) {
-    if (q.includes(f.toLowerCase())) {
-      matchedFile = f;
-      break;
-    }
+    if (q.includes(f.toLowerCase())) { matchedFile = f; break; }
+  }
+  for (const c of knownClassifications) {
+    if (q.includes(c.toLowerCase())) { matchedClassification = c; break; }
+  }
+  for (const c1 of knownCat1) {
+    if (q.includes(c1.toLowerCase())) { matchedCategory1 = c1; break; }
+  }
+  for (const c2 of knownCat2) {
+    if (q.includes(c2.toLowerCase())) { matchedCategory2 = c2; break; }
+  }
+  for (const m of knownModels) {
+    if (q.includes(m.toLowerCase())) { matchedModel = m; break; }
   }
 
-  return { matchedGroup, matchedFile };
+  return {
+    matchedGroup,
+    matchedFile,
+    matchedClassification,
+    matchedCategory1,
+    matchedCategory2,
+    matchedModel,
+  };
 }
 
 async function getKnownFilters() {
   const res = await fetch(`${RETRIEVAL_SERVICE_URL}/filters`);
-  if (!res.ok) return { document_group_ids: [], filenames: [] };
+  if (!res.ok) {
+    console.error(`Failed to fetch filters: ${res.status} ${res.statusText}`);
+    return {
+      document_group_ids: [],
+      filenames: [],
+      classifications: [],
+      category_level_1: [],
+      category_level_2: [],
+      model_numbers: [],
+    };
+  }
   return await res.json();
 }
