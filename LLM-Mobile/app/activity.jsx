@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { collection, getDocs, orderBy, query } from 'firebase/firestore';
+import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from 'expo-router';
 import { C } from '../theme';
 
 const TYPE_CONFIG = {
@@ -22,12 +24,44 @@ export default function Activity() {
   const [alerts, setAlerts]   = useState([]);
   const [filter, setFilter]   = useState('all');
   const [loading, setLoading] = useState(true);
+  const [user, setUser]       = useState(null);
 
-  useEffect(() => { fetchAlerts(); }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadUser();
+    }, [])
+  );
 
-  const fetchAlerts = async () => {
+  const loadUser = async () => {
+    const raw = await AsyncStorage.getItem('user');
+    const u   = raw ? JSON.parse(raw) : null;
+    setUser(u);
+    fetchAlerts(u);
+  };
+
+  const fetchAlerts = async (u) => {
+    setLoading(true);
     try {
-      const q = query(collection(db, 'Alerts'), orderBy('createdAt', 'desc'));
+      // ✅ FIXED — extract role and email from u
+      const role      = u?.role  || 'beginner';
+      const userEmail = u?.email || '';
+
+      console.log('USER EMAIL:', userEmail);
+      console.log('ROLE:', role);
+
+      const alertsRef = collection(db, 'Alerts');
+      let q;
+
+      if (role === 'admin') {
+        q = query(alertsRef, orderBy('createdAt', 'desc'));
+      } else {
+        q = query(
+          alertsRef,
+          where('userEmail', '==', userEmail),
+          orderBy('createdAt', 'desc')
+        );
+      }
+
       const snapshot = await getDocs(q);
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -52,6 +86,7 @@ export default function Activity() {
   };
 
   const filtered = filter === 'all' ? alerts : alerts.filter(a => a.type === filter);
+  const isAdmin  = user?.role === 'admin';
 
   return (
     <SafeAreaView style={s.safe}>
@@ -60,13 +95,23 @@ export default function Activity() {
         <View style={s.headerRow}>
           <View>
             <Text style={s.pageTitle}>Activity & Alerts</Text>
-            <Text style={s.pageSub}>Real-time feed from all active queries</Text>
+            <Text style={s.pageSub}>
+              {isAdmin ? 'Real-time feed from all active queries' : 'Your personal activity feed'}
+            </Text>
           </View>
           <View style={s.liveRow}>
             <View style={s.liveDot} />
             <Text style={s.liveText}>Live</Text>
           </View>
         </View>
+
+        {!isAdmin && (
+          <View style={s.noticeBanner}>
+            <Text style={s.noticeText}>
+              👤 Showing activity for your account only. Contact admin to view all.
+            </Text>
+          </View>
+        )}
 
         <View style={s.tabRow}>
           {TABS.map(tab => (
@@ -108,8 +153,11 @@ export default function Activity() {
                 </View>
                 <Text style={s.feedTitle}>{alert.title}</Text>
                 <Text style={s.feedMessage}>{alert.message}</Text>
-                {alert.role && (
+                {isAdmin && alert.role && (
                   <Text style={s.roleTag}>Role: {alert.role.toUpperCase()}</Text>
+                )}
+                {isAdmin && alert.userEmail && (
+                  <Text style={s.emailTag}>📧 {alert.userEmail}</Text>
                 )}
                 <View style={s.feedBottom}>
                   {alert.status ? (
@@ -125,7 +173,13 @@ export default function Activity() {
 
         {!loading && filtered.length === 0 && (
           <View style={s.emptyState}>
-            <Text style={s.muted}>No activity yet — queries will appear here</Text>
+            <Text style={{ fontSize: 36, marginBottom: 10 }}>🔔</Text>
+            <Text style={s.emptyTitle}>No Activity Yet</Text>
+            <Text style={s.muted}>
+              {isAdmin
+                ? 'No queries have been submitted yet.'
+                : 'You have no activity logged yet. Start by asking a question in the Dashboard.'}
+            </Text>
           </View>
         )}
 
@@ -143,6 +197,8 @@ const s = StyleSheet.create({
   liveRow:       { flexDirection: 'row', alignItems: 'center', gap: 6 },
   liveDot:       { width: 8, height: 8, borderRadius: 4, backgroundColor: C.green },
   liveText:      { color: C.green, fontSize: 12, fontWeight: '700' },
+  noticeBanner:  { backgroundColor: C.primaryLight, borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: C.cardBorder },
+  noticeText:    { color: C.primaryText, fontSize: 12, lineHeight: 18 },
   tabRow:        { flexDirection: 'row', gap: 8, marginBottom: 20 },
   tab:           { borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6 },
   tabText:       { fontSize: 11, fontWeight: '600' },
@@ -158,8 +214,10 @@ const s = StyleSheet.create({
   feedTitle:     { color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 4 },
   feedMessage:   { color: C.textSub, fontSize: 12, lineHeight: 18 },
   roleTag:       { color: C.primary, fontSize: 10, fontWeight: '700', marginTop: 4 },
+  emailTag:      { color: C.textMuted, fontSize: 10, marginTop: 2 },
   feedBottom:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
   statusBadge:   { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
   statusText:    { fontSize: 10, fontWeight: '700' },
   emptyState:    { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 16, padding: 40, alignItems: 'center', backgroundColor: C.card },
+  emptyTitle:    { color: C.text, fontWeight: '700', fontSize: 15, marginBottom: 6 },
 });

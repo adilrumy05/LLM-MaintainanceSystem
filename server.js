@@ -233,6 +233,14 @@ app.get('/api/health', (req, res) => {
 });
 
 const PORT = process.env.PORT || 8000;
+app.get('/api/documents', async (req, res) => {
+  try {
+    const data = await getKnownFilters();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Node backend running at http://localhost:${PORT}`);
   console.log(`Expecting retrieval service at ${RETRIEVAL_SERVICE_URL}`);

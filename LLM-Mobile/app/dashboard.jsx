@@ -444,4 +444,11 @@ const markdownStyles = {
   fence:        { backgroundColor: '#f3f4f6', borderRadius: 8, padding: 10, fontSize: 12, fontFamily: 'monospace' },
   heading1:     { fontSize: 18, fontWeight: '700', marginVertical: 6 },
   heading2:     { fontSize: 16, fontWeight: '700', marginVertical: 4 },
+
+  // ✅ Add these
+  table:        { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 8, marginVertical: 8 },
+  thead:        { backgroundColor: C.primaryLight },
+  th:           { padding: 8, fontWeight: '700', fontSize: 12, color: C.primaryText, borderRightWidth: 1, borderColor: C.cardBorder },
+  tr:           { borderBottomWidth: 1, borderColor: C.cardBorder, flexDirection: 'row' },
+  td:           { padding: 8, fontSize: 12, color: C.text, borderRightWidth: 1, borderColor: C.cardBorder, flex: 1 },
 };
