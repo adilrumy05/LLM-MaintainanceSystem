@@ -41,6 +41,7 @@ class Source(BaseModel):
     filename: str
     page: int
     classification: str
+    images: Optional[List[Dict[str, Any]]] = []   # new field
 
 class RetrievalResponse(BaseModel):
     prompt: str

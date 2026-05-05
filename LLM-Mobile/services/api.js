@@ -3,7 +3,7 @@ import { db } from '../firebaseConfig';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 // 1. Centralized Export 
-import { API_BASE_URL } from '@env';
+import { EXPO_PUBLIC_API_URL } from '@env';
 
 // 2. Generate a unique Session ID 
 const generateSessionId = () => `session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -21,7 +21,7 @@ const fetchWithTimeout = (url, options, timeout = 120000) => {
 };
 
 export const submitQuery = async (query) => {
-  const fullUrl = `${API_BASE_URL}/query`;
+  const fullUrl = `${EXPO_PUBLIC_API_URL}/query`;
   
   let authHeader = {};
   let loggedInUserId = "anonymous_user";

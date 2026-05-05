@@ -98,6 +98,8 @@ Public API
 """
 
 import os
+
+FIREBASE_BUCKET = os.getenv("FIREBASE_BUCKET", "rbacfyp.firebasestorage.app")
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -341,6 +343,7 @@ class RetrievalPipeline:
         # ── 5. Assemble output ────────────────────────────────────────────
         context_str = _format_context(context_blocks)
         sources     = _deduplicate_sources(context_blocks)
+        sources     = _enrich_sources_with_images(sources, context_blocks)
 
         return RetrievalResult(
             question=question,
@@ -537,16 +540,9 @@ class RetrievalPipeline:
 
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
-
 def _format_context(blocks: List[ContextBlock]) -> str:
     """
     Format context blocks into a numbered string ready to paste into a prompt.
-
-    Layout per block:
-        [1] [child] page 12 — panasonic_aircon_CS-PW24KE / CS-PW24KE_service_...
-        score: 0.842
-        <text>
-        ---
     """
     if not blocks:
         return "(no context retrieved)"
@@ -562,7 +558,6 @@ def _format_context(blocks: List[ContextBlock]) -> str:
 
     return "\n\n".join(parts)
 
-
 def _deduplicate_sources(blocks: List[ContextBlock]) -> List[Dict[str, Any]]:
     """Return unique (document_group_id, filename, page) triples."""
     seen: set = set()
@@ -577,4 +572,63 @@ def _deduplicate_sources(blocks: List[ContextBlock]) -> List[Dict[str, Any]]:
                 "page":              b.page,
                 "classification":    b.classification,
             })
+    return sources
+
+
+def _enrich_sources_with_images(sources: List[Dict], blocks: List[ContextBlock]) -> List[Dict]:
+    """
+    For each source, collect images from all context blocks that match the same
+    (document_group_id, filename, page) and convert local paths to public Firebase URLs.
+    """
+
+    print("[DEBUG] Enriching sources with images", flush=True)
+    # Build a map from source key to list of images (deduplicated by src_path)
+    from collections import defaultdict
+    key_to_images = defaultdict(list)
+    seen_keys = defaultdict(set)
+    
+    for b in blocks:
+        key = (b.document_group_id, b.filename, b.page)
+        images = b.metadata.get("images", [])
+        print(f"DEBUG: Block {b.filename} page {b.page} - images found: {len(images)}")
+        for img in images:
+            src_path = img.get("src_path", "")
+            print(f"DEBUG: processing image src_path='{src_path}'")
+            abs_path = img.get("abs_path", "")
+            print(f"DEBUG: abs_path='{abs_path}'")
+            
+            # Skip duplicates per source
+            if src_path in seen_keys[key]:
+                print(f"DEBUG: duplicate src_path '{src_path}' for key {key}, skipping")
+                continue
+            seen_keys[key].add(src_path)
+            
+            # Convert local path to public Firebase URL
+            public_url = None
+            if abs_path and "/output/" in abs_path:
+                rel_path = abs_path.split("/output/")[-1]
+                public_url = f"https://storage.googleapis.com/{FIREBASE_BUCKET}/output/{rel_path}"
+                print(f"DEBUG: built URL from abs_path -> {public_url}")
+            elif src_path:
+                # Fallback: use src_path as relative path
+                public_url = f"https://storage.googleapis.com/{FIREBASE_BUCKET}/output/{src_path}"
+                print(f"DEBUG: built URL from src_path -> {public_url}")
+            else:
+                print("DEBUG: no src_path and abs_path missing /output/, cannot build URL")
+            
+            if public_url:
+                key_to_images[key].append({
+                    "caption": img.get("caption", ""),
+                    "url": public_url,
+                })
+                print(f"DEBUG: added image for key {key}")
+            else:
+                print("DEBUG: public_url is None, image not added")
+    
+    # Attach images to each source
+    for src in sources:
+        key = (src["document_group_id"], src["filename"], src["page"])
+        src["images"] = key_to_images.get(key, [])
+        print(f"DEBUG: source {key} now has images = {src['images']}")
+    
     return sources

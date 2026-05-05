@@ -170,24 +170,52 @@ export default function Dashboard() {
     const first = chat.messages.find(m => m.from === 'user');
     return first ? first.text.slice(0, 30) + (first.text.length > 30 ? '...' : '') : 'New Chat';
   };
+  // Component for a single source item with expand/collapse
+  const SourceItem = ({ source, index }) => {
+    console.log('🔍 Source object:', JSON.stringify(source, null, 2));
+    const [expanded, setExpanded] = useState(false);
+    const hasImages = source.images && source.images.length > 0;
+
+    const toggleExpand = () => setExpanded(!expanded);
+
+    return (
+      <View style={s.sourceContainer}>
+        <TouchableOpacity onPress={toggleExpand} style={s.sourceRow}>
+          <Text style={s.sourceItem}>
+            • {source.filename || source.document_group_id}
+            {source.page ? ` — p.${source.page}` : ''}
+          </Text>
+          {/* {hasImages && <Text style={s.expandIcon}>{expanded ? '▲' : '▼'}</Text>} */}
+        </TouchableOpacity>
+        {expanded && hasImages && (
+          <View style={s.imageDropdown}>
+            {source.images.map((img, imgIdx) => (
+              <View key={imgIdx} style={s.imageCard}>
+                <Text style={s.imagePlaceholder}>🖼️ {img.caption || 'Image'}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
 
   const renderMessage = ({ item }) => {
     const isUser = item.from === 'user';
+
     return (
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
         {!isUser && <View style={s.avatar}><Text style={s.avatarText}>⚡</Text></View>}
         <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBot]}>
           {isUser
- 		 ? <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
-  		: <Markdown style={markdownStyles}>{item.text}</Markdown>
-	}
+            ? <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
+            : <Markdown style={markdownStyles}>{item.text}</Markdown>
+          }
           {item.sources?.length > 0 && (
             <View style={s.sourcesBox}>
               <Text style={s.sourcesLabel}>📎 SOURCES</Text>
               {item.sources.map((src, i) => (
-                <Text key={i} style={s.sourceItem}>
-                  • {src.title}{src.page ? ` — p.${src.page}` : ''}{src.section ? ` §${src.section}` : ''}
-                </Text>
+                <SourceItem key={i} source={src} index={i} />
               ))}
             </View>
           )}
@@ -313,7 +341,7 @@ export default function Dashboard() {
         </View>
 
 
-        {/* Temporary test button */}
+        {/* Temporary test button
         <TouchableOpacity 
           style={{ backgroundColor: '#dc2626', padding: 10, margin: 10, borderRadius: 8, alignItems: 'center' }}
           onPress={async () => {
@@ -329,7 +357,7 @@ export default function Dashboard() {
           }}
         >
           <Text style={{ color: 'white', fontWeight: 'bold' }}>TEST API</Text>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
 
         {/* Input area */}
         <View style={s.inputWrapper}>
@@ -433,6 +461,46 @@ const s = StyleSheet.create({
   sendBtn:            { backgroundColor: C.primary, borderRadius: 20, paddingHorizontal: 18, paddingVertical: 10, marginBottom: 2 },
   sendBtnDisabled:    { backgroundColor: '#c4b5fd' },
   sendBtnText:        { color: '#fff', fontWeight: '700', fontSize: 14 },
+  sourceContainer: {
+    marginBottom: 8,
+  },
+  sourceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  expandIcon: {
+    fontSize: 12,
+    color: '#7c3aed',
+    marginLeft: 8,
+  },
+  imageDropdown: {
+    marginTop: 6,
+    marginLeft: 12,
+    padding: 8,
+    backgroundColor: '#f9f9ff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e7ff',
+  },
+  imageCard: {
+    marginBottom: 8,
+    padding: 6,
+    backgroundColor: '#fff',
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  imagePlaceholder: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  thumbnail: {
+    width: 200,
+    height: 200,
+    resizeMode: 'contain',
+    marginTop: 4,
+  },
 });
 
 const markdownStyles = {
