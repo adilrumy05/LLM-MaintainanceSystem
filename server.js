@@ -15,12 +15,45 @@ app.use(express.json());
 const RETRIEVAL_SERVICE_URL = process.env.RETRIEVAL_SERVICE_URL || 'http://localhost:8001';
 const PROMPT_FILE_PATH = path.join(__dirname, 'latest_prompt.txt');
 
+const ROLE_SYSTEM_PROMPTS = {
+  beginner: `You are a Guidance Helper for a junior maintenance technician.
+Use plain, everyday language. Never use jargon without explaining it.
+Always prioritise safety: flag any step requiring LOTO or PPE with a clear WARNING.
+Structure every response as a numbered step-by-step list.
+End with: "If you are unsure about any step, stop and contact a senior technician."
+Base all guidance strictly on the retrieved manual content provided.`,
+
+  intermediate: `You are a Task Assistance Helper for an intermediate maintenance technician.
+Provide the relevant procedure from the manual context.
+Flag steps rated HIGH difficulty or requiring specialist tools with a CAUTION note.
+List all required tools and torque specifications when present in the source material.
+If the task falls outside standard procedures, state: "Escalate to Expert Technician."
+Base all guidance strictly on the retrieved manual content provided.`,
+
+  expert: `You are a Technical Decision Support Helper for an expert maintenance technician.
+Provide in-depth technical detail: tolerances, specifications, failure modes, root cause indicators.
+Reference relevant standards and compliance requirements in the source documents.
+Structure responses as: Summary, Technical Detail, Specifications, Risk Considerations.
+Assume full technical competency — do not simplify.
+Base all analysis strictly on the retrieved manual content provided.`,
+
+  admin: `You are an Approval and Oversight Helper for a maintenance system administrator.
+Summarise the procedure's risk level, compliance flags, and audit-relevant considerations.
+Highlight steps requiring documented sign-off or falling under regulatory requirements.
+Note whether the procedure matches approved SOPs in the source material.
+Do not approve or reject autonomously — present findings for human review only.
+Base all analysis strictly on the retrieved manual content provided.`,
+};
+
+const DEFAULT_SYSTEM_PROMPT = `You are a maintenance assistant. Give a clear, safe, step-by-step response to technical inspection and maintenance tasks. Base all guidance strictly on the retrieved manual content provided.`;
+
 app.post('/api/query', async (req, res) => {
   try {
     const {
       query,
-      userId,        
-      sessionId,     
+      role,
+      userId,
+      sessionId,
       docGroup,
       classification,
       category1,
@@ -34,9 +67,9 @@ app.post('/api/query', async (req, res) => {
       return res.status(400).json({ error: 'Query is required.' });
     }
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ error: 'Missing OPENROUTER_API_KEY in environment variables.' });
+      return res.status(500).json({ error: 'Missing OPENAI_API_KEY in environment variables.' });
     }
 
     // GET FILTERS INSIDE REQUEST
@@ -99,35 +132,54 @@ app.post('/api/query', async (req, res) => {
       }
     });
 
-    // ── Step 2: Send enriched prompt to OpenRouter ────────────────────────────
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    // ── Step 2: Send enriched prompt to OpenAI ───────────────────────────────
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'openai/gpt-oss-20b:free',
-        // model: 'google/gemma-3-27b-it:free',
+        model: 'gpt-4o-mini',
         messages: [
           {
+            role: "system",
+            content: ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT,
+          },
+          {
             role: "user",
-            content: finalPrompt
+            content: finalPrompt,
           }
         ]
       }),
     });
 
     const data = await response.json();
-    console.log('OpenRouter status:', response.status);
+    console.log('OpenAI status:', response.status);
 
     if (!response.ok) {
-      console.error('OpenRouter error:', JSON.stringify(data, null, 2));
+      console.error('OpenAI error:', JSON.stringify(data, null, 2));
       return res.status(response.status).json({
-        error: 'OpenRouter API request failed',
+        error: 'OpenAI API request failed',
         details: data,
       });
     }
+
+    // ── OpenRouter (commented out) ────────────────────────────────────────────
+    // const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    //   method: 'POST',
+    //   headers: {
+    //     'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+    //     'Content-Type': 'application/json',
+    //   },
+    //   body: JSON.stringify({
+    //     model: 'openai/gpt-4o-mini',
+    //     messages: [
+    //       { role: "system", content: ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT },
+    //       { role: "user",   content: finalPrompt }
+    //     ]
+    //   }),
+    // });
 
     const text = data?.choices?.[0]?.message?.content || 'No response text returned.';
 
@@ -144,12 +196,16 @@ app.post('/api/query', async (req, res) => {
       console.error("[AUDIT LOGGING FAILED]:", auditErr);
     }
 
-    // ── Step 3: Return LLM answer + sources from retrieval ───────────────────
+    // ── Step 3: Alert Agent — detect safety-critical content ─────────────────
+    const alert = detectAlerts(query, text, role);
+
+    // ── Step 4: Return LLM answer + sources + alert metadata ─────────────────
     res.json({
       text,
-      sources: retrievalData.sources,   // Real document sources
-      context_blocks: retrievalData.context_blocks, // Optional debug info
+      sources: retrievalData.sources,
+      context_blocks: retrievalData.context_blocks,
       reasoning: 'Generated via OpenRouter with RAG context',
+      alert,
     });
 
   } catch (error) {
@@ -181,6 +237,37 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Node backend running at http://localhost:${PORT}`);
   console.log(`Expecting retrieval service at ${RETRIEVAL_SERVICE_URL}`);
 });
+
+function detectAlerts(query, responseText, role) {
+  const text = responseText.toLowerCase();
+
+  const criticalKeywords = ['loto', 'lockout', 'tagout', 'high voltage', 'electrical hazard', 'life-threatening', 'fatal', 'electrocution'];
+  const warningKeywords  = ['warning', 'caution', 'ppe', 'personal protective equipment', 'hazard', 'danger', 'high risk', 'critical safety', 'do not operate'];
+
+  for (const kw of criticalKeywords) {
+    if (text.includes(kw)) {
+      return {
+        level: 'critical',
+        icon: '🚨',
+        title: 'CRITICAL Safety Procedure Detected',
+        reason: `Response contains critical safety requirement: "${kw}"`,
+      };
+    }
+  }
+
+  for (const kw of warningKeywords) {
+    if (text.includes(kw)) {
+      return {
+        level: 'warning',
+        icon: '⚠️',
+        title: 'Safety Warning in Response',
+        reason: `Response contains safety content: "${kw}"`,
+      };
+    }
+  }
+
+  return null;
+}
 
 function extractFilters(query, knownGroups = [], knownFiles = [], knownClassifications = [], knownCat1 = [], knownCat2 = [], knownModels = []) {
   const q = query.toLowerCase();

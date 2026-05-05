@@ -66,7 +66,12 @@ export default function RecommendationReview({ recommendation, onApprove, onReje
       {/* AI badge */}
       <div className="ai-badge">
         <span style={{ fontSize: '16px' }}>🤖</span>
-        AI recommendation generated · Review all steps before deciding
+        {{
+          beginner:     'Guidance Helper · Plain-language procedure — review every step before touching anything',
+          intermediate: 'Task Assistance Helper · Procedure from manual — verify tool list before starting',
+          expert:       'Technical Decision Support · Deep analysis from source documents — validate specs before proceeding',
+          admin:        'Approval & Oversight Helper · Risk and compliance summary — human sign-off required',
+        }[role] || 'AI recommendation generated · Review all steps before deciding'}
       </div>
 
       {/* Beginner guidance banner */}

@@ -2,6 +2,10 @@ const { db } = require('../config/firebaseAdmin');
 const { FieldValue } = require('firebase-admin/firestore');
 
 async function logAuditRecord(query, text, sources, userId = "anonymous_user", sessionId) {
+  if (!db) {
+    console.warn('[AUDIT] Skipped — Firebase not configured');
+    return null;
+  }
   try {
     const finalSessionId = sessionId || `session-${Date.now()}`;
     const formattedTimestamp = new Date().toISOString().replace('T', ' ').split('.')[0];

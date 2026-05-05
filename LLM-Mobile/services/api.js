@@ -65,19 +65,39 @@ export const submitQuery = async (query) => {
     const data = await response.json();
 
     try {
+      // Always log the query as an info entry
       await addDoc(collection(db, 'Alerts'), {
-        type:      'info',
-        icon:      '🔍',
-        title:     'Query Submitted',
-        message:   `${userRole.toUpperCase()} asked: "${query.slice(0, 100)}"`,
-        status:    'Logged',
+        type:        'info',
+        icon:        '🔍',
+        title:       'Query Submitted',
+        message:     `${userRole.toUpperCase()} asked: "${query.slice(0, 100)}"`,
+        status:      'Logged',
         statusColor: '#16a34a',
         statusBg:    '#dcfce7',
-        userEmail: userEmail,
-        role: userRole,
-        sources:   data.sources || [],
-        createdAt: serverTimestamp(),
+        userEmail,
+        role:        userRole,
+        sources:     data.sources || [],
+        createdAt:   serverTimestamp(),
       });
+
+      // Alert Agent: if backend flagged safety content, log a separate alert
+      if (data.alert) {
+        const isCritical = data.alert.level === 'critical';
+        await addDoc(collection(db, 'Alerts'), {
+          type:        'alert',
+          icon:        data.alert.icon,
+          title:       data.alert.title,
+          message:     `${userRole.toUpperCase()} · "${query.slice(0, 80)}" — ${data.alert.reason}`,
+          status:      isCritical ? 'Requires Immediate Review' : 'Pending Review',
+          statusColor: isCritical ? '#dc2626' : '#d97706',
+          statusBg:    isCritical ? '#fef2f2' : '#fffbeb',
+          userEmail,
+          role:        userRole,
+          sources:     data.sources || [],
+          createdAt:   serverTimestamp(),
+        });
+        console.log(`[ALERT AGENT] ${data.alert.level.toUpperCase()} alert logged to Firebase`);
+      }
     } catch (e) {
       console.log('Alert log error:', e.message);
     }

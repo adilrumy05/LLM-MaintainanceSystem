@@ -68,9 +68,12 @@ export default function Dashboard() {
     beginner:     'Read-only access · Review procedures and escalate to a senior technician.',
   }[role];
 
-  const placeholder = isJunior
-    ? 'Describe what needs fixing — I\'ll guide you step by step…'
-    : 'Enter a maintenance task, equipment issue, or disassembly request...';
+  const placeholder = {
+    beginner:     "Describe what needs fixing — I'll guide you step by step…",
+    intermediate: "Enter a task to retrieve the relevant procedure and tool list…",
+    expert:       "Enter a technical query for deep specification and root cause analysis…",
+    admin:        "Enter a procedure to review for risk, compliance, and audit flags…",
+  }[role] || 'Enter a maintenance task, equipment issue, or disassembly request...';
 
   useEffect(() => {
     const supported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
@@ -219,6 +222,31 @@ export default function Dashboard() {
           </span>
         </div>
       </div>
+
+      {/* AI Helper identity banner */}
+      {(() => {
+        const helperMeta = {
+          beginner:     { label: 'Guidance Helper',             icon: '💡', color: 'var(--blue)',         bg: 'rgba(41,121,255,0.07)',   border: 'rgba(41,121,255,0.2)'  },
+          intermediate: { label: 'Task Assistance Helper',      icon: '🔧', color: 'var(--yellow)',       bg: 'rgba(255,179,0,0.07)',    border: 'rgba(255,179,0,0.25)'  },
+          expert:       { label: 'Technical Decision Support',  icon: '⚙️', color: 'var(--blue)',         bg: 'rgba(41,121,255,0.07)',   border: 'rgba(41,121,255,0.2)'  },
+          admin:        { label: 'Approval & Oversight Helper', icon: '🛡', color: 'var(--fedex-purple)', bg: 'rgba(172,114,235,0.07)', border: 'rgba(172,114,235,0.2)' },
+        }[role];
+        if (!helperMeta) return null;
+        return (
+          <div style={{
+            background: helperMeta.bg, border: `1px solid ${helperMeta.border}`,
+            borderRadius: '8px', padding: '10px 14px', marginBottom: '12px',
+            fontSize: '12px', color: helperMeta.color, lineHeight: '1.5',
+            display: 'flex', alignItems: 'center', gap: '8px',
+          }}>
+            <span style={{ fontSize: '15px' }}>{helperMeta.icon}</span>
+            <span>
+              <strong>{helperMeta.label} active</strong>
+              {' · '}Responses are tailored to your access level and grounded in retrieved manual content.
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Beginner safety banner */}
       {isJunior && (

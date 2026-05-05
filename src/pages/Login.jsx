@@ -11,7 +11,10 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     await new Promise(r => setTimeout(r, 600));
-    const role = email.includes('admin') ? 'admin' : 'expert';
+    const role = email.includes('admin')        ? 'admin'
+               : email.includes('expert')       ? 'expert'
+               : email.includes('intermediate') ? 'intermediate'
+               : 'beginner';
     localStorage.setItem('user', JSON.stringify({ email, role }));
     navigate(role === 'admin' ? '/admin' : '/dashboard');
   };
