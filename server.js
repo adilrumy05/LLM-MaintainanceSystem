@@ -67,9 +67,9 @@ app.post('/api/query', async (req, res) => {
       return res.status(400).json({ error: 'Query is required.' });
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: 'Missing OPENAI_API_KEY in environment variables.' });
+    const apiKey = process.env.OPENROUTER_API_KEY;
+   if (!apiKey) {
+      return res.status(500).json({ error: 'Missing OPENROUTER_API_KEY in environment                       variables.' });
     }
 
     // GET FILTERS INSIDE REQUEST
@@ -133,29 +133,23 @@ app.post('/api/query', async (req, res) => {
     });
 
     // ── Step 2: Send enriched prompt to OpenAI ───────────────────────────────
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: "system",
-            content: ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT,
-          },
-          {
-            role: "user",
-            content: finalPrompt,
-          }
-        ]
-      }),
-    });
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    model: 'google/gemma-3-27b-it:free',
+    messages: [
+      { role: "system", content: ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT },
+      { role: "user",   content: finalPrompt }
+    ]
+  }),
+});
 
     const data = await response.json();
-    console.log('OpenAI status:', response.status);
+    console.log('OpenRouter status:', response.status);
 
     if (!response.ok) {
       console.error('OpenAI error:', JSON.stringify(data, null, 2));

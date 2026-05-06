@@ -228,10 +228,10 @@ export default function Dashboard() {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={0}
+      behavior="padding"
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
-      <SafeAreaView style={s.safe}>
+      <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
 
         {/* Sidebar */}
         {showSidebar && (
@@ -450,7 +450,7 @@ const s = StyleSheet.create({
   typingText:         { color: C.textMuted, fontSize: 12 },
   cancelBtn:          { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   cancelText:         { color: '#f87171', fontSize: 12, fontWeight: '700' },
-  inputWrapper:       { backgroundColor: C.card, borderTopWidth: 1, borderColor: C.cardBorder },
+  inputWrapper:       { backgroundColor: C.card, borderTopWidth: 1, borderColor: C.cardBorder, paddingBottom: 0 },
   fileBadge:          { flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginTop: 8, backgroundColor: C.primaryLight, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6, gap: 8 },
   fileBadgeText:      { color: C.primary, fontSize: 12, flex: 1, fontWeight: '600' },
   fileBadgeRemove:    { color: C.primary, fontSize: 14, fontWeight: '700' },
