@@ -5,13 +5,15 @@ import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 
+// ─── Type config ─────────────────────────────────────────────────────────────
 const TYPE_CONFIG = {
-  alert:    { label: 'Alert',    labelColor: C.red,    bg: '#fee2e2' },
-  priority: { label: 'Priority', labelColor: C.orange, bg: '#ffedd5' },
-  share:    { label: 'Info',     labelColor: C.green,  bg: '#dcfce7' },
-  info:     { label: 'System',   labelColor: C.blue,   bg: '#dbeafe' },
+  alert:    { label: 'Alert',    labelColor: C.red,    bg: '#fee2e2', iconName: 'warning-outline'       },
+  priority: { label: 'Priority', labelColor: C.orange, bg: '#ffedd5', iconName: 'flag-outline'          },
+  share:    { label: 'Info',     labelColor: C.green,  bg: '#dcfce7', iconName: 'information-circle-outline' },
+  info:     { label: 'System',   labelColor: C.blue,   bg: '#dbeafe', iconName: 'search-outline'        },
 };
 
 const TABS = [
@@ -26,11 +28,7 @@ export default function Activity() {
   const [loading, setLoading] = useState(true);
   const [user, setUser]       = useState(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadUser();
-    }, [])
-  );
+  useFocusEffect(useCallback(() => { loadUser(); }, []));
 
   const loadUser = async () => {
     const raw = await AsyncStorage.getItem('user');
@@ -42,38 +40,25 @@ export default function Activity() {
   const fetchAlerts = async (u) => {
     setLoading(true);
     try {
-      // ✅ FIXED — extract role and email from u
       const role      = u?.role  || 'beginner';
       const userEmail = u?.email || '';
-
       console.log('USER EMAIL:', userEmail);
       console.log('ROLE:', role);
-
       const alertsRef = collection(db, 'Alerts');
       let q;
-
       if (role === 'admin') {
         q = query(alertsRef, orderBy('createdAt', 'desc'));
       } else {
-        q = query(
-          alertsRef,
-          where('userEmail', '==', userEmail),
-          orderBy('createdAt', 'desc')
-        );
+        q = query(alertsRef, where('userEmail', '==', userEmail), orderBy('createdAt', 'desc'));
       }
-
       const snapshot = await getDocs(q);
       const data = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-        timestamp: doc.data().createdAt?.toDate
-          ? formatTime(doc.data().createdAt.toDate())
-          : 'Just now',
+        timestamp: doc.data().createdAt?.toDate ? formatTime(doc.data().createdAt.toDate()) : 'Just now',
       }));
       setAlerts(data);
-    } catch (e) {
-      console.log('Error fetching alerts:', e.message);
-    }
+    } catch (e) { console.log('Error fetching alerts:', e.message); }
     setLoading(false);
   };
 
@@ -92,6 +77,7 @@ export default function Activity() {
     <SafeAreaView style={s.safe}>
       <ScrollView style={s.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
 
+        {/* ─── Header ──────────────────────────────────────────────── */}
         <View style={s.headerRow}>
           <View>
             <Text style={s.pageTitle}>Activity & Alerts</Text>
@@ -105,14 +91,15 @@ export default function Activity() {
           </View>
         </View>
 
+        {/* ─── Notice banner ───────────────────────────────────────── */}
         {!isAdmin && (
           <View style={s.noticeBanner}>
-            <Text style={s.noticeText}>
-              👤 Showing activity for your account only. Contact admin to view all.
-            </Text>
+            <Ionicons name="person-outline" size={13} color={C.primaryText} />
+            <Text style={s.noticeText}> Showing activity for your account only. Contact admin to view all.</Text>
           </View>
         )}
 
+        {/* ─── Filter tabs ─────────────────────────────────────────── */}
         <View style={s.tabRow}>
           {TABS.map(tab => (
             <TouchableOpacity
@@ -130,6 +117,7 @@ export default function Activity() {
           ))}
         </View>
 
+        {/* ─── Loading ─────────────────────────────────────────────── */}
         {loading && (
           <View style={s.loadingBox}>
             <ActivityIndicator color={C.primary} />
@@ -137,12 +125,13 @@ export default function Activity() {
           </View>
         )}
 
+        {/* ─── Feed cards ──────────────────────────────────────────── */}
         {!loading && filtered.map(alert => {
           const cfg = TYPE_CONFIG[alert.type] || TYPE_CONFIG.info;
           return (
             <View key={alert.id} style={s.feedCard}>
               <View style={[s.iconBox, { backgroundColor: cfg.bg }]}>
-                <Text style={{ fontSize: 18 }}>{alert.icon || '🔍'}</Text>
+                <Ionicons name={cfg.iconName} size={20} color={cfg.labelColor} />
               </View>
               <View style={s.feedContent}>
                 <View style={s.feedTopRow}>
@@ -157,7 +146,10 @@ export default function Activity() {
                   <Text style={s.roleTag}>Role: {alert.role.toUpperCase()}</Text>
                 )}
                 {isAdmin && alert.userEmail && (
-                  <Text style={s.emailTag}>📧 {alert.userEmail}</Text>
+                  <View style={s.emailRow}>
+                    <Ionicons name="mail-outline" size={11} color={C.textMuted} />
+                    <Text style={s.emailTag}> {alert.userEmail}</Text>
+                  </View>
                 )}
                 <View style={s.feedBottom}>
                   {alert.status ? (
@@ -171,14 +163,13 @@ export default function Activity() {
           );
         })}
 
+        {/* ─── Empty state ─────────────────────────────────────────── */}
         {!loading && filtered.length === 0 && (
           <View style={s.emptyState}>
-            <Text style={{ fontSize: 36, marginBottom: 10 }}>🔔</Text>
+            <Ionicons name="notifications-outline" size={40} color={C.textMuted} style={{ marginBottom: 10 }} />
             <Text style={s.emptyTitle}>No Activity Yet</Text>
             <Text style={s.muted}>
-              {isAdmin
-                ? 'No queries have been submitted yet.'
-                : 'You have no activity logged yet. Start by asking a question in the Dashboard.'}
+              {isAdmin ? 'No queries have been submitted yet.' : 'You have no activity logged yet. Start by asking a question in the Dashboard.'}
             </Text>
           </View>
         )}
@@ -197,8 +188,8 @@ const s = StyleSheet.create({
   liveRow:       { flexDirection: 'row', alignItems: 'center', gap: 6 },
   liveDot:       { width: 8, height: 8, borderRadius: 4, backgroundColor: C.green },
   liveText:      { color: C.green, fontSize: 12, fontWeight: '700' },
-  noticeBanner:  { backgroundColor: C.primaryLight, borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: C.cardBorder },
-  noticeText:    { color: C.primaryText, fontSize: 12, lineHeight: 18 },
+  noticeBanner:  { flexDirection: 'row', alignItems: 'center', backgroundColor: C.primaryLight, borderRadius: 10, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: C.cardBorder },
+  noticeText:    { color: C.primaryText, fontSize: 12, lineHeight: 18, flex: 1 },
   tabRow:        { flexDirection: 'row', gap: 8, marginBottom: 20 },
   tab:           { borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6 },
   tabText:       { fontSize: 11, fontWeight: '600' },
@@ -214,7 +205,8 @@ const s = StyleSheet.create({
   feedTitle:     { color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 4 },
   feedMessage:   { color: C.textSub, fontSize: 12, lineHeight: 18 },
   roleTag:       { color: C.primary, fontSize: 10, fontWeight: '700', marginTop: 4 },
-  emailTag:      { color: C.textMuted, fontSize: 10, marginTop: 2 },
+  emailRow:      { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+  emailTag:      { color: C.textMuted, fontSize: 10 },
   feedBottom:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
   statusBadge:   { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
   statusText:    { fontSize: 10, fontWeight: '700' },

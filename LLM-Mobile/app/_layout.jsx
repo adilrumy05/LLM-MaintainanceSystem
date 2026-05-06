@@ -1,7 +1,8 @@
 import { Tabs, usePathname } from 'expo-router';
-import { Text, View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 
 export default function Layout() {
@@ -37,7 +38,7 @@ export default function Layout() {
       tabBarActiveTintColor:   C.tabActive,
       tabBarInactiveTintColor: C.tabInactive,
     }}>
-      {/* ── Hidden screens (never in tab bar) ── */}
+      {/* ── Hidden screens ── */}
       <Tabs.Screen name="index"          options={{ href: null }} />
       <Tabs.Screen name="login"          options={{ href: null }} />
       <Tabs.Screen name="beginner"       options={{ href: null }} />
@@ -46,40 +47,40 @@ export default function Layout() {
       <Tabs.Screen name="usermanagement" options={{ href: null }} />
       <Tabs.Screen name="userform"       options={{ href: null }} />
 
-      {/* ── Navigable via Admin menu only ── */}
+      {/* ── Admin menu only ── */}
       <Tabs.Screen name="tasks"      options={{ href: null }} />
       <Tabs.Screen name="analytics"  options={{ href: null }} />
       <Tabs.Screen name="documents"  options={{ href: null }} />
 
-      {/* ══════════════════════════════════════════════
-          TAB ORDER — Admin:   Dashboard, Activity, History, Admin, Profile
-          TAB ORDER — Others:  Dashboard, Activity, History, Profile
-         ══════════════════════════════════════════════ */}
+      {/* ══ TAB ORDER ══════════════════════════════════════════════════
+          Admin:   Dashboard, Activity, History, Admin, Profile
+          Others:  Dashboard, Activity, History, Profile
+         ══════════════════════════════════════════════════════════════ */}
 
       <Tabs.Screen name="dashboard" options={{
         title: 'Dashboard',
-        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>⚡</Text>
+        tabBarIcon: ({ color, size }) => <Ionicons name="flash-outline" size={size} color={color} />
       }} />
 
       <Tabs.Screen name="activity" options={{
         title: 'Activity',
-        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>🔔</Text>
+        tabBarIcon: ({ color, size }) => <Ionicons name="notifications-outline" size={size} color={color} />
       }} />
 
       <Tabs.Screen name="history" options={{
         title: 'History',
-        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>🕐</Text>
+        tabBarIcon: ({ color, size }) => <Ionicons name="time-outline" size={size} color={color} />
       }} />
 
       <Tabs.Screen name="admin" options={{
         title: 'Admin',
         href: isAdmin ? '/admin' : null,
-        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>⚙️</Text>
+        tabBarIcon: ({ color, size }) => <Ionicons name="settings-outline" size={size} color={color} />
       }} />
 
       <Tabs.Screen name="profile" options={{
         title: 'Profile',
-        tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 16 }}>👤</Text>
+        tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" size={size} color={color} />
       }} />
 
     </Tabs>
