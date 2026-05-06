@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   FlatList, ActivityIndicator, Alert, StyleSheet,
-  KeyboardAvoidingView, Platform, ScrollView,
+  KeyboardAvoidingView, Platform, Image, ScrollView
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -156,7 +156,16 @@ export default function Dashboard() {
           <View style={s.imageDropdown}>
             {source.images.map((img, imgIdx) => (
               <View key={imgIdx} style={s.imageCard}>
-                <Text style={s.imagePlaceholder}>{img.caption || 'Image'}</Text>
+                {img.url ? (
+                  <Image
+                    source={{ uri: img.url }}
+                    style={s.thumbnail}
+                    resizeMode="contain"
+                  />
+                ) : null}
+                {img.caption ? (
+                  <Text style={s.imagePlaceholder}>{img.caption}</Text>
+                ) : null}
               </View>
             ))}
           </View>

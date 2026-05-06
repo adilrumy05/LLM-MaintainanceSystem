@@ -574,6 +574,23 @@ def _deduplicate_sources(blocks: List[ContextBlock]) -> List[Dict[str, Any]]:
             })
     return sources
 
+def _build_firebase_url(self, abs_path: str, src_path: str) -> str | None:
+    rel_path = None
+    if abs_path and "/output/" in abs_path:
+        rel_path = "output/" + abs_path.split("/output/")[-1]
+    elif src_path:
+        rel_path = f"output/{src_path}"
+    
+    if not rel_path:
+        return None
+    
+    # URL-encode the path (replace / with %2F)
+    encoded = rel_path.replace("/", "%2F")
+    return (
+        f"https://firebasestorage.googleapis.com/v0/b/"
+        f"{FIREBASE_BUCKET}/o/{encoded}?alt=media"
+    )
+
 
 def _enrich_sources_with_images(sources: List[Dict], blocks: List[ContextBlock]) -> List[Dict]:
     """
@@ -606,12 +623,14 @@ def _enrich_sources_with_images(sources: List[Dict], blocks: List[ContextBlock])
             # Convert local path to public Firebase URL
             public_url = None
             if abs_path and "/output/" in abs_path:
-                rel_path = abs_path.split("/output/")[-1]
-                public_url = f"https://storage.googleapis.com/{FIREBASE_BUCKET}/output/{rel_path}"
+                rel_path = "output/" + abs_path.split("/output/")[-1]
+                encoded = rel_path.replace("/", "%2F")
+                public_url = f"https://firebasestorage.googleapis.com/v0/b/{FIREBASE_BUCKET}/o/{encoded}?alt=media"
                 print(f"DEBUG: built URL from abs_path -> {public_url}")
             elif src_path:
-                # Fallback: use src_path as relative path
-                public_url = f"https://storage.googleapis.com/{FIREBASE_BUCKET}/output/{src_path}"
+                rel_path = f"output/{src_path}"
+                encoded = rel_path.replace("/", "%2F")
+                public_url = f"https://firebasestorage.googleapis.com/v0/b/{FIREBASE_BUCKET}/o/{encoded}?alt=media"
                 print(f"DEBUG: built URL from src_path -> {public_url}")
             else:
                 print("DEBUG: no src_path and abs_path missing /output/, cannot build URL")
