@@ -47,37 +47,43 @@ export default function Layout() {
       <Tabs.Screen name="usermanagement" options={{ href: null }} />
       <Tabs.Screen name="userform"       options={{ href: null }} />
 
-      {/* ── Admin menu only ── */}
+      {/* ── Admin menu only pages ── */}
       <Tabs.Screen name="tasks"      options={{ href: null }} />
       <Tabs.Screen name="analytics"  options={{ href: null }} />
       <Tabs.Screen name="documents"  options={{ href: null }} />
 
-      {/* ══ TAB ORDER ══════════════════════════════════════════════════
-          Admin:   Dashboard, Activity, History, Admin, Profile
-          Others:  Dashboard, Activity, History, Profile
-         ══════════════════════════════════════════════════════════════ */}
+      {/* ── History: admin only via Admin menu ── */}
+      <Tabs.Screen name="history" options={{ href: null }} />
 
+      {/* ══ TAB BAR ════════════════════════════════════════════════ */}
+
+      {/* Dashboard — all roles */}
       <Tabs.Screen name="dashboard" options={{
         title: 'Dashboard',
         tabBarIcon: ({ color, size }) => <Ionicons name="flash-outline" size={size} color={color} />
       }} />
 
+      {/* Alerts — all roles (renamed to Activity) */}
       <Tabs.Screen name="activity" options={{
         title: 'Activity',
         tabBarIcon: ({ color, size }) => <Ionicons name="notifications-outline" size={size} color={color} />
       }} />
 
-      <Tabs.Screen name="history" options={{
-        title: 'History',
-        tabBarIcon: ({ color, size }) => <Ionicons name="time-outline" size={size} color={color} />
+      {/* My Sessions — workers only (hidden for admin) */}
+      <Tabs.Screen name="mysessions" options={{
+        title: 'My Sessions',
+        href: !isAdmin ? '/mysessions' : null,
+        tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} />
       }} />
 
+      {/* Admin — admin only */}
       <Tabs.Screen name="admin" options={{
         title: 'Admin',
         href: isAdmin ? '/admin' : null,
         tabBarIcon: ({ color, size }) => <Ionicons name="settings-outline" size={size} color={color} />
       }} />
 
+      {/* Profile — all roles */}
       <Tabs.Screen name="profile" options={{
         title: 'Profile',
         tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" size={size} color={color} />
