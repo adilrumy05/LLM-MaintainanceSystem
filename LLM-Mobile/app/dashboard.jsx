@@ -414,6 +414,7 @@ const s = StyleSheet.create({
   input:            { flex: 1, backgroundColor: C.inputBg, color: C.text, borderRadius: 20, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 120 },
   sendBtn:          { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   sendBtnDisabled:  { backgroundColor: '#c4b5fd' },
+  thumbnail: { width: 220, height: 160, borderRadius: 6, marginTop: 4 },
 });
 
 const markdownStyles = {
