@@ -146,6 +146,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
   },
   body: JSON.stringify({
     model: 'openai/gpt-oss-20b:free',
+    // model: 'google/gemma-3-27b-it:free',
     messages: [
       { role: "system", content: ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT },
       { role: "user",   content: finalPrompt }
