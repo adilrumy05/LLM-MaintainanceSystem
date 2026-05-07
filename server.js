@@ -5,6 +5,10 @@ const dotenv = require('dotenv');
 const { logAuditRecord } = require('./server/services/auditLogger');
 const fs = require('fs');
 const path = require('path');
+const sanitize = require('./server/middleware/sanitize');
+const validate = require('./server/middleware/validate');
+const outputSanitize = require('./server/middleware/outputSanitize');
+
 
 dotenv.config();
 
@@ -47,7 +51,8 @@ Base all analysis strictly on the retrieved manual content provided.`,
 
 const DEFAULT_SYSTEM_PROMPT = `You are a maintenance assistant. Give a clear, safe, step-by-step response to technical inspection and maintenance tasks. Base all guidance strictly on the retrieved manual content provided.`;
 
-app.post('/api/query', async (req, res) => {
+
+app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
   try {
     const {
       query,
@@ -140,7 +145,7 @@ app.post('/api/query', async (req, res) => {
     'Content-Type': 'application/json',
   },
   body: JSON.stringify({
-    model: 'google/gemma-3-27b-it:free',
+    model: 'google/gemma-3-27b-it',
     messages: [
       { role: "system", content: ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT },
       { role: "user",   content: finalPrompt }
