@@ -53,9 +53,7 @@ export default function MySessions() {
 
   const getStatusCfg = (status) => STATUS_CONFIG[status] || STATUS_CONFIG.pending_review;
 
-  const totalQueries  = sessions.reduce((acc, s) => acc + (s.messages?.length || 0), 0);
-  const approvedCount = sessions.filter(s => s.status === 'approved').length;
-  const pendingCount  = sessions.filter(s => s.status === 'pending_review').length;
+  const totalQueries = sessions.reduce((acc, s) => acc + (s.messages?.length || 0), 0);
 
   return (
     <SafeAreaView style={s.safe}>
@@ -84,16 +82,6 @@ export default function MySessions() {
             <Ionicons name="search-outline" size={20} color={C.blue} />
             <Text style={[s.statValue, { color: C.blue }]}>{totalQueries}</Text>
             <Text style={s.statLabel}>Queries</Text>
-          </View>
-          <View style={[s.statCard, { borderColor: C.green }]}>
-            <Ionicons name="checkmark-circle-outline" size={20} color={C.green} />
-            <Text style={[s.statValue, { color: C.green }]}>{approvedCount}</Text>
-            <Text style={s.statLabel}>Approved</Text>
-          </View>
-          <View style={[s.statCard, { borderColor: '#d97706' }]}>
-            <Ionicons name="time-outline" size={20} color="#d97706" />
-            <Text style={[s.statValue, { color: '#d97706' }]}>{pendingCount}</Text>
-            <Text style={s.statLabel}>Pending</Text>
           </View>
         </View>
 

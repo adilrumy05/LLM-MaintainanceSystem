@@ -1,5 +1,5 @@
 import { Tabs, usePathname } from 'expo-router';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,15 +11,17 @@ export default function Layout() {
   const pathname              = usePathname();
   const hideTabBar            = pathname === '/login' || pathname === '/';
 
-  useEffect(() => {
-    const load = async () => {
-      const raw  = await AsyncStorage.getItem('user');
-      const user = JSON.parse(raw || '{}');
-      setRole(user?.role || null);
-      setLoading(false);
-    };
-    load();
-  }, [pathname]);
+useEffect(() => {
+  if (Platform.OS === 'web') {
+    const style = document.createElement('style');
+    style.textContent = `
+      * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+      *::-webkit-scrollbar { display: none !important; width: 0 !important; }
+    `;
+    document.head.appendChild(style);
+  }
+}, []);
+
 
   if (loading) return (
     <View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' }}>
@@ -29,7 +31,7 @@ export default function Layout() {
 
   const isAdmin = role === 'admin';
 
-  return (
+  const tabs = (
     <Tabs screenOptions={{
       headerShown: false,
       tabBarStyle: hideTabBar
@@ -47,7 +49,7 @@ export default function Layout() {
       <Tabs.Screen name="usermanagement" options={{ href: null }} />
       <Tabs.Screen name="userform"       options={{ href: null }} />
 
-      {/* ── Admin menu only pages ── */}
+      {/* ── Admin menu only ── */}
       <Tabs.Screen name="tasks"      options={{ href: null }} />
       <Tabs.Screen name="analytics"  options={{ href: null }} />
       <Tabs.Screen name="documents"  options={{ href: null }} />
@@ -55,40 +57,122 @@ export default function Layout() {
       {/* ── History: admin only via Admin menu ── */}
       <Tabs.Screen name="history" options={{ href: null }} />
 
-      {/* ══ TAB BAR ════════════════════════════════════════════════ */}
-
-      {/* Dashboard — all roles */}
+      {/* ══ TAB BAR ══════════════════════════════════════════════ */}
       <Tabs.Screen name="dashboard" options={{
         title: 'Dashboard',
         tabBarIcon: ({ color, size }) => <Ionicons name="flash-outline" size={size} color={color} />
       }} />
-
-      {/* Alerts — all roles (renamed to Activity) */}
       <Tabs.Screen name="activity" options={{
         title: 'Activity',
         tabBarIcon: ({ color, size }) => <Ionicons name="notifications-outline" size={size} color={color} />
       }} />
-
-      {/* My Sessions — workers only (hidden for admin) */}
       <Tabs.Screen name="mysessions" options={{
         title: 'My Sessions',
         href: !isAdmin ? '/mysessions' : null,
         tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} />
       }} />
-
-      {/* Admin — admin only */}
       <Tabs.Screen name="admin" options={{
         title: 'Admin',
         href: isAdmin ? '/admin' : null,
         tabBarIcon: ({ color, size }) => <Ionicons name="settings-outline" size={size} color={color} />
       }} />
-
-      {/* Profile — all roles */}
       <Tabs.Screen name="profile" options={{
         title: 'Profile',
         tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" size={size} color={color} />
       }} />
-
     </Tabs>
   );
+
+  // ── Web: phone mockup frame ───────────────────────────────────
+  if (Platform.OS === 'web') {
+    return (
+      <View style={web.container}>
+        <style>{`* { scrollbar-width: none !important; } *::-webkit-scrollbar { display: none !important; }`}</style>
+        <View style={web.device}>
+          <View style={web.btnLeft} />
+          <View style={web.btnLeft2} />
+          <View style={web.btnLeft3} />
+          <View style={web.btnRight} />
+          <View style={web.screen}>
+            {tabs}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  return tabs;
 }
+
+// ── Web phone frame styles ────────────────────────────────────────────────────
+const web = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#d1d5db',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '100vh',
+    overflow: 'hidden',
+  },
+  device: {
+    width: 360,
+    height: '88vh',
+    maxHeight: 760,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 44,
+    padding: 8,
+    paddingBottom: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.5,
+    shadowRadius: 40,
+    position: 'relative',
+    overflow: 'hidden',
+    scrollbarWidth: 'none',
+    msOverflowStyle: 'none',
+  },
+  screen: {
+    flex: 1,
+    backgroundColor: C.bg,
+    borderRadius: 38,
+    overflow: 'hidden',
+    scrollbarWidth: 'none',
+    msOverflowStyle: 'none',
+  },
+  btnLeft: {
+    position: 'absolute',
+    left: -10,
+    top: 120,
+    width: 3,
+    height: 30,
+    backgroundColor: '#333',
+    borderRadius: 2,
+  },
+  btnLeft2: {
+    position: 'absolute',
+    left: -10,
+    top: 165,
+    width: 3,
+    height: 55,
+    backgroundColor: '#333',
+    borderRadius: 2,
+  },
+  btnLeft3: {
+    position: 'absolute',
+    left: -10,
+    top: 232,
+    width: 3,
+    height: 55,
+    backgroundColor: '#333',
+    borderRadius: 2,
+  },
+  btnRight: {
+    position: 'absolute',
+    right: -10,
+    top: 165,
+    width: 3,
+    height: 70,
+    backgroundColor: '#333',
+    borderRadius: 2,
+  },
+});

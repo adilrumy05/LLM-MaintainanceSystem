@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   FlatList, ActivityIndicator, Alert, StyleSheet,
-  KeyboardAvoidingView, Platform, Image, ScrollView
+  KeyboardAvoidingView, Platform, Image, ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -115,18 +115,22 @@ export default function Dashboard() {
     setShowSidebar(false);
   };
 
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: async () => {
-        await AsyncStorage.removeItem('user');
-        setChats([{ id: '1', messages: [] }]);
-        setActiveChatId('1');
-        setShowSidebar(false);
-        router.replace('/login');
-      }},
-    ]);
-  };
+const handleLogout = () => {
+  if (Platform.OS === 'web') {
+    if (window.confirm('Are you sure you want to logout?')) {
+      AsyncStorage.removeItem('user');
+      router.replace('/login');
+    }
+    return;
+  }
+  Alert.alert('Logout', 'Are you sure you want to logout?', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Logout', style: 'destructive', onPress: async () => {
+      await AsyncStorage.removeItem('user');
+      router.replace('/login');
+    }},
+  ]);
+};
 
   const getChatTitle = (chat) => {
     const first = chat.messages.find(m => m.from === 'user');
