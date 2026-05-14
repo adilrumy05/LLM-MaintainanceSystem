@@ -11,27 +11,40 @@ export default function Layout() {
   const pathname              = usePathname();
   const hideTabBar            = pathname === '/login' || pathname === '/';
 
-useEffect(() => {
-  if (Platform.OS === 'web') {
-    const style = document.createElement('style');
-    style.textContent = `
-      * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
-      *::-webkit-scrollbar { display: none !important; width: 0 !important; }
-    `;
-    document.head.appendChild(style);
-  }
-}, []);
+  // ── Inject scrollbar-hide CSS once on web ────────────────────
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const style = document.createElement('style');
+      style.textContent = `
+        * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+        *::-webkit-scrollbar { display: none !important; width: 0 !important; }
+      `;
+      document.head.appendChild(style);
+    }
+  }, []);
 
+  // ── Load role ONCE on mount — no pathname dependency ─────────
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const raw  = await AsyncStorage.getItem('user');
+        const user = JSON.parse(raw || 'null');
+        if (!cancelled) setRole(user?.role ?? null);
+      } catch (e) {
+        console.warn('[Layout] AsyncStorage read failed:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []); // ← empty deps: runs once, not on every navigation
 
-  if (loading) return (
-    <View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator color={C.primary} size="large" />
-    </View>
-  );
-
+  // ── Tab navigator ─────────────────────────────────────────────
   const isAdmin = role === 'admin';
 
-  const tabs = (
+  const tabNav = (
     <Tabs screenOptions={{
       headerShown: false,
       tabBarStyle: hideTabBar
@@ -49,38 +62,43 @@ useEffect(() => {
       <Tabs.Screen name="usermanagement" options={{ href: null }} />
       <Tabs.Screen name="userform"       options={{ href: null }} />
 
-      {/* ── Admin menu only ── */}
-      <Tabs.Screen name="tasks"      options={{ href: null }} />
-      <Tabs.Screen name="analytics"  options={{ href: null }} />
-      <Tabs.Screen name="documents"  options={{ href: null }} />
-
-      {/* ── History: admin only via Admin menu ── */}
-      <Tabs.Screen name="history" options={{ href: null }} />
+      {/* ── Admin-menu-only screens ── */}
+      <Tabs.Screen name="tasks"     options={{ href: null }} />
+      <Tabs.Screen name="analytics" options={{ href: null }} />
+      <Tabs.Screen name="documents" options={{ href: null }} />
+      <Tabs.Screen name="history"   options={{ href: null }} />
 
       {/* ══ TAB BAR ══════════════════════════════════════════════ */}
       <Tabs.Screen name="dashboard" options={{
         title: 'Dashboard',
-        tabBarIcon: ({ color, size }) => <Ionicons name="flash-outline" size={size} color={color} />
+        tabBarIcon: ({ color, size }) => <Ionicons name="flash-outline" size={size} color={color} />,
       }} />
       <Tabs.Screen name="activity" options={{
         title: 'Activity',
-        tabBarIcon: ({ color, size }) => <Ionicons name="notifications-outline" size={size} color={color} />
+        tabBarIcon: ({ color, size }) => <Ionicons name="notifications-outline" size={size} color={color} />,
       }} />
       <Tabs.Screen name="mysessions" options={{
         title: 'My Sessions',
         href: !isAdmin ? '/mysessions' : null,
-        tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} />
+        tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} />,
       }} />
       <Tabs.Screen name="admin" options={{
         title: 'Admin',
         href: isAdmin ? '/admin' : null,
-        tabBarIcon: ({ color, size }) => <Ionicons name="settings-outline" size={size} color={color} />
+        tabBarIcon: ({ color, size }) => <Ionicons name="settings-outline" size={size} color={color} />,
       }} />
       <Tabs.Screen name="profile" options={{
         title: 'Profile',
-        tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" size={size} color={color} />
+        tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" size={size} color={color} />,
       }} />
     </Tabs>
+  );
+
+  // ── Spinner — same layout shell as real content ───────────────
+  const spinner = (
+    <View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' }}>
+      <ActivityIndicator color={C.primary} size="large" />
+    </View>
   );
 
   // ── Web: phone mockup frame ───────────────────────────────────
@@ -94,14 +112,16 @@ useEffect(() => {
           <View style={web.btnLeft3} />
           <View style={web.btnRight} />
           <View style={web.screen}>
-            {tabs}
+            {loading ? spinner : tabNav}
           </View>
         </View>
       </View>
     );
   }
 
-  return tabs;
+  // ── Mobile ────────────────────────────────────────────────────
+  if (loading) return spinner;
+  return tabNav;
 }
 
 // ── Web phone frame styles ────────────────────────────────────────────────────
@@ -128,51 +148,15 @@ const web = StyleSheet.create({
     shadowRadius: 40,
     position: 'relative',
     overflow: 'hidden',
-    scrollbarWidth: 'none',
-    msOverflowStyle: 'none',
   },
   screen: {
     flex: 1,
     backgroundColor: C.bg,
     borderRadius: 38,
     overflow: 'hidden',
-    scrollbarWidth: 'none',
-    msOverflowStyle: 'none',
   },
-  btnLeft: {
-    position: 'absolute',
-    left: -10,
-    top: 120,
-    width: 3,
-    height: 30,
-    backgroundColor: '#333',
-    borderRadius: 2,
-  },
-  btnLeft2: {
-    position: 'absolute',
-    left: -10,
-    top: 165,
-    width: 3,
-    height: 55,
-    backgroundColor: '#333',
-    borderRadius: 2,
-  },
-  btnLeft3: {
-    position: 'absolute',
-    left: -10,
-    top: 232,
-    width: 3,
-    height: 55,
-    backgroundColor: '#333',
-    borderRadius: 2,
-  },
-  btnRight: {
-    position: 'absolute',
-    right: -10,
-    top: 165,
-    width: 3,
-    height: 70,
-    backgroundColor: '#333',
-    borderRadius: 2,
-  },
+  btnLeft:  { position: 'absolute', left: -10, top: 120, width: 3, height: 30,  backgroundColor: '#333', borderRadius: 2 },
+  btnLeft2: { position: 'absolute', left: -10, top: 165, width: 3, height: 55,  backgroundColor: '#333', borderRadius: 2 },
+  btnLeft3: { position: 'absolute', left: -10, top: 232, width: 3, height: 55,  backgroundColor: '#333', borderRadius: 2 },
+  btnRight: { position: 'absolute', right: -10, top: 165, width: 3, height: 70, backgroundColor: '#333', borderRadius: 2 },
 });

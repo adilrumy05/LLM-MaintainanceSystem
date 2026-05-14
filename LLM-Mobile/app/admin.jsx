@@ -1,13 +1,18 @@
 import React, { useState, useCallback } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from "react-native";
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useRouter, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { C } from '../theme';
 
 export default function AdminScreen() {
   const router = useRouter();
+
+  // ── Auth gate — nothing renders until confirmed admin ─────────
+  const [authorized,    setAuthorized]    = useState(false);
 
   const [userCount,     setUserCount]     = useState(0);
   const [activePercent, setActivePercent] = useState(0);
@@ -15,46 +20,69 @@ export default function AdminScreen() {
   const [sessionCount,  setSessionCount]  = useState(0);
   const [pendingCount,  setPendingCount]  = useState(0);
 
-  // 🔒 Role guard + data fetch — runs every time screen is focused
   useFocusEffect(
     useCallback(() => {
+      let cancelled = false;
       const init = async () => {
-        // Role guard
-        const raw  = await AsyncStorage.getItem('user');
-        const user = JSON.parse(raw || '{}');
-        if (user?.role !== 'admin') { router.replace('/dashboard'); return; }
-
-        // Fetch metrics
+        // ── Role guard ────────────────────────────────────────────
         try {
-          // Users
+          const raw  = await AsyncStorage.getItem('user');
+          const user = JSON.parse(raw || '{}');
+          if (user?.role !== 'admin') {
+            router.replace('/dashboard');
+            return;
+          }
+          if (!cancelled) setAuthorized(true);
+        } catch (e) {
+          console.warn('[Admin] Auth check failed:', e);
+          router.replace('/dashboard');
+          return;
+        }
+
+        // ── Fetch metrics ─────────────────────────────────────────
+        try {
           const userSnapshot = await getDocs(collection(db, "Users"));
-          const users = userSnapshot.docs.map(doc => doc.data());
-          setUserCount(users.length);
-          const activeUsers = users.filter(u => u.isActive).length;
-          setActivePercent(users.length ? Math.round((activeUsers / users.length) * 100) : 0);
+          const users = userSnapshot.docs.map(d => d.data());
+          if (!cancelled) {
+            setUserCount(users.length);
+            const active = users.filter(u => u.isActive).length;
+            setActivePercent(users.length ? Math.round((active / users.length) * 100) : 0);
+          }
 
-          // Alerts
           const alertsSnapshot = await getDocs(collection(db, "Alerts"));
-          setAlertsCount(alertsSnapshot.size);
+          if (!cancelled) setAlertsCount(alertsSnapshot.size);
 
-          // Audit logs
           const logsSnapshot = await getDocs(collection(db, "audit_logs"));
-          const logs = logsSnapshot.docs.map(doc => doc.data());
-          setSessionCount(logs.length);
-          setPendingCount(logs.filter(l => l.status === 'pending_review').length);
-
+          const logs = logsSnapshot.docs.map(d => d.data());
+          if (!cancelled) {
+            setSessionCount(logs.length);
+            setPendingCount(logs.filter(l => l.status === 'pending_review').length);
+          }
         } catch (error) {
-          console.error("Error fetching metrics:", error);
+          console.error("Admin metrics error:", error);
         }
       };
       init();
-    }, [])
+      // Reset gate when screen loses focus so re-entry re-verifies
+      return () => { cancelled = true; setAuthorized(false); };
+    }, [router])
   );
 
   const handleLogout = async () => {
     await AsyncStorage.removeItem("user");
     router.replace("/login");
   };
+
+  // ── Block render until authorized ────────────────────────────
+  if (!authorized) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color={C.primary} size="large" />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const menuItems = [
     {
@@ -196,21 +224,21 @@ const styles = StyleSheet.create({
   safeArea:        { flex: 1, backgroundColor: "#f5f3ff" },
   container:       { flex: 1, backgroundColor: "#f5f3ff", paddingHorizontal: 16, paddingTop: 16 },
   topBar:          { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
-  greeting:        { fontSize: 10, color: "#7c3aed", letterSpacing: 1.2, marginBottom: 2, fontWeight: "700" },
-  topBarTitle:     { fontSize: 22, fontWeight: "700", color: "#1e1b4b" },
-  logoutBtn:       { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#fef2f2", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: "#fecaca" },
-  logoutText:      { color: "#f87171", fontSize: 12, fontWeight: "600" },
-  statsGrid:       { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 20 },
-  statCard:        { flex: 1, minWidth: '45%', backgroundColor: "#7c3aed", borderRadius: 14, padding: 14 },
+  greeting:        { fontSize: 10, color: "#7c3aed", fontWeight: "700", letterSpacing: 1.5, marginBottom: 2 },
+  topBarTitle:     { fontSize: 22, fontWeight: "800", color: "#1e1b4b" },
+  logoutBtn:       { flexDirection: "row", alignItems: "center", backgroundColor: "#fef2f2", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, gap: 4 },
+  logoutText:      { color: "#f87171", fontWeight: "700", fontSize: 13 },
+  statsGrid:       { flexDirection: "row", gap: 8, marginBottom: 24 },
+  statCard:        { flex: 1, backgroundColor: "#7c3aed", borderRadius: 12, padding: 12, alignItems: "center" },
   statCardWarning: { backgroundColor: "#92400e" },
-  statLabel:       { fontSize: 9, color: "#ddd6fe", letterSpacing: 0.8, marginBottom: 6, fontWeight: "700" },
-  statValue:       { fontSize: 26, fontWeight: "700", color: "#c4b5fd" },
-  sectionLabel:    { fontSize: 10, color: "#7c3aed", letterSpacing: 1.2, marginBottom: 12, fontWeight: "700" },
-  menuCard:        { backgroundColor: "#ffffff", borderRadius: 16, padding: 14, flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 10, borderWidth: 1, borderColor: "#ede9fe", elevation: 2 },
-  iconWrap:        { width: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#3b0764" },
+  statLabel:       { fontSize: 9, color: "#c4b5fd", fontWeight: "700", letterSpacing: 1, marginBottom: 4 },
+  statValue:       { fontSize: 20, fontWeight: "800", color: "#fff" },
+  sectionLabel:    { fontSize: 10, fontWeight: "700", color: "#7c3aed", letterSpacing: 1.5, marginBottom: 12 },
+  menuCard:        { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 16, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: "#ede9fe", shadowColor: "#7c3aed", shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
+  iconWrap:        { width: 40, height: 40, borderRadius: 12, backgroundColor: "#7c3aed", alignItems: "center", justifyContent: "center", marginRight: 12 },
   cardText:        { flex: 1 },
-  cardTitle:       { fontSize: 14, fontWeight: "600", color: "#1e1b4b", marginBottom: 2 },
-  cardSub:         { fontSize: 11, color: "#7c3aed" },
-  badge:           { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: "#3b0764" },
-  badgeText:       { fontSize: 11, fontWeight: "600", color: "#c4b5fd" },
+  cardTitle:       { fontSize: 14, fontWeight: "700", color: "#1e1b4b", marginBottom: 2 },
+  cardSub:         { fontSize: 11, color: "#6b7280" },
+  badge:           { backgroundColor: "#ede9fe", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  badgeText:       { fontSize: 10, fontWeight: "700", color: "#7c3aed" },
 });
