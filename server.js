@@ -1,4 +1,4 @@
-// OPENROUTER API INTEGRATION with RAG Server,js
+// GEMINI API INTEGRATION with RAG Server.js
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -9,8 +9,14 @@ const sanitize = require('./server/middleware/sanitize');
 const validate = require('./server/middleware/validate');
 const outputSanitize = require('./server/middleware/outputSanitize');
 
-
 dotenv.config();
+
+process.on('unhandledRejection', (reason) => {
+  console.error('💥 UNHANDLED REJECTION:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('💥 UNCAUGHT EXCEPTION:', err);
+});
 
 const app = express();
 app.use(cors());
@@ -72,12 +78,13 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       return res.status(400).json({ error: 'Query is required.' });
     }
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-   if (!apiKey) {
-      return res.status(500).json({ error: 'Missing OPENROUTER_API_KEY in environment                       variables.' });
+    // ── Use Gemini API key ────────────────────────────────────────────────────
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'Missing GEMINI_API_KEY in environment variables.' });
     }
 
-    // GET FILTERS INSIDE REQUEST
+    // ── Get filters from retrieval service ────────────────────────────────────
     const known = await getKnownFilters();
 
     const {
@@ -124,100 +131,84 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     }
 
     const retrievalData = await retrievalResponse.json();
-    const finalPrompt = retrievalData.prompt;
+    const finalPrompt   = retrievalData.prompt;
 
     console.log(`Retrieved ${retrievalData.context_blocks.length} context blocks`);
 
-    // ── Save latest prompt to file (overwrites) ──────────────────────────────
+    // ── Save latest prompt to file ────────────────────────────────────────────
     fs.writeFile(PROMPT_FILE_PATH, finalPrompt, 'utf8', (err) => {
-      if (err) {
-        console.error('Failed to write latest prompt file:', err);
-      } else {
-        console.log(`Latest prompt saved to ${PROMPT_FILE_PATH}`);
-      }
+      if (err) console.error('Failed to write latest prompt file:', err);
+      else     console.log(`Latest prompt saved to ${PROMPT_FILE_PATH}`);
     });
 
-    // ── Step 2: Send enriched prompt to OpenAI ───────────────────────────────
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    model: 'openai/gpt-oss-20b:free',
-    // model: 'google/gemma-3-27b-it:free',
-    messages: [
-      { role: "system", content: ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT },
-      { role: "user",   content: finalPrompt }
-    ]
-  }),
-});
+    // ── Step 2: Send enriched prompt to Gemini 2.0 Flash ─────────────────────
+    const systemPrompt = ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT;
+    const geminiUrl    = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
-    const data = await response.json();
-    console.log('OpenRouter status:', response.status);
+    const geminiResponse = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [{ text: `${systemPrompt}\n\n${finalPrompt}` }],
+        }],
+        generationConfig: {
+          temperature:      0.2,
+          maxOutputTokens:  2048,
+        },
+      }),
+    });
 
-    if (!response.ok) {
-      console.error('OpenAI error:', JSON.stringify(data, null, 2));
-      return res.status(response.status).json({
-        error: 'OpenAI API request failed',
+    const data = await geminiResponse.json();
+    console.log('Gemini status:', geminiResponse.status);
+
+    if (!geminiResponse.ok) {
+      console.error('Gemini error:', JSON.stringify(data, null, 2));
+      return res.status(geminiResponse.status).json({
+        error:   'Gemini API request failed',
         details: data,
       });
     }
 
-    // ── OpenRouter (commented out) ────────────────────────────────────────────
-    // const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    //   method: 'POST',
-    //   headers: {
-    //     'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-    //     'Content-Type': 'application/json',
-    //   },
-    //   body: JSON.stringify({
-    //     model: 'openai/gpt-4o-mini',
-    //     messages: [
-    //       { role: "system", content: ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT },
-    //       { role: "user",   content: finalPrompt }
-    //     ]
-    //   }),
-    // });
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
+      || 'No response text returned.';
 
-    const text = data?.choices?.[0]?.message?.content || 'No response text returned.';
-
-    // ── NEW STEP: Fire the Audit Logger (Session Based) ──────────────────────
+    // ── Step 3: Fire the Audit Logger (Session Based) ────────────────────────
     try {
       await logAuditRecord(
-        query, 
-        text, 
-        retrievalData.sources, 
-        userId || "anonymous",
-        sessionId 
+        query,
+        text,
+        retrievalData.sources,
+        userId || 'anonymous',
+        sessionId
       );
     } catch (auditErr) {
-      console.error("[AUDIT LOGGING FAILED]:", auditErr);
+      console.error('[AUDIT LOGGING FAILED]:', auditErr);
     }
 
-    // ── Step 3: Alert Agent — detect safety-critical content ─────────────────
+    // ── Step 4: Alert Agent — detect safety-critical content ─────────────────
     const alert = detectAlerts(query, text, role);
 
-    // ── Step 4: Return LLM answer + sources + alert metadata ─────────────────
+    // ── Step 5: Return answer + sources + alert metadata ──────────────────────
     res.json({
       text,
-      sources: retrievalData.sources,
+      sources:        retrievalData.sources,
       context_blocks: retrievalData.context_blocks,
-      reasoning: 'Generated via OpenRouter with RAG context',
+      reasoning:      'Generated via Gemini 2.0 Flash with RAG context',
       alert,
     });
 
   } catch (error) {
     console.error('Server error:', error);
     res.status(500).json({
-      error: 'Internal server error',
+      error:   'Internal server error',
       details: error.message,
     });
   }
 });
 
-// Keep the approve / reject / health endpoints unchanged
+// ── HITL endpoints ────────────────────────────────────────────────────────────
 app.post('/api/approve', (req, res) => {
   console.log('Approved:', req.body);
   res.json({ status: 'approved' });
@@ -232,7 +223,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-const PORT = process.env.PORT || 8000;
 app.get('/api/documents', async (req, res) => {
   try {
     const data = await getKnownFilters();
@@ -241,23 +231,33 @@ app.get('/api/documents', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ── Start server ──────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 8000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Node backend running at http://localhost:${PORT}`);
   console.log(`Expecting retrieval service at ${RETRIEVAL_SERVICE_URL}`);
 });
 
+// ── Alert Agent ───────────────────────────────────────────────────────────────
 function detectAlerts(query, responseText, role) {
   const text = responseText.toLowerCase();
 
-  const criticalKeywords = ['loto', 'lockout', 'tagout', 'high voltage', 'electrical hazard', 'life-threatening', 'fatal', 'electrocution'];
-  const warningKeywords  = ['warning', 'caution', 'ppe', 'personal protective equipment', 'hazard', 'danger', 'high risk', 'critical safety', 'do not operate'];
+  const criticalKeywords = [
+    'loto', 'lockout', 'tagout', 'high voltage',
+    'electrical hazard', 'life-threatening', 'fatal', 'electrocution',
+  ];
+  const warningKeywords = [
+    'warning', 'caution', 'ppe', 'personal protective equipment',
+    'hazard', 'danger', 'high risk', 'critical safety', 'do not operate',
+  ];
 
   for (const kw of criticalKeywords) {
     if (text.includes(kw)) {
       return {
-        level: 'critical',
-        icon: '🚨',
-        title: 'CRITICAL Safety Procedure Detected',
+        level:  'critical',
+        icon:   '🚨',
+        title:  'CRITICAL Safety Procedure Detected',
         reason: `Response contains critical safety requirement: "${kw}"`,
       };
     }
@@ -266,9 +266,9 @@ function detectAlerts(query, responseText, role) {
   for (const kw of warningKeywords) {
     if (text.includes(kw)) {
       return {
-        level: 'warning',
-        icon: '⚠️',
-        title: 'Safety Warning in Response',
+        level:  'warning',
+        icon:   '⚠️',
+        title:  'Safety Warning in Response',
         reason: `Response contains safety content: "${kw}"`,
       };
     }
@@ -277,34 +277,31 @@ function detectAlerts(query, responseText, role) {
   return null;
 }
 
-function extractFilters(query, knownGroups = [], knownFiles = [], knownClassifications = [], knownCat1 = [], knownCat2 = [], knownModels = []) {
+// ── Filter extractor ──────────────────────────────────────────────────────────
+function extractFilters(
+  query,
+  knownGroups        = [],
+  knownFiles         = [],
+  knownClassifications = [],
+  knownCat1          = [],
+  knownCat2          = [],
+  knownModels        = []
+) {
   const q = query.toLowerCase();
 
-  let matchedGroup = null;
-  let matchedFile = null;
+  let matchedGroup          = null;
+  let matchedFile           = null;
   let matchedClassification = null;
-  let matchedCategory1 = null;
-  let matchedCategory2 = null;
-  let matchedModel = null;
+  let matchedCategory1      = null;
+  let matchedCategory2      = null;
+  let matchedModel          = null;
 
-  for (const g of knownGroups) {
-    if (q.includes(g.toLowerCase())) { matchedGroup = g; break; }
-  }
-  for (const f of knownFiles) {
-    if (q.includes(f.toLowerCase())) { matchedFile = f; break; }
-  }
-  for (const c of knownClassifications) {
-    if (q.includes(c.toLowerCase())) { matchedClassification = c; break; }
-  }
-  for (const c1 of knownCat1) {
-    if (q.includes(c1.toLowerCase())) { matchedCategory1 = c1; break; }
-  }
-  for (const c2 of knownCat2) {
-    if (q.includes(c2.toLowerCase())) { matchedCategory2 = c2; break; }
-  }
-  for (const m of knownModels) {
-    if (q.includes(m.toLowerCase())) { matchedModel = m; break; }
-  }
+  for (const g  of knownGroups)           { if (q.includes(g.toLowerCase()))  { matchedGroup          = g;  break; } }
+  for (const f  of knownFiles)            { if (q.includes(f.toLowerCase()))  { matchedFile           = f;  break; } }
+  for (const c  of knownClassifications)  { if (q.includes(c.toLowerCase()))  { matchedClassification = c;  break; } }
+  for (const c1 of knownCat1)             { if (q.includes(c1.toLowerCase())) { matchedCategory1      = c1; break; } }
+  for (const c2 of knownCat2)             { if (q.includes(c2.toLowerCase())) { matchedCategory2      = c2; break; } }
+  for (const m  of knownModels)           { if (q.includes(m.toLowerCase()))  { matchedModel          = m;  break; } }
 
   return {
     matchedGroup,
@@ -316,17 +313,18 @@ function extractFilters(query, knownGroups = [], knownFiles = [], knownClassific
   };
 }
 
+// ── Fetch known filters from retrieval service ────────────────────────────────
 async function getKnownFilters() {
   const res = await fetch(`${RETRIEVAL_SERVICE_URL}/filters`);
   if (!res.ok) {
     console.error(`Failed to fetch filters: ${res.status} ${res.statusText}`);
     return {
       document_group_ids: [],
-      filenames: [],
-      classifications: [],
-      category_level_1: [],
-      category_level_2: [],
-      model_numbers: [],
+      filenames:          [],
+      classifications:    [],
+      category_level_1:   [],
+      category_level_2:   [],
+      model_numbers:      [],
     };
   }
   return await res.json();

@@ -26,16 +26,31 @@ export default function Login() {
     setLoading(true);
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
-      const uid = userCredential.user.uid;
+      const { uid }        = userCredential.user;
+
+      // ── Fetch role from Firestore ──────────────────────────────
       const userDoc = await getDoc(doc(db, 'Users', uid));
-      if (userDoc.exists()) {
-        const rawRole = userDoc.data().role_id;
-        const role = ROLE_MAP[rawRole] || 'beginner';
-        await AsyncStorage.setItem('user', JSON.stringify({ email: email.trim(), role }));
-        router.replace(role === 'admin' ? '/admin' : '/dashboard');
-      } else {
+      if (!userDoc.exists()) {
         Alert.alert('Error', 'User not found in database.');
+        setLoading(false);
+        return;
       }
+
+      const rawRole = userDoc.data().role_id;
+      const role    = ROLE_MAP[rawRole] || 'beginner';
+
+      // ── Get Firebase ID token for backend auth ─────────────────
+      const token = await userCredential.user.getIdToken();
+
+      // ── Persist full session ───────────────────────────────────
+      await AsyncStorage.setItem('user', JSON.stringify({
+        uid,
+        email: email.trim(),
+        role,
+        token,
+      }));
+
+      router.replace(role === 'admin' ? '/admin' : '/dashboard');
     } catch (error) {
       Alert.alert('Login Failed', error.message);
     }
@@ -87,10 +102,10 @@ export default function Login() {
               >
                 {loading
                   ? <ActivityIndicator color="#fff" />
-                  : <Text style={s.btnText}>Sign In →</Text>}
+                  : <Text style={s.btnText}>Sign In</Text>}
               </TouchableOpacity>
             </View>
-            <Text style={s.footer}>🔒 Secured with Role-Based Access Control</Text>
+            <Text style={s.footer}>Secured with Role-Based Access Control</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
