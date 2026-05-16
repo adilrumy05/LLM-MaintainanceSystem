@@ -71,8 +71,8 @@ activate.*
 *fypScripts*
 
 #Image Migration Scripts/Checkpoints
-copy_checkpoint.json
-migrateImages.js
-upload_checkpoint.json
-uploadToFirebase.js
+# copy_checkpoint.json
+# migrateImages.js
+# upload_checkpoint.json
+# uploadToFirebase.js
 output/
