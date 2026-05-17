@@ -154,7 +154,7 @@ const handleLogout = () => {
     return (
       <View style={s.sourceContainer}>
         <TouchableOpacity onPress={() => setExpanded(!expanded)} style={s.sourceRow}>
-          <Text style={s.sourceItem}>
+          <Text selectable style={s.sourceItem}>
             • {source.filename || source.document_group_id}{source.page ? ` — p.${source.page}` : ''}
           </Text>
         </TouchableOpacity>
@@ -187,8 +187,8 @@ const handleLogout = () => {
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
         <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBot]}>
           {isUser
-            ? <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
-            : <Markdown style={markdownStyles} rules={markdownRules}>{item.text}</Markdown>
+            ? <Text selectable style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
+            : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
           }
           {item.sources?.length > 0 && (
             <View style={s.sourcesBox}>
@@ -437,7 +437,7 @@ const s = StyleSheet.create({
 });
 
 const markdownStyles = {
-  body:         { color: C.text, fontSize: 14, lineHeight: 20 },
+  body:         { color: C.text, fontSize: 14, lineHeight: 20,  selectable: true},
   strong:       { fontWeight: '700' },
   bullet_list:  { marginVertical: 4 },
   ordered_list: { marginVertical: 4 },
