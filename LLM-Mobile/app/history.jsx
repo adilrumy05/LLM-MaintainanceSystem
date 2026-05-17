@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   View, Text, TouchableOpacity, ScrollView, StyleSheet,
-  Modal, ActivityIndicator, Alert, Platform,
+  Modal, ActivityIndicator, Alert, Platform, TextInput, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -12,7 +12,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { API_BASE_URL } from '@env';
 
-// ─── Status config ────────────────────────────────────────────────────────────
 const STATUS_CONFIG = {
   pending_review: { label: 'Pending Review', color: '#d97706', bg: '#fef9c3', iconName: 'time-outline'             },
   approved:       { label: 'Approved',       color: C.green,  bg: C.greenBg,  iconName: 'checkmark-circle-outline' },
@@ -22,10 +21,12 @@ const STATUS_CONFIG = {
 export default function History() {
   const [logs, setLogs]                   = useState([]);
   const [loading, setLoading]             = useState(true);
+  const [refreshing, setRefreshing]       = useState(false);
   const [selectedLog, setSelectedLog]     = useState(null);
   const [modalVisible, setModalVisible]   = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [currentUser, setCurrentUser]     = useState(null);
+  const [search, setSearch]               = useState('');
   const router                            = useRouter();
 
   useFocusEffect(
@@ -55,6 +56,13 @@ export default function History() {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
   );
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    // onSnapshot is already live — just simulate a brief refresh feel
+    await new Promise(r => setTimeout(r, 800));
+    setRefreshing(false);
+  };
 
   const openLogDetails = (log) => { setSelectedLog(log); setModalVisible(true); };
 
@@ -92,13 +100,29 @@ export default function History() {
     }
   };
 
-  const getStatusCfg = (status) => STATUS_CONFIG[status] || STATUS_CONFIG.pending_review;
-  const isAdmin      = currentUser?.role === 'admin';
-  const isPending    = selectedLog?.status === 'pending_review';
+  const getStatusCfg  = (status) => STATUS_CONFIG[status] || STATUS_CONFIG.pending_review;
+  const isAdmin       = currentUser?.role === 'admin';
+  const isPending     = selectedLog?.status === 'pending_review';
+  const filteredLogs  = logs.filter(log =>
+    !search.trim() ||
+    log.user_id?.toLowerCase().includes(search.toLowerCase()) ||
+    log.log_id?.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <SafeAreaView style={s.safe}>
-      <ScrollView style={s.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView
+        style={s.scroll}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[C.primary]}
+            tintColor={C.primary}
+          />
+        }
+      >
 
         {/* ─── Header ──────────────────────────────────────────────── */}
         <View style={s.headerRow}>
@@ -118,17 +142,34 @@ export default function History() {
           ))}
         </View>
 
+        {/* ─── Search ──────────────────────────────────────────────── */}
+        <View style={s.searchWrap}>
+          <Ionicons name="search-outline" size={16} color={C.textMuted} />
+          <TextInput
+            style={s.searchInput}
+            placeholder="Search by user or session ID..."
+            placeholderTextColor={C.textMuted}
+            value={search}
+            onChangeText={setSearch}
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch('')}>
+              <Ionicons name="close-circle-outline" size={16} color={C.textMuted} />
+            </TouchableOpacity>
+          )}
+        </View>
+
         {/* ─── Log list ────────────────────────────────────────────── */}
         {loading ? (
           <ActivityIndicator size="large" color={C.primary} style={{ marginTop: 40 }} />
-        ) : logs.length === 0 ? (
+        ) : filteredLogs.length === 0 ? (
           <View style={s.emptyState}>
             <Ionicons name="server-outline" size={40} color={C.textMuted} style={{ marginBottom: 10 }} />
-            <Text style={s.emptyTitle}>No Audit Logs</Text>
-            <Text style={s.muted}>Logs will appear here after queries are made.</Text>
+            <Text style={s.emptyTitle}>{search ? 'No results found' : 'No Audit Logs'}</Text>
+            <Text style={s.muted}>{search ? 'Try a different search term.' : 'Logs will appear here after queries are made.'}</Text>
           </View>
         ) : (
-          logs.map(log => {
+          filteredLogs.map(log => {
             const cfg = getStatusCfg(log.status);
             return (
               <TouchableOpacity key={log.id} style={s.logCard} onPress={() => openLogDetails(log)}>
@@ -273,9 +314,11 @@ const s = StyleSheet.create({
   headerRow:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 20 },
   pageTitle:          { color: C.text, fontSize: 22, fontWeight: '700' },
   pageSub:            { color: C.textSub, fontSize: 12, marginTop: 2 },
-  legendRow:          { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 },
+  legendRow:          { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
   legendBadge:        { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
   legendText:         { fontSize: 10, fontWeight: '700' },
+  searchWrap:         { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 12, borderWidth: 1, borderColor: C.cardBorder, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 14, gap: 8 },
+  searchInput:        { flex: 1, fontSize: 13, color: C.text },
   emptyState:         { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 16, padding: 60, alignItems: 'center', marginTop: 16, backgroundColor: C.card },
   emptyTitle:         { color: C.text, fontWeight: '700', fontSize: 16, marginBottom: 6 },
   muted:              { color: C.textMuted, fontSize: 12, textAlign: 'center' },
