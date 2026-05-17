@@ -139,7 +139,7 @@ export default function AdminScreen() {
       sub: "System agents & settings",
       icon: "settings-outline",
       badge: "Live",
-      onPress: () => {},
+      onPress: () => router.push('/agentconfig'),
     },
     {
       key: "chat",

@@ -1,8 +1,8 @@
 import { useState, useCallback } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import {
   View, Text, TouchableOpacity, ScrollView, StyleSheet,
-  Modal, ActivityIndicator, Alert
+  Modal, ActivityIndicator, Alert, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -26,6 +26,7 @@ export default function History() {
   const [modalVisible, setModalVisible]   = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [currentUser, setCurrentUser]     = useState(null);
+  const router                            = useRouter();
 
   useFocusEffect(
     useCallback(() => {
@@ -35,6 +36,7 @@ export default function History() {
         try {
           const userJson = await AsyncStorage.getItem('user');
           const user     = userJson ? JSON.parse(userJson) : null;
+          if (!user || user.role !== 'admin') { router.replace('/dashboard'); return; }
           setCurrentUser(user);
           const userId   = user?.uid || user?.id || user?.email || 'anonymous_user';
           const userRole = user?.role || 'beginner';
@@ -50,6 +52,7 @@ export default function History() {
       };
       setupLiveListener();
       return () => { if (unsubscribe) unsubscribe(); };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
   );
 
@@ -58,22 +61,35 @@ export default function History() {
   const handleHITL = async (action) => {
     if (!selectedLog) return;
     const label = action === 'approve' ? 'Approve' : 'Reject';
-    Alert.alert(`${label} Session`, `Are you sure you want to ${label.toLowerCase()} this AI session?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: label, style: action === 'reject' ? 'destructive' : 'default', onPress: async () => {
-        setActionLoading(true);
-        try {
-          const newStatus = action === 'approve' ? 'approved' : 'rejected';
-          const reviewer  = currentUser?.email || currentUser?.uid || 'admin';
-          const timestamp = new Date().toISOString().replace('T', ' ').split('.')[0];
-          await updateDoc(doc(db, 'audit_logs', selectedLog.id), { status: newStatus, reviewed_by: reviewer, reviewed_at: timestamp, last_updated: timestamp });
-          fetch(`${API_BASE_URL}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: selectedLog.log_id, userId: selectedLog.user_id, reviewedBy: reviewer, reviewedAt: timestamp }) }).catch(e => console.warn(e));
-          setSelectedLog(prev => ({ ...prev, status: newStatus, reviewed_by: reviewer, reviewed_at: timestamp }));
+
+    const doAction = async () => {
+      setActionLoading(true);
+      try {
+        const newStatus = action === 'approve' ? 'approved' : 'rejected';
+        const reviewer  = currentUser?.email || currentUser?.uid || 'admin';
+        const timestamp = new Date().toISOString().replace('T', ' ').split('.')[0];
+        await updateDoc(doc(db, 'audit_logs', selectedLog.id), { status: newStatus, reviewed_by: reviewer, reviewed_at: timestamp, last_updated: timestamp });
+        fetch(`${API_BASE_URL}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: selectedLog.log_id, userId: selectedLog.user_id, reviewedBy: reviewer, reviewedAt: timestamp }) }).catch(e => console.warn(e));
+        setSelectedLog(prev => ({ ...prev, status: newStatus, reviewed_by: reviewer, reviewed_at: timestamp }));
+        if (Platform.OS === 'web') {
+          window.alert(`Session ${newStatus.charAt(0).toUpperCase() + newStatus.slice(1)} — recorded in audit log.`);
+        } else {
           Alert.alert(`Session ${newStatus.charAt(0).toUpperCase() + newStatus.slice(1)}`, `This session has been ${newStatus} and recorded in the audit log.`);
-        } catch (err) { Alert.alert('Error', 'Failed to update status.'); }
-        setActionLoading(false);
-      }},
-    ]);
+        }
+      } catch (err) {
+        Platform.OS === 'web' ? window.alert('Failed to update status.') : Alert.alert('Error', 'Failed to update status.');
+      }
+      setActionLoading(false);
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Are you sure you want to ${label.toLowerCase()} this AI session?`)) doAction();
+    } else {
+      Alert.alert(`${label} Session`, `Are you sure you want to ${label.toLowerCase()} this AI session?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: label, style: action === 'reject' ? 'destructive' : 'default', onPress: doAction },
+      ]);
+    }
   };
 
   const getStatusCfg = (status) => STATUS_CONFIG[status] || STATUS_CONFIG.pending_review;

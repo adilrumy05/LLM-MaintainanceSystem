@@ -23,7 +23,7 @@ export default function Layout() {
     }
   }, []);
 
-  // ── Load role ONCE on mount — no pathname dependency ─────────
+ // ── Load role ONCE on mount — no pathname dependency ─────────
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -39,7 +39,18 @@ export default function Layout() {
     };
     load();
     return () => { cancelled = true; };
-  }, []); // ← empty deps: runs once, not on every navigation
+  }, []);
+
+  // ── Web: poll AsyncStorage to catch role changes without refresh ──
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const interval = setInterval(async () => {
+      const raw  = await AsyncStorage.getItem('user');
+      const user = JSON.parse(raw || 'null');
+      setRole(user?.role ?? null);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // ── Tab navigator ─────────────────────────────────────────────
   const isAdmin = role === 'admin';
@@ -61,6 +72,7 @@ export default function Layout() {
       <Tabs.Screen name="intermediate"   options={{ href: null }} />
       <Tabs.Screen name="usermanagement" options={{ href: null }} />
       <Tabs.Screen name="userform"       options={{ href: null }} />
+      <Tabs.Screen name="agentconfig"    options={{ href: null }} />
 
       {/* ── Admin-menu-only screens ── */}
       <Tabs.Screen name="tasks"     options={{ href: null }} />
