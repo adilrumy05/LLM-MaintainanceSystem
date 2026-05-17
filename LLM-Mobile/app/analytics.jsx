@@ -8,12 +8,24 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 
+const ROLE_ID_MAP = {
+  'admin':               'admin',
+  'worker_expert':       'expert',
+  'worker_intermediate': 'intermediate',
+  'worker_beginner':     'beginner',
+};
+
 export default function Analytics() {
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState(null);
   const router                = useRouter();
 
-  useFocusEffect(useCallback(() => { checkAdminAndLoad(); }, []));
+  useFocusEffect(
+    useCallback(() => {
+      checkAdminAndLoad();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+  );
 
   const checkAdminAndLoad = async () => {
     const raw  = await AsyncStorage.getItem('user');
@@ -25,8 +37,8 @@ export default function Analytics() {
   const loadMetrics = async () => {
     setLoading(true);
     try {
-      const logsSnap  = await getDocs(query(collection(db, 'audit_logs'), orderBy('last_updated', 'desc')));
-      const logs      = logsSnap.docs.map(d => d.data());
+      const logsSnap      = await getDocs(query(collection(db, 'audit_logs'), orderBy('last_updated', 'desc')));
+      const logs          = logsSnap.docs.map(d => d.data());
       const totalSessions = logs.length;
       const approved      = logs.filter(l => l.status === 'approved').length;
       const rejected      = logs.filter(l => l.status === 'rejected').length;
@@ -46,7 +58,10 @@ export default function Analytics() {
       const totalUsers  = users.length;
       const activeUsers = users.filter(u => u.isActive).length;
       const roleCounts  = { admin: 0, expert: 0, intermediate: 0, beginner: 0 };
-      users.forEach(u => { const r = u.role?.toLowerCase(); if (roleCounts[r] !== undefined) roleCounts[r]++; });
+      users.forEach(u => {
+        const r = ROLE_ID_MAP[u.role_id] || u.role?.toLowerCase();
+        if (r && roleCounts[r] !== undefined) roleCounts[r]++;
+      });
 
       const alertsSnap  = await getDocs(collection(db, 'Alerts'));
       const totalAlerts = alertsSnap.size;
@@ -94,24 +109,24 @@ export default function Analytics() {
           {/* ─── KPI Cards ───────────────────────────────────── */}
           <Text style={s.sectionLabel}>OVERVIEW</Text>
           <View style={s.kpiRow}>
-            <KpiCard iconName="chatbubble-outline"        label="Total Sessions" value={metrics.totalSessions} color={C.primary} />
-            <KpiCard iconName="search-outline"            label="Total Queries"  value={metrics.totalQueries}  color={C.blue}    />
+            <KpiCard iconName="chatbubble-outline"       label="Total Sessions" value={metrics.totalSessions} color={C.primary} />
+            <KpiCard iconName="search-outline"           label="Total Queries"  value={metrics.totalQueries}  color={C.blue}    />
           </View>
           <View style={s.kpiRow}>
-            <KpiCard iconName="people-outline"            label="Total Users"    value={metrics.totalUsers}    color={C.green}   />
-            <KpiCard iconName="ellipse"                   label="Active Users"   value={metrics.activeUsers}   color="#d97706"   />
+            <KpiCard iconName="people-outline"           label="Total Users"    value={metrics.totalUsers}    color={C.green}   />
+            <KpiCard iconName="ellipse"                  label="Active Users"   value={metrics.activeUsers}   color="#d97706"   />
           </View>
           <View style={s.kpiRow}>
-            <KpiCard iconName="notifications-outline"     label="Total Alerts"   value={metrics.totalAlerts}   color={C.red}     />
-            <KpiCard iconName="checkmark-circle-outline"  label="Approval Rate"  value={`${metrics.approvalRate}%`} color={C.green} />
+            <KpiCard iconName="notifications-outline"    label="Total Alerts"   value={metrics.totalAlerts}   color={C.red}     />
+            <KpiCard iconName="checkmark-circle-outline" label="Approval Rate"  value={`${metrics.approvalRate}%`} color={C.green} />
           </View>
 
           {/* ─── Session Status ───────────────────────────────── */}
           <Text style={s.sectionLabel}>SESSION STATUS</Text>
           <View style={s.card}>
-            <StatusBar iconName="checkmark-circle-outline" label="Approved" value={metrics.approved} total={metrics.totalSessions} color={C.green}  />
-            <StatusBar iconName="time-outline"              label="Pending"  value={metrics.pending}  total={metrics.totalSessions} color="#d97706"  />
-            <StatusBar iconName="close-circle-outline"      label="Rejected" value={metrics.rejected} total={metrics.totalSessions} color={C.red}    />
+            <StatusBar iconName="checkmark-circle-outline" label="Approved" value={metrics.approved} total={metrics.totalSessions} color={C.green}   />
+            <StatusBar iconName="time-outline"              label="Pending"  value={metrics.pending}  total={metrics.totalSessions} color="#d97706"   />
+            <StatusBar iconName="close-circle-outline"      label="Rejected" value={metrics.rejected} total={metrics.totalSessions} color={C.red}     />
           </View>
 
           {/* ─── Last 7 Days ──────────────────────────────────── */}

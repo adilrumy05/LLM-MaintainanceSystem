@@ -21,7 +21,12 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const router                = useRouter();
 
-  useFocusEffect(useCallback(() => { loadProfile(); }, []));
+  useFocusEffect(
+    useCallback(() => {
+      loadProfile();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+  );
 
   const loadProfile = async () => {
     setLoading(true);
@@ -64,7 +69,7 @@ export default function Profile() {
   if (!user)   return <SafeAreaView style={s.safe}><View style={s.center}><Text style={s.muted}>Not logged in.</Text></View></SafeAreaView>;
 
   const roleCfg  = ROLE_CONFIG[user.role] || ROLE_CONFIG.beginner;
-  const initials = (user.displayName || user.email || 'U').slice(0, 2).toUpperCase();
+  const initials = (user.username || user.email || 'U').slice(0, 2).toUpperCase();
   const joinDate = user.createdAt ? new Date(user.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A';
 
   return (
@@ -76,7 +81,7 @@ export default function Profile() {
           <View style={s.avatarCircle}>
             <Text style={s.avatarText}>{initials}</Text>
           </View>
-          <Text style={s.displayName}>{user.displayName || 'Technician'}</Text>
+          <Text style={s.displayName}>{user.username || 'Technician'}</Text>
           <Text style={s.emailText}>{user.email || 'No email'}</Text>
           <View style={[s.rolePill, { backgroundColor: roleCfg.bg }]}>
             <Ionicons name={roleCfg.icon} size={14} color={roleCfg.color} />
@@ -98,7 +103,7 @@ export default function Profile() {
           {/* ─── Account Info ─────────────────────────────────── */}
           <Text style={s.sectionLabel}>ACCOUNT INFO</Text>
           <View style={s.infoCard}>
-            <InfoRow iconName="person-outline"   label="Name"   value={user.displayName || 'Not set'} />
+            <InfoRow iconName="person-outline"   label="Name"   value={user.username || 'Not set'} />
             <InfoRow iconName="mail-outline"      label="Email"  value={user.email || 'Not set'} />
             <InfoRow iconName="shield-outline"    label="Role"   value={roleCfg.label} valueColor={roleCfg.color} />
             <InfoRow iconName="calendar-outline"  label="Joined" value={joinDate} last />

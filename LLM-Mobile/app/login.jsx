@@ -36,8 +36,11 @@ export default function Login() {
         return;
       }
 
-      const rawRole = userDoc.data().role_id;
-      const role    = ROLE_MAP[rawRole] || 'beginner';
+      const rawRole      = userDoc.data().role_id;
+      const role         = ROLE_MAP[rawRole] || 'beginner';
+      const username     = userDoc.data().username || '';
+      const rawCreatedAt = userDoc.data().createdAt;
+      const createdAt    = rawCreatedAt?.toDate?.()?.toISOString() || null;
 
       // ── Get Firebase ID token for backend auth ─────────────────
       const token = await userCredential.user.getIdToken();
@@ -48,8 +51,9 @@ export default function Login() {
         email: email.trim(),
         role,
         token,
+        username,
+        createdAt,
       }));
-
       router.replace(role === 'admin' ? '/admin' : '/dashboard');
     } catch (error) {
       Alert.alert('Login Failed', error.message);

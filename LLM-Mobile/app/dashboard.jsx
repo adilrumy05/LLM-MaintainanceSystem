@@ -14,6 +14,7 @@ import { submitQuery } from '../services/api';
 import * as ImagePicker from 'expo-image-picker';
 import Markdown from 'react-native-markdown-display';
 
+
 export default function Dashboard() {
   const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
   const [activeChatId, setActiveChatId] = useState('1');
@@ -21,7 +22,7 @@ export default function Dashboard() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSidebar, setShowSidebar]   = useState(false);
   const [loaded, setLoaded]             = useState(false);
-  const [uploadedFile, setUploadedFile] = useState(null);
+//const [uploadedFile, setUploadedFile] = useState(null);
   const cancelRef                       = useRef(false);
   const flatListRef                     = useRef(null);
   const router                          = useRouter();
@@ -84,17 +85,18 @@ export default function Dashboard() {
     addMessage('bot', 'Response stopped. You can continue the conversation.');
   };
 
-  const handleFilePick = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') { Alert.alert('Permission Denied', 'Please allow access to your files.'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: false, quality: 1 });
-    if (!result.canceled && result.assets?.[0]) {
-      const file = result.assets[0];
-      setUploadedFile(file);
-      addMessage('user', `Attached: ${file.fileName || 'file'}`);
-      addMessage('bot', 'File received! You can now ask questions about it.');
-    }
-  };
+// Upload disabled — not yet connected to RAG
+  // const handleFilePick = async () => {
+  //   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  //   if (status !== 'granted') { Alert.alert('Permission Denied', 'Please allow access to your files.'); return; }
+  //   const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: false, quality: 1 });
+  //   if (!result.canceled && result.assets?.[0]) {
+  //     const file = result.assets[0];
+  //     setUploadedFile(file);
+  //     addMessage('user', `Attached: ${file.fileName || 'file'}`);
+  //     addMessage('bot', 'File received! You can now ask questions about it.');
+  //   }
+  // };
 
   const handleNewChat = () => {
     const newId = Date.now().toString();
@@ -102,7 +104,7 @@ export default function Dashboard() {
     setActiveChatId(newId);
     setShowSidebar(false);
     setInputValue('');
-    setUploadedFile(null);
+  
   };
 
   const handleSwitchChat = (id) => { setActiveChatId(id); setShowSidebar(false); };
@@ -231,15 +233,23 @@ const handleLogout = () => {
                 )}
               />
               <TouchableOpacity style={s.clearAllBtn} onPress={() => {
-                Alert.alert('Clear All Chats', 'Delete all conversations?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Clear All', style: 'destructive', onPress: () => {
-                    setChats([{ id: '1', messages: [] }]);
-                    setActiveChatId('1');
-                    setShowSidebar(false);
-                  }},
-                ]);
-              }}>
+                      if (Platform.OS === 'web') {
+                        if (window.confirm('Delete all conversations?')) {
+                          setChats([{ id: '1', messages: [] }]);
+                          setActiveChatId('1');
+                          setShowSidebar(false);
+                        }
+                        return;
+                      }
+                      Alert.alert('Clear All Chats', 'Delete all conversations?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Clear All', style: 'destructive', onPress: () => {
+                          setChats([{ id: '1', messages: [] }]);
+                          setActiveChatId('1');
+                          setShowSidebar(false);
+                        }},
+                      ]);
+                    }}>
                 <Ionicons name="trash-outline" size={14} color={C.red} />
                 <Text style={s.clearAllText}> Clear All Chats</Text>
               </TouchableOpacity>
@@ -251,7 +261,7 @@ const handleLogout = () => {
           </View>
         )}
 
-        {/* ─── Header ──────────────────────────────────────────────── */}
+{/* ─── Header ──────────────────────────────────────────────── */}
         <View style={s.header}>
           <TouchableOpacity style={s.menuBtn} onPress={() => setShowSidebar(true)}>
             <Ionicons name="menu-outline" size={24} color={C.text} />
@@ -303,7 +313,7 @@ const handleLogout = () => {
             />
           )}
 
-          {/* ─── Typing indicator ──────────────────────────────────── */}
+{/* ─── Typing indicator ──────────────────────────────────── */}
           {isProcessing && (
             <View style={s.typingRow}>
               <View style={s.typingBubble}>
@@ -311,8 +321,8 @@ const handleLogout = () => {
                 <Text style={s.typingText}>Analyzing...</Text>
               </View>
               <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
-                <Ionicons name="stop-circle-outline" size={14} color="#f87171" />
-                <Text style={s.cancelText}> Stop</Text>
+                <Ionicons name="close-circle-outline" size={14} color="#f87171" />
+                <Text style={s.cancelText}> Cancel</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -320,7 +330,9 @@ const handleLogout = () => {
 
         {/* ─── Input area ──────────────────────────────────────────── */}
         <View style={s.inputWrapper}>
-          {uploadedFile && (
+
+          {/* Upload disabled — not yet connected to RAG */}
+          {/* {uploadedFile && (
             <View style={s.fileBadge}>
               <Ionicons name="attach-outline" size={14} color={C.primary} />
               <Text style={s.fileBadgeText} numberOfLines={1}> {uploadedFile.fileName || 'Attached file'}</Text>
@@ -328,11 +340,13 @@ const handleLogout = () => {
                 <Ionicons name="close-outline" size={16} color={C.primary} />
               </TouchableOpacity>
             </View>
-          )}
+          )} */}
+
           <View style={s.inputBar}>
-            <TouchableOpacity style={s.iconBtn} onPress={handleFilePick} disabled={isProcessing}>
+            {/* Upload disabled — not yet connected to RAG */}
+            {/* <TouchableOpacity style={s.iconBtn} onPress={handleFilePick} disabled={isProcessing}>
               <Ionicons name="attach-outline" size={20} color={C.primary} />
-            </TouchableOpacity>
+            </TouchableOpacity> */}
             <TextInput
               style={s.input}
               placeholder="Ask a maintenance question..."
@@ -351,6 +365,7 @@ const handleLogout = () => {
               <Ionicons name="send-outline" size={16} color="#fff" />
             </TouchableOpacity>
           </View>
+
         </View>
 
       </SafeAreaView>
