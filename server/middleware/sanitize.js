@@ -7,7 +7,14 @@ const injectionPatterns = [
   /api\s*key/i,
   /fedex/i,
   /confidential/i,
-  /internal\s+data/i
+  /internal\s+data/i,
+  /<script>/i,          // block script tags
+  /alert\s*\(/i,        // block alert() calls
+  /onerror\s*=/i,       // block inline JS handlers
+  /drop\s+table/i,      // block SQL DROP TABLE
+  /union\s+select/i,    // block UNION SELECT
+  /or\s+1=1/i,          // block OR 1=1
+  /--/i,                // block SQL comments
 ];
 
 function stripTags(str) {
