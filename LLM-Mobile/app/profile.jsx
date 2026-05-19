@@ -1,12 +1,13 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
+import { useUser } from './_layout';
 
 const ROLE_CONFIG = {
   admin:        { label: 'Supervisor / Admin',    color: '#7c3aed', bg: '#ede9fe', icon: 'shield-checkmark-outline', permissions: ['Manage Users & Roles', 'Configure AI Agents', 'Audit System Logs', 'Query RAG System', 'Approve / Reject Sessions'] },
@@ -16,42 +17,50 @@ const ROLE_CONFIG = {
 };
 
 export default function Profile() {
-  const [user, setUser]       = useState(null);
+  const { user, setUser }     = useUser();
   const [stats, setStats]     = useState({ total: 0, approved: 0, rejected: 0, pending: 0 });
   const [loading, setLoading] = useState(true);
   const router                = useRouter();
 
+  const hasLoadedRef = useRef(false);
+
   useFocusEffect(
     useCallback(() => {
-      loadProfile();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-  );
+      if (!user) return;
 
-  const loadProfile = async () => {
-    setLoading(true);
-    try {
-      const raw = await AsyncStorage.getItem('user');
-      const u   = raw ? JSON.parse(raw) : null;
-      setUser(u);
-      if (!u) { setLoading(false); return; }
-      const userId  = u.uid || u.id || u.email || 'anonymous_user';
-      const snap    = await getDocs(query(collection(db, 'audit_logs'), where('user_id', '==', userId)));
-      const logs    = snap.docs.map(d => d.data());
-      setStats({
-        total:    logs.length,
-        approved: logs.filter(l => l.status === 'approved').length,
-        rejected: logs.filter(l => l.status === 'rejected').length,
-        pending:  logs.filter(l => l.status === 'pending_review').length,
-      });
-    } catch (e) { console.error(e); }
-    setLoading(false);
-  };
+      if (!hasLoadedRef.current) setLoading(true);
+
+      const loadStats = async () => {
+        try {
+          const userId = user.uid || user.id || user.email || 'anonymous_user';
+          const snap   = await getDocs(
+            query(
+              collection(db, 'audit_logs'),
+              where('user_id', '==', userId),
+              limit(30),
+            )
+          );
+          const logs = snap.docs.map(d => d.data());
+          setStats({
+            total:    logs.length,
+            approved: logs.filter(l => l.status === 'approved').length,
+            rejected: logs.filter(l => l.status === 'rejected').length,
+            pending:  logs.filter(l => l.status === 'pending_review').length,
+          });
+        } catch (_err) { console.error('[Profile] Stats load error:', _err); }
+        hasLoadedRef.current = true;
+        setLoading(false);
+      };
+
+      loadStats();
+    }, [user])
+  );
 
   const handleLogout = () => {
     if (Platform.OS === 'web') {
       if (window.confirm('Are you sure you want to logout?')) {
         AsyncStorage.removeItem('user');
+        setUser(null);
         router.replace('/login');
       }
       return;
@@ -60,27 +69,30 @@ export default function Profile() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Logout', style: 'destructive', onPress: async () => {
         await AsyncStorage.removeItem('user');
+        setUser(null);
         router.replace('/login');
       }},
     ]);
   };
 
-  if (loading) return <SafeAreaView style={s.safe}><ActivityIndicator color={C.primary} size="large" style={{ marginTop: 60 }} /></SafeAreaView>;
-  if (!user)   return <SafeAreaView style={s.safe}><View style={s.center}><Text style={s.muted}>Not logged in.</Text></View></SafeAreaView>;
+  if (loading) return (
+    <SafeAreaView style={s.safe}><ActivityIndicator color={C.primary} size="large" style={{ marginTop: 60 }} /></SafeAreaView>
+  );
+  if (!user) return (
+    <SafeAreaView style={s.safe}><View style={s.center}><Text style={s.muted}>Not logged in.</Text></View></SafeAreaView>
+  );
 
   const roleCfg  = ROLE_CONFIG[user.role] || ROLE_CONFIG.beginner;
   const initials = (user.username || user.email || 'U').slice(0, 2).toUpperCase();
-  const joinDate = user.createdAt ? new Date(user.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A';
+  const joinDate = user.createdAt
+    ? new Date(user.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : 'N/A';
 
   return (
     <SafeAreaView style={s.safe}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-
-        {/* ─── Banner ──────────────────────────────────────────────── */}
         <View style={s.banner}>
-          <View style={s.avatarCircle}>
-            <Text style={s.avatarText}>{initials}</Text>
-          </View>
+          <View style={s.avatarCircle}><Text style={s.avatarText}>{initials}</Text></View>
           <Text style={s.displayName}>{user.username || 'Technician'}</Text>
           <Text style={s.emailText}>{user.email || 'No email'}</Text>
           <View style={[s.rolePill, { backgroundColor: roleCfg.bg }]}>
@@ -88,10 +100,7 @@ export default function Profile() {
             <Text style={[s.rolePillText, { color: roleCfg.color }]}> {roleCfg.label}</Text>
           </View>
         </View>
-
         <View style={s.body}>
-
-          {/* ─── Stats ───────────────────────────────────────────── */}
           <Text style={s.sectionLabel}>SESSION STATISTICS</Text>
           <View style={s.statsRow}>
             <StatCard label="Total"    value={stats.total}    color={C.primary} />
@@ -99,17 +108,13 @@ export default function Profile() {
             <StatCard label="Pending"  value={stats.pending}  color="#d97706"   />
             <StatCard label="Rejected" value={stats.rejected} color={C.red}     />
           </View>
-
-          {/* ─── Account Info ─────────────────────────────────── */}
           <Text style={s.sectionLabel}>ACCOUNT INFO</Text>
           <View style={s.infoCard}>
-            <InfoRow iconName="person-outline"   label="Name"   value={user.username || 'Not set'} />
-            <InfoRow iconName="mail-outline"      label="Email"  value={user.email || 'Not set'} />
-            <InfoRow iconName="shield-outline"    label="Role"   value={roleCfg.label} valueColor={roleCfg.color} />
-            <InfoRow iconName="calendar-outline"  label="Joined" value={joinDate} last />
+            <InfoRow iconName="person-outline"  label="Name"   value={user.username || 'Not set'} />
+            <InfoRow iconName="mail-outline"     label="Email"  value={user.email || 'Not set'} />
+            <InfoRow iconName="shield-outline"   label="Role"   value={roleCfg.label} valueColor={roleCfg.color} />
+            <InfoRow iconName="calendar-outline" label="Joined" value={joinDate} last />
           </View>
-
-          {/* ─── Permissions ──────────────────────────────────── */}
           <Text style={s.sectionLabel}>YOUR PERMISSIONS</Text>
           <View style={s.infoCard}>
             {roleCfg.permissions.map((perm, i) => (
@@ -119,25 +124,22 @@ export default function Profile() {
               </View>
             ))}
           </View>
-
-          {/* ─── Quick Actions ────────────────────────────────── */}
           <Text style={s.sectionLabel}>QUICK ACTIONS</Text>
           <View style={s.actionsCard}>
-            <ActionRow iconName="time-outline"          label="View My Audit History"     onPress={() => router.push('/history')} />
+            <ActionRow iconName="time-outline"    label="View My Audit History"    onPress={() => router.push('/history')} />
             <View style={s.actionDivider} />
-            <ActionRow iconName="flash-outline"         label="Open Maintenance Copilot"  onPress={() => router.push('/dashboard')} />
-            {user.role === 'admin' && <>
-              <View style={s.actionDivider} />
-              <ActionRow iconName="settings-outline"    label="Admin Dashboard"           onPress={() => router.push('/admin')} />
-            </>}
+            <ActionRow iconName="flash-outline"   label="Open Maintenance Copilot" onPress={() => router.push('/dashboard')} />
+            {user.role === 'admin' && (
+              <>
+                <View style={s.actionDivider} />
+                <ActionRow iconName="settings-outline" label="Admin Dashboard" onPress={() => router.push('/admin')} />
+              </>
+            )}
           </View>
-
-          {/* ─── Logout ───────────────────────────────────────── */}
           <TouchableOpacity style={s.logoutBtn} onPress={handleLogout}>
             <Ionicons name="log-out-outline" size={18} color={C.red} />
             <Text style={s.logoutText}> Logout</Text>
           </TouchableOpacity>
-
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -145,32 +147,13 @@ export default function Profile() {
 }
 
 function StatCard({ label, value, color }) {
-  return (
-    <View style={[s.statCard, { borderColor: color }]}>
-      <Text style={[s.statValue, { color }]}>{value}</Text>
-      <Text style={s.statLabel}>{label}</Text>
-    </View>
-  );
+  return <View style={[s.statCard, { borderColor: color }]}><Text style={[s.statValue, { color }]}>{value}</Text><Text style={s.statLabel}>{label}</Text></View>;
 }
-
 function InfoRow({ iconName, label, value, valueColor, last }) {
-  return (
-    <View style={[s.infoRow, !last && s.infoBorder]}>
-      <Ionicons name={iconName} size={18} color={C.textSub} style={{ width: 24 }} />
-      <Text style={s.infoLabel}>{label}</Text>
-      <Text style={[s.infoValue, valueColor && { color: valueColor }]} numberOfLines={1}>{value}</Text>
-    </View>
-  );
+  return <View style={[s.infoRow, !last && s.infoBorder]}><Ionicons name={iconName} size={18} color={C.textSub} style={{ width: 24 }} /><Text style={s.infoLabel}>{label}</Text><Text style={[s.infoValue, valueColor && { color: valueColor }]} numberOfLines={1}>{value}</Text></View>;
 }
-
 function ActionRow({ iconName, label, onPress }) {
-  return (
-    <TouchableOpacity style={s.actionRow} onPress={onPress}>
-      <Ionicons name={iconName} size={20} color={C.primary} style={{ width: 28 }} />
-      <Text style={s.actionLabel}>{label}</Text>
-      <Ionicons name="chevron-forward-outline" size={18} color={C.textMuted} />
-    </TouchableOpacity>
-  );
+  return <TouchableOpacity style={s.actionRow} onPress={onPress}><Ionicons name={iconName} size={20} color={C.primary} style={{ width: 28 }} /><Text style={s.actionLabel}>{label}</Text><Ionicons name="chevron-forward-outline" size={18} color={C.textMuted} /></TouchableOpacity>;
 }
 
 const s = StyleSheet.create({

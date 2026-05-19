@@ -1,36 +1,34 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Pressable, StyleSheet,
   ActivityIndicator, TextInput, Linking, Platform
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { C } from '../theme';
+import { useUser } from './_layout';
 
 // ---------------------------------------------------------------------------
-// Inline file viewer (PDF / CSV)
+// Dynamic import for PDF/CSV sharing – falls back gracefully
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// PDF viewer — Expo Go compatible
-// Uses expo-file-system to download, expo-sharing to open natively.
-// No WebView, no react-native-pdf, no crashes.
-// ---------------------------------------------------------------------------
+/* eslint-disable no-undef, no-empty */
 let FileSystem = null;
 let Sharing    = null;
-try { FileSystem = require('expo-file-system');       } catch (_) {}
-try { Sharing    = require('expo-sharing');            } catch (_) {}
+try { FileSystem = require('expo-file-system'); } catch (_) {}
+try { Sharing    = require('expo-sharing');      } catch (_) {}
+/* eslint-enable no-undef, no-empty */
 
+// ---------------------------------------------------------------------------
+// PDF viewer
+// ---------------------------------------------------------------------------
 function PdfViewer({ url, fileName }) {
-  const [status, setStatus] = useState('idle'); // idle | downloading | opening | error
-  const [progress, setProgress]     = useState(0);
+  const [status, setStatus] = useState('idle');
+  const [progress, setProgress] = useState(0);
 
   const openPdf = async () => {
     if (!FileSystem || !Sharing) {
-      // Absolute fallback — just open in browser
       Linking.openURL(url);
       return;
     }
@@ -39,9 +37,8 @@ function PdfViewer({ url, fileName }) {
       setProgress(0);
 
       const localName = fileName || 'document.pdf';
-      const localUri  = FileSystem.cacheDirectory + localName;
+      const localUri = FileSystem.cacheDirectory + localName;
 
-      // Download with progress tracking
       const downloadResumable = FileSystem.createDownloadResumable(
         url,
         localUri,
@@ -77,19 +74,15 @@ function PdfViewer({ url, fileName }) {
 
   return (
     <View style={styles.pdfViewerBox}>
-      {/* PDF icon area */}
       <View style={styles.pdfIconWrap}>
         <Text style={styles.pdfIconText}>PDF</Text>
       </View>
-
       <Text style={styles.pdfViewerName} numberOfLines={2}>
         {fileName || 'Document'}
       </Text>
-
       <Text style={styles.pdfViewerHint}>
         Opens in your device's PDF viewer
       </Text>
-
       {status === 'downloading' && (
         <View style={styles.progressWrap}>
           <View style={styles.progressTrack}>
@@ -98,20 +91,17 @@ function PdfViewer({ url, fileName }) {
           <Text style={styles.progressLabel}>{pct}%</Text>
         </View>
       )}
-
       {status === 'opening' && (
         <View style={styles.progressWrap}>
           <ActivityIndicator color={C.primary} size="small" />
           <Text style={[styles.progressLabel, { marginLeft: 8 }]}>Opening…</Text>
         </View>
       )}
-
       {status === 'error' && (
         <Text style={styles.pdfErrorText}>
           Download failed. Tap below to open in browser.
         </Text>
       )}
-
       <TouchableOpacity
         style={[styles.openPdfBtn, status === 'downloading' && styles.openPdfBtnDisabled]}
         onPress={status === 'error' ? () => Linking.openURL(url) : openPdf}
@@ -125,6 +115,9 @@ function PdfViewer({ url, fileName }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Inline file viewer – chooses PDF or CSV
+// ---------------------------------------------------------------------------
 function InlineFileViewer({ url, fileName }) {
   const isCsv = fileName?.toLowerCase().endsWith('.csv');
   if (isCsv) return <CsvViewer url={url} />;
@@ -132,7 +125,7 @@ function InlineFileViewer({ url, fileName }) {
 }
 
 // ---------------------------------------------------------------------------
-// CSV viewer – fetches CSV, parses it, renders a scrollable table
+// CSV viewer
 // ---------------------------------------------------------------------------
 function CsvViewer({ url }) {
   const [rows, setRows] = useState(null);
@@ -145,14 +138,13 @@ function CsvViewer({ url }) {
       .then((text) => {
         const lines = text.trim().split('\n');
         const parsed = lines.map((line) =>
-          // simple CSV split – handles quoted commas imperfectly but good for read-only display
           line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((c) => c.replace(/^"|"$/g, '').trim())
         );
         setRows(parsed);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [url])();  // self-invoking callback on mount equivalent
+  }, [url])();
 
   if (loading) return <ActivityIndicator color={C.primary} style={{ margin: 12 }} />;
   if (error) return <Text style={styles.viewerFallbackText}>Failed to load CSV: {error}</Text>;
@@ -164,7 +156,6 @@ function CsvViewer({ url }) {
   return (
     <ScrollView horizontal style={styles.csvOuter}>
       <View>
-        {/* Header row */}
         <View style={[styles.csvRow, styles.csvHeaderRow]}>
           {headers.map((h, i) => (
             <Text selectable key={i} style={[styles.csvCell, styles.csvHeaderCell]}>
@@ -172,7 +163,6 @@ function CsvViewer({ url }) {
             </Text>
           ))}
         </View>
-        {/* Data rows */}
         {dataRows.map((row, ri) => (
           <View key={ri} style={[styles.csvRow, ri % 2 === 1 && styles.csvAltRow]}>
             {row.map((cell, ci) => (
@@ -191,6 +181,7 @@ function CsvViewer({ url }) {
 // Main screen
 // ---------------------------------------------------------------------------
 export default function Documents() {
+  const { user } = useUser();
   const [loading, setLoading] = useState(true);
   const [documents, setDocuments] = useState([]);
   const [search, setSearch] = useState('');
@@ -199,30 +190,16 @@ export default function Documents() {
   const [error, setError] = useState(null);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const hasLoadedRef = useRef(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      checkAndLoad();
-    }, [])
-  );
-
-  const checkAndLoad = async () => {
-    const raw = await AsyncStorage.getItem('user');
-    const user = raw ? JSON.parse(raw) : null;
-    if (user?.role !== 'admin') {
-      router.replace('/dashboard');
-      return;
-    }
-    await loadDocuments();
-  };
-
-  const loadDocuments = async () => {
-    setLoading(true);
+  const loadDocuments = useCallback(async () => {
+    if (!hasLoadedRef.current) setLoading(true);
     setError(null);
     try {
       const snapshot = await getDocs(collection(db, 'ManualDocuments'));
       const docs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       setDocuments(docs);
+      hasLoadedRef.current = true;
       if (docs.length === 0) setError('No documents found in "ManualDocuments" collection.');
     } catch (err) {
       console.error(err);
@@ -230,7 +207,20 @@ export default function Documents() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const handleRefresh = useCallback(() => {
+    hasLoadedRef.current = false;
+    loadDocuments();
+  }, [loadDocuments]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) return;
+      if (user.role !== 'admin') { router.replace('/dashboard'); return; }
+      loadDocuments();
+    }, [user, router, loadDocuments])
+  );
 
   const groups = useMemo(() => {
     const groupSet = new Set();
@@ -261,32 +251,25 @@ export default function Documents() {
     return new Date(timestamp).toLocaleDateString();
   };
 
-  const downloadFile = async (url, fileName) => {
+  const downloadFile = async (url) => {
     if (!url) return;
-    // On mobile, opening the URL triggers the browser / Files app download
     const supported = await Linking.canOpenURL(url);
     if (supported) Linking.openURL(url);
     else console.warn('Cannot open URL:', url);
   };
 
-  // ---- Render filter chips ----
-  // FIX: wrap chipScroll with a fixed-height container so chips never shift
-  // content below them when the selected chip changes padding/border.
   const renderChips = () => (
     <View style={styles.chipRow}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        // FIX: use contentInset so the very first chip isn't clipped
         contentContainerStyle={styles.chipContainer}
       >
         <TouchableOpacity
           style={[styles.chip, selectedGroup === 'all' && styles.chipActive]}
           onPress={() => setSelectedGroup('all')}
         >
-          <Text
-            style={[styles.chipText, selectedGroup === 'all' && styles.chipTextActive]}
-          >
+          <Text style={[styles.chipText, selectedGroup === 'all' && styles.chipTextActive]}>
             All ({documents.length})
           </Text>
         </TouchableOpacity>
@@ -309,7 +292,6 @@ export default function Documents() {
     </View>
   );
 
-  // ---- Render a single document card ----
   const renderDoc = (doc) => {
     const isExpanded = expandedId === doc.id;
     const isCsv = doc.fileName?.toLowerCase().endsWith('.csv');
@@ -321,7 +303,6 @@ export default function Documents() {
         onPress={() => setExpandedId(isExpanded ? null : doc.id)}
         activeOpacity={0.8}
       >
-        {/* Card header */}
         <View style={styles.docCardHeader}>
           <Text selectable style={styles.docGroup} numberOfLines={1}>
             {doc.documentGroup || 'No group'}
@@ -329,7 +310,6 @@ export default function Documents() {
           <Text style={styles.expandIcon}>{isExpanded ? '▲' : '▼'}</Text>
         </View>
 
-        {/* FIX: numberOfLines={2} so two lines of filename are always visible */}
         <Text selectable style={styles.docFilename} numberOfLines={2}>
           {doc.fileName || 'Unnamed'}
         </Text>
@@ -338,21 +318,18 @@ export default function Documents() {
           Uploaded: {formatDate(doc.uploadedAt)}
         </Text>
 
-        {/* Expanded section */}
         {isExpanded && (
           <View style={styles.expandedDetails}>
-            {/* FIX: storage path no longer cut off – removed numberOfLines */}
             {doc.storagePath && (
               <Text selectable style={styles.storagePath}>
                 {doc.storagePath}
               </Text>
             )}
 
-            {/* Action buttons */}
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.actionBtn, styles.downloadBtn]}
-                onPress={() => downloadFile(doc.documentUrl, doc.fileName)}
+                onPress={() => downloadFile(doc.documentUrl)}
               >
                 <Text style={styles.actionBtnText}>
                   {isCsv ? '↓ Download CSV' : '↓ Download PDF'}
@@ -360,7 +337,6 @@ export default function Documents() {
               </TouchableOpacity>
             </View>
 
-            {/* Inline file preview — Pressable stops tap bubbling to card toggle */}
             {doc.documentUrl ? (
               <Pressable onPress={(e) => e.stopPropagation()}>
                 <View style={styles.viewerContainer}>
@@ -378,18 +354,16 @@ export default function Documents() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* Header */}
       <View style={styles.header}>
         <View>
           <Text selectable style={styles.pageTitle}>RAG Document Library</Text>
           <Text selectable style={styles.pageSub}>{documents.length} total documents</Text>
         </View>
-        <TouchableOpacity style={styles.refreshBtn} onPress={loadDocuments}>
+        <TouchableOpacity style={styles.refreshBtn} onPress={handleRefresh}>
           <Text style={styles.refreshText}>↻</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Search */}
       <View style={styles.searchWrap}>
         <TextInput
           style={styles.searchInput}
@@ -400,10 +374,8 @@ export default function Documents() {
         />
       </View>
 
-      {/* Filter chips */}
       {groups.length > 0 && renderChips()}
 
-      {/* Document list */}
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: Math.max(insets.bottom + 16, 40) }}>
         {loading && (
           <ActivityIndicator color={C.primary} size="large" style={{ marginTop: 40 }} />
@@ -427,7 +399,7 @@ export default function Documents() {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Styles (complete)
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
@@ -462,15 +434,13 @@ const styles = StyleSheet.create({
     color: C.text,
   },
 
-  // FIX: chipRow is a fixed-height wrapper so the chip area never reflows
-  // when switching between active/inactive chips (which have the same height).
   chipRow: {
-    height: 52,               // fixed — chips are 36px tall + 8px vertical margin
+    height: 52,
     marginBottom: 4,
   },
   chipContainer: {
-    paddingHorizontal: 16,    // FIX: padding here instead of on the ScrollView
-    paddingVertical: 8,       // vertical centering within the fixed row
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     alignItems: 'center',
   },
   chip: {
@@ -481,7 +451,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     marginRight: 10,
-    height: 36,               // explicit height so active/inactive are identical
+    height: 36,
     justifyContent: 'center',
   },
   chipActive: { backgroundColor: C.primary, borderColor: C.primary },
@@ -523,18 +493,17 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 12,
     overflow: 'hidden',
-    flexShrink: 1,            // won't push the chevron off-screen
+    flexShrink: 1,
     marginRight: 8,
   },
   expandIcon: { color: C.textMuted, fontSize: 12 },
 
-  // FIX: minHeight ensures card is taller even for short single-line names
   docFilename: {
     color: C.text,
     fontSize: 14,
     fontWeight: '600',
     marginBottom: 4,
-    minHeight: 38,            // ~2 lines at lineHeight 19
+    minHeight: 38,
     lineHeight: 19,
   },
   uploadDate: { color: C.textMuted, fontSize: 10, marginBottom: 4 },
@@ -547,7 +516,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
-  // FIX: no numberOfLines — full path visible, wraps naturally
   storagePath: {
     color: C.textMuted,
     fontSize: 9,
@@ -567,7 +535,6 @@ const styles = StyleSheet.create({
   downloadBtn: { backgroundColor: C.primary },
   actionBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
 
-  // Inline file viewer container — auto height now (PdfViewer is not fixed-height)
   viewerContainer: {
     borderRadius: 10,
     overflow: 'hidden',
@@ -576,7 +543,6 @@ const styles = StyleSheet.create({
     backgroundColor: C.card,
   },
 
-  // PDF viewer card styles
   pdfViewerBox: {
     alignItems: 'center',
     paddingVertical: 24,
@@ -661,7 +627,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // CSV table styles
   csvOuter: {
     flex: 1,
   },

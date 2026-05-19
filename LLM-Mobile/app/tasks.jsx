@@ -1,23 +1,24 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  View, Text, FlatList, TouchableOpacity, StyleSheet,
   TextInput, Alert, ActivityIndicator, Modal
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
+import { useRole } from '../hooks/useRole';
 import {
   collection, addDoc, getDocs, updateDoc, doc,
-  query, orderBy, serverTimestamp, where
+  query, orderBy, serverTimestamp, limit
 } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { C } from '../theme';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const STATUS_CONFIG = {
-  pending:     { label: 'Pending',     color: '#d97706', bg: '#fef9c3', icon: '⏳' },
-  in_progress: { label: 'In Progress', color: C.blue,    bg: C.blueBg,  icon: '🔧' },
-  done:        { label: 'Done',        color: C.green,   bg: C.greenBg, icon: '✅' },
+  pending:     { label: 'Pending',     color: '#d97706', bg: '#fef9c3', icon: 'time-outline' },
+  in_progress: { label: 'In Progress', color: C.blue,    bg: C.blueBg,  icon: 'construct-outline' },
+  done:        { label: 'Done',        color: C.green,   bg: C.greenBg, icon: 'checkmark-circle-outline' },
 };
 
 const PRIORITY_CONFIG = {
@@ -29,65 +30,49 @@ const PRIORITY_CONFIG = {
 const ROLES = ['all', 'expert', 'intermediate', 'beginner'];
 
 export default function Tasks() {
-  const [user, setUser]               = useState(null);
+  const { user, role, loading: userLoading } = useRole();
   const [tasks, setTasks]             = useState([]);
   const [loading, setLoading]         = useState(true);
   const [showCreate, setShowCreate]   = useState(false);
   const [saving, setSaving]           = useState(false);
   const [filterStatus, setFilterStatus] = useState('all');
-
-  // Create form state
   const [title, setTitle]             = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority]       = useState('medium');
   const [assignedRole, setAssignedRole] = useState('all');
 
-  useFocusEffect(
-    useCallback(() => {
-      loadAll();
-    }, [])
-  );
-
-  const loadAll = async () => {
+  const fetchTasks = useCallback(async () => {
+    if (userLoading || !role) return;
     setLoading(true);
     try {
-      const raw  = await AsyncStorage.getItem('user');
-      const u    = raw ? JSON.parse(raw) : null;
-      setUser(u);
-      await fetchTasks(u);
+      const tasksRef = collection(db, 'maintenance_tasks');
+      let q;
+      if (role === 'admin') {
+        q = query(tasksRef, orderBy('createdAt', 'desc'), limit(50));
+      } else {
+        q = query(tasksRef, orderBy('createdAt', 'desc'), limit(50));
+      }
+      const snap = await getDocs(q);
+      let data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (role !== 'admin') {
+        data = data.filter(t => t.assignedRole === role || t.assignedRole === 'all');
+      }
+      setTasks(data);
     } catch (e) { console.error(e); }
     setLoading(false);
-  };
+  }, [role, userLoading]);
 
-  const fetchTasks = async (u) => {
-    const role     = u?.role || 'beginner';
-    const tasksRef = collection(db, 'maintenance_tasks');
-    let q;
+  useFocusEffect(
+    useCallback(() => {
+      fetchTasks();
+    }, [fetchTasks])
+  );
 
-    if (role === 'admin') {
-      q = query(tasksRef, orderBy('createdAt', 'desc'));
-    } else {
-      // Workers see tasks assigned to their role or 'all'
-      q = query(tasksRef, orderBy('createdAt', 'desc'));
-    }
-
-    const snap  = await getDocs(q);
-    let data    = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-    // Filter for workers
-    if (role !== 'admin') {
-      data = data.filter(t => t.assignedRole === role || t.assignedRole === 'all');
-    }
-
-    setTasks(data);
-  };
-
-  // ─── Create Task ─────────────────────────────────────────────────────────
   const handleCreate = async () => {
     if (!title.trim()) { Alert.alert('Error', 'Task title is required.'); return; }
     setSaving(true);
     try {
-      const userId = user?.uid || user?.email || 'admin';
+      const userId = user?.uid || user?.email || 'unknown';
       await addDoc(collection(db, 'maintenance_tasks'), {
         title:        title.trim(),
         description:  description.trim(),
@@ -100,7 +85,7 @@ export default function Tasks() {
       });
       setTitle(''); setDescription(''); setPriority('medium'); setAssignedRole('all');
       setShowCreate(false);
-      await fetchTasks(user);
+      await fetchTasks();
       Alert.alert('Success', 'Task created successfully.');
     } catch (e) {
       console.error(e);
@@ -109,14 +94,12 @@ export default function Tasks() {
     setSaving(false);
   };
 
-  // ─── Update Status ───────────────────────────────────────────────────────
   const handleStatusUpdate = async (taskId, currentStatus) => {
     const nextStatus = {
       pending:     'in_progress',
       in_progress: 'done',
       done:        'pending',
     }[currentStatus];
-
     const label = STATUS_CONFIG[nextStatus].label;
     Alert.alert('Update Status', `Mark this task as "${label}"?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -131,15 +114,105 @@ export default function Tasks() {
     ]);
   };
 
-  const isAdmin   = user?.role === 'admin';
-  const filtered  = filterStatus === 'all'
-    ? tasks
-    : tasks.filter(t => t.status === filterStatus);
+  const isAdmin = role === 'admin';
+  const filtered = useMemo(() => {
+    if (filterStatus === 'all') return tasks;
+    return tasks.filter(t => t.status === filterStatus);
+  }, [filterStatus, tasks]);
+
+  const renderTask = useCallback(({ item: task }) => {
+    const statusCfg   = STATUS_CONFIG[task.status]   || STATUS_CONFIG.pending;
+    const priorityCfg = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium;
+    return (
+      <View style={s.taskCard}>
+        <View style={s.taskCardHeader}>
+          <View style={[s.priorityBadge, { backgroundColor: priorityCfg.bg }]}>
+            <Text style={[s.priorityText, { color: priorityCfg.color }]}>
+              {priorityCfg.label}
+            </Text>
+          </View>
+          <View style={[s.statusBadge, { backgroundColor: statusCfg.bg }]}>
+            <Ionicons name={statusCfg.icon} size={10} color={statusCfg.color} style={{ marginRight: 3 }} />
+            <Text style={[s.statusText, { color: statusCfg.color }]}>{statusCfg.label}</Text>
+          </View>
+        </View>
+        <Text style={s.taskTitle}>{task.title}</Text>
+        {task.description ? <Text style={s.taskDesc}>{task.description}</Text> : null}
+        <View style={s.taskMeta}>
+          <View style={s.metaItem}>
+            <Ionicons name="people-outline" size={12} color={C.textMuted} />
+            <Text style={s.metaText}>
+              {task.assignedRole === 'all' ? 'All Workers' : task.assignedRole}
+            </Text>
+          </View>
+          {task.createdBy && (
+            <View style={s.metaItem}>
+              <Ionicons name="person-outline" size={12} color={C.textMuted} />
+              <Text style={s.metaText}>{task.createdBy}</Text>
+            </View>
+          )}
+        </View>
+        {task.status !== 'done' ? (
+          <TouchableOpacity
+            style={[s.actionBtn, { backgroundColor: statusCfg.bg, borderColor: statusCfg.color }]}
+            onPress={() => handleStatusUpdate(task.id, task.status)}
+          >
+            <Ionicons
+              name={task.status === 'pending' ? 'play-outline' : 'checkmark-outline'}
+              size={14}
+              color={statusCfg.color}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={[s.actionBtnText, { color: statusCfg.color }]}>
+              {task.status === 'pending' ? 'Start Task' : 'Mark as Done'}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[s.actionBtn, { backgroundColor: '#f3f4f6', borderColor: C.cardBorder }]}
+            onPress={() => handleStatusUpdate(task.id, task.status)}
+          >
+            <Ionicons name="refresh-outline" size={14} color={C.textMuted} style={{ marginRight: 6 }} />
+            <Text style={[s.actionBtnText, { color: C.textMuted }]}>Reopen Task</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  }, []);
+
+  const ListEmpty = useCallback(() => {
+    if (loading) {
+      return (
+        <View style={s.emptyState}>
+          <Ionicons name="sync-outline" size={36} color={C.textMuted} />
+          <Text style={s.emptyTitle}>Loading tasks…</Text>
+          <Text style={s.muted}>Please wait a moment</Text>
+        </View>
+      );
+    }
+    return (
+      <View style={s.emptyState}>
+        <Ionicons name="clipboard-outline" size={36} color={C.textMuted} />
+        <Text style={s.emptyTitle}>No Tasks</Text>
+        <Text style={s.muted}>
+          {isAdmin ? 'Tap "+ New Task" to create one.' : 'No tasks assigned to you yet.'}
+        </Text>
+      </View>
+    );
+  }, [loading, isAdmin]);
+
+  if (userLoading) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ color: C.textMuted }}>Loading user…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={s.safe}>
-
-      {/* ─── Header ──────────────────────────────────────────────────── */}
       <View style={s.header}>
         <View>
           <Text style={s.pageTitle}>Maintenance Tasks</Text>
@@ -147,96 +220,43 @@ export default function Tasks() {
         </View>
         {isAdmin && (
           <TouchableOpacity style={s.createBtn} onPress={() => setShowCreate(true)}>
-            <Text style={s.createBtnText}>+ New Task</Text>
+            <Ionicons name="add" size={18} color="#fff" style={{ marginRight: 4 }} />
+            <Text style={s.createBtnText}>New Task</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* ─── Status Filter ───────────────────────────────────────────── */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterScroll}>
-        {['all', 'pending', 'in_progress', 'done'].map(f => (
-          <TouchableOpacity
-            key={f}
-            onPress={() => setFilterStatus(f)}
-            style={[s.filterTab, filterStatus === f && s.filterTabActive]}
-          >
-            <Text style={[s.filterTabText, filterStatus === f && s.filterTabTextActive]}>
-              {f === 'all' ? 'All' : STATUS_CONFIG[f]?.label}
-              {f !== 'all' && ` (${tasks.filter(t => t.status === f).length})`}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      <View style={s.filterWrapper}>
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.filterContainer}
+          data={['all', 'pending', 'in_progress', 'done']}
+          keyExtractor={f => f}
+          renderItem={({ item: f }) => (
+            <TouchableOpacity
+              onPress={() => setFilterStatus(f)}
+              style={[s.filterTab, filterStatus === f && s.filterTabActive]}
+              activeOpacity={0.7}
+            >
+              <Text style={[s.filterTabText, filterStatus === f && s.filterTabTextActive]}>
+                {f === 'all' ? 'All' : STATUS_CONFIG[f]?.label}
+                {f !== 'all' && ` (${tasks.filter(t => t.status === f).length})`}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+      </View>
 
-      {/* ─── Task List ───────────────────────────────────────────────── */}
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-        {loading ? (
-          <ActivityIndicator color={C.primary} size="large" style={{ marginTop: 40 }} />
-        ) : filtered.length === 0 ? (
-          <View style={s.emptyState}>
-            <Text style={{ fontSize: 36, marginBottom: 10 }}>📋</Text>
-            <Text style={s.emptyTitle}>No Tasks</Text>
-            <Text style={s.muted}>
-              {isAdmin ? 'Tap "+ New Task" to create one.' : 'No tasks assigned to you yet.'}
-            </Text>
-          </View>
-        ) : (
-          filtered.map(task => {
-            const statusCfg   = STATUS_CONFIG[task.status]   || STATUS_CONFIG.pending;
-            const priorityCfg = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.medium;
-            return (
-              <View key={task.id} style={s.taskCard}>
-                {/* Card Header */}
-                <View style={s.taskCardHeader}>
-                  <View style={[s.priorityBadge, { backgroundColor: priorityCfg.bg }]}>
-                    <Text style={[s.priorityText, { color: priorityCfg.color }]}>
-                      {priorityCfg.label}
-                    </Text>
-                  </View>
-                  <View style={[s.statusBadge, { backgroundColor: statusCfg.bg }]}>
-                    <Text style={[s.statusText, { color: statusCfg.color }]}>
-                      {statusCfg.icon} {statusCfg.label}
-                    </Text>
-                  </View>
-                </View>
+      <FlatList
+        data={filtered}
+        keyExtractor={item => item.id}
+        renderItem={renderTask}
+        contentContainerStyle={s.taskListContent}
+        ListEmptyComponent={ListEmpty}
+        style={{ flex: 1 }}
+      />
 
-                {/* Title & Description */}
-                <Text style={s.taskTitle}>{task.title}</Text>
-                {task.description ? (
-                  <Text style={s.taskDesc}>{task.description}</Text>
-                ) : null}
-
-                {/* Meta */}
-                <View style={s.taskMeta}>
-                  <Text style={s.metaText}>👥 {task.assignedRole === 'all' ? 'All Workers' : task.assignedRole}</Text>
-                  {task.createdBy && <Text style={s.metaText}>👤 {task.createdBy}</Text>}
-                </View>
-
-                {/* Action Button */}
-                {task.status !== 'done' ? (
-                  <TouchableOpacity
-                    style={[s.actionBtn, { backgroundColor: statusCfg.bg, borderColor: statusCfg.color }]}
-                    onPress={() => handleStatusUpdate(task.id, task.status)}
-                  >
-                    <Text style={[s.actionBtnText, { color: statusCfg.color }]}>
-                      {task.status === 'pending' ? '🔧 Start Task' : '✅ Mark as Done'}
-                    </Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={[s.actionBtn, { backgroundColor: '#f3f4f6', borderColor: C.cardBorder }]}
-                    onPress={() => handleStatusUpdate(task.id, task.status)}
-                  >
-                    <Text style={[s.actionBtnText, { color: C.textMuted }]}>↩ Reopen Task</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
-
-      {/* ─── Create Task Modal (Admin only) ──────────────────────────── */}
       <Modal visible={showCreate} animationType="slide" presentationStyle="pageSheet">
         <SafeAreaView style={s.modalContainer}>
           <View style={s.modalHeader}>
@@ -246,7 +266,7 @@ export default function Tasks() {
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={s.modalBody}>
+          <View style={s.modalBody}>
             <Text style={s.fieldLabel}>TASK TITLE *</Text>
             <TextInput
               style={s.input}
@@ -297,7 +317,7 @@ export default function Tasks() {
                 </TouchableOpacity>
               ))}
             </View>
-          </ScrollView>
+          </View>
 
           <View style={s.modalFooter}>
             <TouchableOpacity
@@ -313,40 +333,76 @@ export default function Tasks() {
           </View>
         </SafeAreaView>
       </Modal>
-
     </SafeAreaView>
   );
 }
 
+// ─── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   safe:             { flex: 1, backgroundColor: C.bg },
   header:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 20, paddingBottom: 8 },
   pageTitle:        { color: C.text, fontSize: 22, fontWeight: '700' },
   pageSub:          { color: C.textSub, fontSize: 12, marginTop: 2 },
-  createBtn:        { backgroundColor: C.primary, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  createBtn:        { backgroundColor: C.primary, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' },
   createBtnText:    { color: '#fff', fontWeight: '700', fontSize: 13 },
 
-  filterScroll:     { paddingHorizontal: 16, marginBottom: 4 },
-  filterTab:        { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, marginRight: 8, backgroundColor: C.card },
-  filterTabActive:  { backgroundColor: C.primaryLight, borderColor: C.primary },
-  filterTabText:    { fontSize: 12, color: C.textMuted, fontWeight: '600' },
-  filterTabTextActive: { color: C.primary },
+  filterWrapper: {
+    height: 48,
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  filterContainer: {
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  filterTab: {
+    minWidth: 70,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: C.cardBorder,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    marginRight: 8,
+    backgroundColor: C.card,
+  },
+  filterTabActive: {
+    backgroundColor: C.primaryLight,
+    borderColor: C.primary,
+  },
+  filterTabText: {
+    fontSize: 12,
+    color: C.textMuted,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  filterTabTextActive: {
+    color: C.primary,
+  },
 
-  emptyState:       { alignItems: 'center', paddingVertical: 60, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.cardBorder },
-  emptyTitle:       { color: C.text, fontWeight: '700', fontSize: 16, marginBottom: 6 },
+  taskListContent: {
+    padding: 16,
+    paddingBottom: 40,
+    flexGrow: 1,
+  },
+
+  emptyState:       { alignItems: 'center', paddingVertical: 60, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.cardBorder, marginTop: 12 },
+  emptyTitle:       { color: C.text, fontWeight: '700', fontSize: 16, marginBottom: 6, marginTop: 10 },
   muted:            { color: C.textMuted, fontSize: 12, textAlign: 'center' },
 
   taskCard:         { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.cardBorder, padding: 16, marginBottom: 12, elevation: 2 },
   taskCardHeader:   { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
   priorityBadge:    { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
   priorityText:     { fontSize: 10, fontWeight: '700' },
-  statusBadge:      { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
+  statusBadge:      { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, flexDirection: 'row', alignItems: 'center' },
   statusText:       { fontSize: 10, fontWeight: '700' },
   taskTitle:        { color: C.text, fontSize: 15, fontWeight: '700', marginBottom: 6 },
   taskDesc:         { color: C.textSub, fontSize: 13, lineHeight: 18, marginBottom: 8 },
   taskMeta:         { flexDirection: 'row', gap: 12, marginBottom: 12 },
+  metaItem:         { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText:         { color: C.textMuted, fontSize: 11 },
-  actionBtn:        { borderWidth: 1, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  actionBtn:        { borderWidth: 1, borderRadius: 10, paddingVertical: 10, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
   actionBtnText:    { fontSize: 13, fontWeight: '700' },
 
   modalContainer:   { flex: 1, backgroundColor: C.bg },

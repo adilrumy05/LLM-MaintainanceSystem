@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity,
-  Alert, SafeAreaView, ScrollView,
+  Alert, SafeAreaView, ScrollView, Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { doc, setDoc } from "firebase/firestore";
@@ -24,8 +24,8 @@ const roles = [
 ];
 
 export default function UserFormScreen() {
-  const router = useRouter();
-  const params = useLocalSearchParams();
+  const router       = useRouter();
+  const params       = useLocalSearchParams();
   const existingUser = params.user ? JSON.parse(params.user) : null;
 
   const [email, setEmail]       = useState(existingUser?.email || "");
@@ -35,22 +35,52 @@ export default function UserFormScreen() {
 
   const addUser = async () => {
     if (!username.trim() || !email.trim() || (!existingUser && !password.trim())) {
-      Alert.alert("Validation", "Please fill in all required fields.");
+      if (Platform.OS === "web") {
+        window.alert("Please fill in all required fields.");
+      } else {
+        Alert.alert("Validation", "Please fill in all required fields.");
+      }
       return;
     }
+
+    if (existingUser && !existingUser.id) {
+      if (Platform.OS === "web") {
+        window.alert("Could not identify the user to update. Please try again.");
+      } else {
+        Alert.alert("Error", "Could not identify the user to update. Please try again.");
+      }
+      return;
+    }
+
     try {
       if (existingUser) {
         await setDoc(doc(db, "Users", existingUser.id), { username, email, role_id: role });
-        Alert.alert("Success", "User updated successfully!");
+        // ── FIX: router.back() correctly returns to usermanagement ───────────
+        // router.replace('/usermanagement') was navigating to admin because
+        // usermanagement is a hidden tab (href: null) — replace doesn't stack.
+        if (Platform.OS === "web") {
+          window.alert("User updated successfully!");
+        } else {
+          Alert.alert("Success", "User updated successfully!");
+        }
+        router.back();
       } else {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const uid = userCredential.user.uid;
         await setDoc(doc(db, "Users", uid), { username, email, role_id: role });
-        Alert.alert("Success", "User created successfully!");
+        if (Platform.OS === "web") {
+          window.alert("User created successfully!");
+        } else {
+          Alert.alert("Success", "User created successfully!");
+        }
+        router.back();
       }
-      router.back();
     } catch (error) {
-      Alert.alert("Error", error.message);
+      if (Platform.OS === "web") {
+        window.alert(error.message);
+      } else {
+        Alert.alert("Error", error.message);
+      }
     }
   };
 
@@ -111,7 +141,7 @@ export default function UserFormScreen() {
             </View>
           </View>
 
-          {/* Password */}
+          {/* Password — create only */}
           {!isEditing && (
             <View style={styles.fieldGroup}>
               <Text style={styles.fieldLabel}>Password</Text>
@@ -139,10 +169,7 @@ export default function UserFormScreen() {
               return (
                 <TouchableOpacity
                   key={r.id}
-                  style={[
-                    styles.roleChip,
-                    isSelected && styles.roleChipSelected,
-                  ]}
+                  style={[styles.roleChip, isSelected && styles.roleChipSelected]}
                   onPress={() => setRole(r.id)}
                   activeOpacity={0.75}
                 >
@@ -200,5 +227,3 @@ const styles = StyleSheet.create({
   cancelBtn:           { alignItems: "center", paddingVertical: 10 },
   cancelBtnText:       { color: "#7c3aed", fontSize: 14, fontWeight: "600" },
 });
-
-

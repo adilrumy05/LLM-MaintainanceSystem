@@ -1,18 +1,23 @@
 import React, { useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  FlatList, Alert, SafeAreaView,
+  FlatList, Alert, SafeAreaView, Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { useRouter } from "expo-router";
 
+// ── Role config ───────────────────────────────────────────────────────────────
 const ROLE_CONFIG = {
   admin:               { label: "Admin",        color: "#7c3aed", bg: "#ede9fe" },
   worker_expert:       { label: "Expert",       color: "#7c3aed", bg: "#ede9fe" },
   worker_intermediate: { label: "Intermediate", color: "#7c3aed", bg: "#ede9fe" },
   worker_beginner:     { label: "Beginner",     color: "#7c3aed", bg: "#ede9fe" },
+  // Simplified formats (fallback)
+  expert:              { label: "Expert",       color: "#7c3aed", bg: "#ede9fe" },
+  intermediate:        { label: "Intermediate", color: "#7c3aed", bg: "#ede9fe" },
+  beginner:            { label: "Beginner",     color: "#7c3aed", bg: "#ede9fe" },
 };
 
 function getRoleStyle(role_id) {
@@ -46,29 +51,37 @@ export default function UserManagementScreen() {
 
   useEffect(() => { fetchUsers(); }, []);
 
+  // ── FIX: Alert.alert buttons don't fire on web — use window.confirm instead ──
   const deleteUser = (id, name) => {
-    Alert.alert(
-      "Delete User",
-      `Are you sure you want to delete ${name || "this user"}?`,
-      [
+    const label   = name || "this user";
+    const message = `Are you sure you want to delete ${label}?`;
+
+    const doDelete = async () => {
+      try {
+        await deleteDoc(doc(db, "Users", id));
+        fetchUsers();
+      } catch (e) {
+        console.error("Delete error:", e);
+        if (Platform.OS === "web") {
+          window.alert("Could not delete user.");
+        } else {
+          Alert.alert("Error", "Could not delete user.");
+        }
+      }
+    };
+
+    if (Platform.OS === "web") {
+      if (window.confirm(message)) doDelete();
+    } else {
+      Alert.alert("Delete User", message, [
         { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete", style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteDoc(doc(db, "Users", id));
-              fetchUsers();
-            } catch {
-              Alert.alert("Error", "Could not delete user.");
-            }
-          },
-        },
-      ]
-    );
+        { text: "Delete", style: "destructive", onPress: doDelete },
+      ]);
+    }
   };
 
   const renderUser = ({ item }) => {
-    const role = getRoleStyle(item.role_id);
+    const role     = getRoleStyle(item.role_id);
     const initials = getInitials(item.username);
 
     return (
@@ -195,5 +208,3 @@ const styles = StyleSheet.create({
   addBtn:        { position: "absolute", bottom: 24, left: 16, right: 16, backgroundColor: "#7c3aed", borderRadius: 14, height: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   addBtnText:    { color: "#ffffff", fontSize: 15, fontWeight: "600" },
 });
-
-

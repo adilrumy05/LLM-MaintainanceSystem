@@ -1,26 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from 'expo-router';
+import { useUser } from '../app/_layout';    // reads from UserContext — no AsyncStorage
 
 export function useRole() {
-  const [role, setRole]       = useState('beginner');
-  const [loading, setLoading] = useState(true);
-
-  const loadRole = async () => {
-    const raw  = await AsyncStorage.getItem('user');
-    const user = JSON.parse(raw || '{}');
-    if (user?.role) setRole(user.role);
-    else setRole('beginner');
-    setLoading(false);
-  };
-
-  useEffect(() => { loadRole(); }, []);
-
-  useFocusEffect(useCallback(() => { loadRole(); }, []));
+  const { user, role } = useUser();
 
   return {
-    role,
-    loading,
+    user,
+    role:            role ?? 'beginner',
+    loading:         user === undefined,       // true only while context initialises on first launch
     isAdmin:         role === 'admin',
     isExpert:        role === 'expert',
     isIntermediate:  role === 'intermediate',

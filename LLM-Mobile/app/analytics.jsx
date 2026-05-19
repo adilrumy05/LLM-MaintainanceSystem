@@ -1,12 +1,12 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { useRouter, useFocusEffect } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
+import { useUser } from './_layout';
 
 const ROLE_ID_MAP = {
   'admin':               'admin',
@@ -16,74 +16,106 @@ const ROLE_ID_MAP = {
 };
 
 export default function Analytics() {
-  const [loading, setLoading] = useState(true);
-  const [metrics, setMetrics] = useState(null);
-  const router                = useRouter();
+  const { user }                    = useUser();
+  const router                      = useRouter();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [logs,         setLogs]         = useState(null);
+  const [users,        setUsers]        = useState(null);
+  const [alertsCount,  setAlertsCount]  = useState(null);
 
   useFocusEffect(
     useCallback(() => {
-      checkAdminAndLoad();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+      if (!user) return;
+      if (user.role !== 'admin') { router.replace('/dashboard'); return; }
+
+      let unsubLogs, unsubUsers, unsubAlerts;
+
+      unsubLogs = onSnapshot(
+        query(collection(db, 'audit_logs'), orderBy('last_updated', 'desc'), limit(100)),
+        (snap) => setLogs(snap.docs.map(d => d.data())),
+        (e)    => console.error('[Analytics] Logs error:', e)
+      );
+
+      unsubUsers = onSnapshot(
+        query(collection(db, 'Users'), limit(100)),
+        (snap) => setUsers(snap.docs.map(d => d.data())),
+        (e)    => console.error('[Analytics] Users error:', e)
+      );
+
+      unsubAlerts = onSnapshot(
+        query(collection(db, 'Alerts'), limit(100)),
+        (snap) => setAlertsCount(snap.size),
+        (e)    => console.error('[Analytics] Alerts error:', e)
+      );
+
+      return () => {
+        if (unsubLogs)   unsubLogs();
+        if (unsubUsers)  unsubUsers();
+        if (unsubAlerts) unsubAlerts();
+      };
+    }, [user, router])
   );
 
-  const checkAdminAndLoad = async () => {
-    const raw  = await AsyncStorage.getItem('user');
-    const user = raw ? JSON.parse(raw) : null;
-    if (user?.role !== 'admin') { router.replace('/dashboard'); return; }
-    loadMetrics();
+  const metrics = useMemo(() => {
+    if (logs === null || users === null || alertsCount === null) return null;
+
+    const totalSessions = logs.length;
+    const approved      = logs.filter(l => l.status === 'approved').length;
+    const rejected      = logs.filter(l => l.status === 'rejected').length;
+    const pending       = logs.filter(l => l.status === 'pending_review').length;
+    const approvalRate  = totalSessions > 0 ? Math.round((approved / totalSessions) * 100) : 0;
+
+    const userQueryMap = {};
+    logs.forEach(l => {
+      const uid = l.user_id || 'unknown';
+      userQueryMap[uid] = (userQueryMap[uid] || 0) + (l.messages?.length || 0);
+    });
+    const topUsers     = Object.entries(userQueryMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id, count]) => ({ id, count }));
+    const totalQueries = Object.values(userQueryMap).reduce((a, b) => a + b, 0);
+
+    const totalUsers  = users.length;
+    const activeUsers = users.filter(u => u.isActive).length;
+    const roleCounts  = { admin: 0, expert: 0, intermediate: 0, beginner: 0 };
+    users.forEach(u => {
+      const r = ROLE_ID_MAP[u.role_id] || u.role?.toLowerCase();
+      if (r && roleCounts[r] !== undefined) roleCounts[r]++;
+    });
+
+    const dayLabels = [], dayCounts = [];
+    for (let i = 6; i >= 0; i--) {
+      const d       = new Date();
+      d.setDate(d.getDate() - i);
+      const label   = d.toLocaleDateString('en-GB', { weekday: 'short' });
+      const dateStr = d.toISOString().split('T')[0];
+      const count   = logs.filter(l => l.last_updated?.startsWith(dateStr)).length;
+      dayLabels.push(label);
+      dayCounts.push(count);
+    }
+
+    return {
+      totalSessions, approved, rejected, pending, approvalRate,
+      totalQueries, topUsers, totalUsers, activeUsers, roleCounts,
+      totalAlerts: alertsCount, dayLabels, dayCounts,
+    };
+  }, [logs, users, alertsCount]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await new Promise(r => setTimeout(r, 600));
+    setRefreshing(false);
   };
 
-  const loadMetrics = async () => {
-    setLoading(true);
-    try {
-      const logsSnap      = await getDocs(query(collection(db, 'audit_logs'), orderBy('last_updated', 'desc')));
-      const logs          = logsSnap.docs.map(d => d.data());
-      const totalSessions = logs.length;
-      const approved      = logs.filter(l => l.status === 'approved').length;
-      const rejected      = logs.filter(l => l.status === 'rejected').length;
-      const pending       = logs.filter(l => l.status === 'pending_review').length;
-      const approvalRate  = totalSessions > 0 ? Math.round((approved / totalSessions) * 100) : 0;
-
-      const userQueryMap = {};
-      logs.forEach(l => {
-        const uid = l.user_id || 'unknown';
-        userQueryMap[uid] = (userQueryMap[uid] || 0) + (l.messages?.length || 0);
-      });
-      const topUsers     = Object.entries(userQueryMap).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([id, count]) => ({ id, count }));
-      const totalQueries = Object.values(userQueryMap).reduce((a, b) => a + b, 0);
-
-      const usersSnap   = await getDocs(collection(db, 'Users'));
-      const users       = usersSnap.docs.map(d => d.data());
-      const totalUsers  = users.length;
-      const activeUsers = users.filter(u => u.isActive).length;
-      const roleCounts  = { admin: 0, expert: 0, intermediate: 0, beginner: 0 };
-      users.forEach(u => {
-        const r = ROLE_ID_MAP[u.role_id] || u.role?.toLowerCase();
-        if (r && roleCounts[r] !== undefined) roleCounts[r]++;
-      });
-
-      const alertsSnap  = await getDocs(collection(db, 'Alerts'));
-      const totalAlerts = alertsSnap.size;
-
-      const dayLabels = [], dayCounts = [];
-      for (let i = 6; i >= 0; i--) {
-        const d       = new Date();
-        d.setDate(d.getDate() - i);
-        const label   = d.toLocaleDateString('en-GB', { weekday: 'short' });
-        const dateStr = d.toISOString().split('T')[0];
-        const count   = logs.filter(l => l.last_updated?.startsWith(dateStr)).length;
-        dayLabels.push(label);
-        dayCounts.push(count);
-      }
-
-      setMetrics({ totalSessions, approved, rejected, pending, approvalRate, totalQueries, topUsers, totalUsers, activeUsers, roleCounts, totalAlerts, dayLabels, dayCounts });
-    } catch (e) { console.error('Analytics load error:', e); }
-    setLoading(false);
-  };
-
-  if (loading) return <SafeAreaView style={s.safe}><ActivityIndicator color={C.primary} size="large" style={{ marginTop: 60 }} /></SafeAreaView>;
-  if (!metrics) return <SafeAreaView style={s.safe}><View style={s.center}><Text style={s.muted}>Failed to load analytics.</Text></View></SafeAreaView>;
+  if (!metrics) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <ActivityIndicator color={C.primary} size="large" style={{ marginTop: 60 }} />
+      </SafeAreaView>
+    );
+  }
 
   const maxDay  = Math.max(...metrics.dayCounts, 1);
   const maxUser = Math.max(...metrics.topUsers.map(u => u.count), 1);
@@ -91,101 +123,79 @@ export default function Analytics() {
   return (
     <SafeAreaView style={s.safe}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-
-        {/* ─── Header ──────────────────────────────────────────── */}
         <View style={s.header}>
           <View>
             <Text style={s.pageTitle}>Analytics</Text>
             <Text style={s.pageSub}>Live system metrics · Admin only</Text>
           </View>
-          <TouchableOpacity style={s.refreshBtn} onPress={loadMetrics}>
-            <Ionicons name="refresh-outline" size={18} color={C.primary} />
-            <Text style={s.refreshText}> Refresh</Text>
+          <TouchableOpacity style={s.refreshBtn} onPress={handleRefresh}>
+            {refreshing ? <ActivityIndicator size="small" color={C.primary} /> : <Ionicons name="refresh-outline" size={18} color={C.primary} />}
+            <Text style={s.refreshText}> {refreshing ? 'Updating…' : 'Refresh'}</Text>
           </TouchableOpacity>
         </View>
-
         <View style={s.body}>
-
-          {/* ─── KPI Cards ───────────────────────────────────── */}
           <Text style={s.sectionLabel}>OVERVIEW</Text>
           <View style={s.kpiRow}>
-            <KpiCard iconName="chatbubble-outline"       label="Total Sessions" value={metrics.totalSessions} color={C.primary} />
-            <KpiCard iconName="search-outline"           label="Total Queries"  value={metrics.totalQueries}  color={C.blue}    />
+            <KpiCard iconName="chatbubble-outline" label="Total Sessions" value={metrics.totalSessions} color={C.primary} />
+            <KpiCard iconName="search-outline" label="Total Queries" value={metrics.totalQueries} color={C.blue} />
           </View>
           <View style={s.kpiRow}>
-            <KpiCard iconName="people-outline"           label="Total Users"    value={metrics.totalUsers}    color={C.green}   />
-            <KpiCard iconName="ellipse"                  label="Active Users"   value={metrics.activeUsers}   color="#d97706"   />
+            <KpiCard iconName="people-outline" label="Total Users" value={metrics.totalUsers} color={C.green} />
+            <KpiCard iconName="ellipse" label="Active Users" value={metrics.activeUsers} color="#d97706" />
           </View>
           <View style={s.kpiRow}>
-            <KpiCard iconName="notifications-outline"    label="Total Alerts"   value={metrics.totalAlerts}   color={C.red}     />
-            <KpiCard iconName="checkmark-circle-outline" label="Approval Rate"  value={`${metrics.approvalRate}%`} color={C.green} />
+            <KpiCard iconName="notifications-outline" label="Total Alerts" value={metrics.totalAlerts} color={C.red} />
+            <KpiCard iconName="checkmark-circle-outline" label="Approval Rate" value={`${metrics.approvalRate}%`} color={C.green} />
           </View>
-
-          {/* ─── Session Status ───────────────────────────────── */}
           <Text style={s.sectionLabel}>SESSION STATUS</Text>
           <View style={s.card}>
-            <StatusBar iconName="checkmark-circle-outline" label="Approved" value={metrics.approved} total={metrics.totalSessions} color={C.green}   />
-            <StatusBar iconName="time-outline"              label="Pending"  value={metrics.pending}  total={metrics.totalSessions} color="#d97706"   />
-            <StatusBar iconName="close-circle-outline"      label="Rejected" value={metrics.rejected} total={metrics.totalSessions} color={C.red}     />
+            <StatusBar iconName="checkmark-circle-outline" label="Approved" value={metrics.approved} total={metrics.totalSessions} color={C.green} />
+            <StatusBar iconName="time-outline" label="Pending" value={metrics.pending} total={metrics.totalSessions} color="#d97706" />
+            <StatusBar iconName="close-circle-outline" label="Rejected" value={metrics.rejected} total={metrics.totalSessions} color={C.red} />
           </View>
-
-          {/* ─── Last 7 Days ──────────────────────────────────── */}
           <Text style={s.sectionLabel}>SESSIONS — LAST 7 DAYS</Text>
           <View style={s.card}>
             <View style={s.barChartRow}>
               {metrics.dayCounts.map((count, i) => (
                 <View key={i} style={s.barCol}>
                   <Text style={s.barValue}>{count > 0 ? count : ''}</Text>
-                  <View style={s.barTrack}>
-                    <View style={[s.barFill, { height: `${Math.max((count / maxDay) * 100, count > 0 ? 8 : 2)}%`, backgroundColor: count > 0 ? C.primary : C.cardBorder }]} />
-                  </View>
+                  <View style={s.barTrack}><View style={[s.barFill, { height: `${Math.max((count / maxDay) * 100, count > 0 ? 8 : 2)}%`, backgroundColor: count > 0 ? C.primary : C.cardBorder }]} /></View>
                   <Text style={s.barLabel}>{metrics.dayLabels[i]}</Text>
                 </View>
               ))}
             </View>
           </View>
-
-          {/* ─── Role Distribution ────────────────────────────── */}
           <Text style={s.sectionLabel}>USER ROLE DISTRIBUTION</Text>
           <View style={s.card}>
-            {[
-              { role: 'admin',        label: 'Admin',        color: '#7c3aed', iconName: 'shield-checkmark-outline' },
-              { role: 'expert',       label: 'Expert',       color: C.green,   iconName: 'star-outline'             },
-              { role: 'intermediate', label: 'Intermediate', color: '#d97706', iconName: 'construct-outline'        },
-              { role: 'beginner',     label: 'Beginner',     color: C.blue,    iconName: 'book-outline'             },
+            {[ { role: 'admin', label: 'Admin', color: '#7c3aed', iconName: 'shield-checkmark-outline' },
+               { role: 'expert', label: 'Expert', color: C.green, iconName: 'star-outline' },
+               { role: 'intermediate', label: 'Intermediate', color: '#d97706', iconName: 'construct-outline' },
+               { role: 'beginner', label: 'Beginner', color: C.blue, iconName: 'book-outline' },
             ].map(({ role, label, color, iconName }) => (
               <StatusBar key={role} iconName={iconName} label={label} value={metrics.roleCounts[role]} total={metrics.totalUsers} color={color} showCount />
             ))}
           </View>
-
-          {/* ─── Top Active Users ─────────────────────────────── */}
           {metrics.topUsers.length > 0 && (
             <>
               <Text style={s.sectionLabel}>TOP ACTIVE USERS</Text>
               <View style={s.card}>
                 {metrics.topUsers.map((u, i) => (
                   <View key={u.id} style={[s.userRow, i < metrics.topUsers.length - 1 && s.userBorder]}>
-                    <View style={[s.rankBadge, { backgroundColor: i === 0 ? '#fef9c3' : C.primaryLight }]}>
-                      <Text style={[s.rankText, { color: i === 0 ? '#d97706' : C.primary }]}>#{i + 1}</Text>
-                    </View>
+                    <View style={[s.rankBadge, { backgroundColor: i === 0 ? '#fef9c3' : C.primaryLight }]}><Text style={[s.rankText, { color: i === 0 ? '#d97706' : C.primary }]}>#{i + 1}</Text></View>
                     <Text style={s.userId} numberOfLines={1}>{u.id}</Text>
-                    <View style={s.userBarWrap}>
-                      <View style={[s.userBar, { width: `${(u.count / maxUser) * 100}%`, backgroundColor: C.primary }]} />
-                    </View>
+                    <View style={s.userBarWrap}><View style={[s.userBar, { width: `${(u.count / maxUser) * 100}%`, backgroundColor: C.primary }]} /></View>
                     <Text style={s.userCount}>{u.count}</Text>
                   </View>
                 ))}
               </View>
             </>
           )}
-
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
 function KpiCard({ iconName, label, value, color }) {
   return (
     <View style={[s.kpiCard, { borderColor: color }]}>
@@ -202,12 +212,8 @@ function StatusBar({ iconName, label, value, total, color, showCount }) {
     <View style={s.statusBarRow}>
       <Ionicons name={iconName} size={14} color={color} />
       <Text style={s.statusBarLabel}> {label}</Text>
-      <View style={s.statusBarTrack}>
-        <View style={[s.statusBarFill, { width: `${pct}%`, backgroundColor: color }]} />
-      </View>
-      <Text style={[s.statusBarCount, { color }]}>
-        {showCount ? value : `${value} (${Math.round(pct)}%)`}
-      </Text>
+      <View style={s.statusBarTrack}><View style={[s.statusBarFill, { width: `${pct}%`, backgroundColor: color }]} /></View>
+      <Text style={[s.statusBarCount, { color }]}>{showCount ? value : `${value} (${Math.round(pct)}%)`}</Text>
     </View>
   );
 }
