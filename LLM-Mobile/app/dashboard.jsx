@@ -1,9 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity,
-  FlatList, ActivityIndicator, Alert, StyleSheet,
-  KeyboardAvoidingView, Platform, Image, ScrollView,
-} from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -22,7 +18,7 @@ export default function Dashboard() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSidebar, setShowSidebar]   = useState(false);
   const [loaded, setLoaded]             = useState(false);
-//const [uploadedFile, setUploadedFile] = useState(null);
+  //const [uploadedFile, setUploadedFile] = useState(null);
   const cancelRef                       = useRef(false);
   const flatListRef                     = useRef(null);
   const router                          = useRouter();
@@ -85,7 +81,7 @@ export default function Dashboard() {
     addMessage('bot', 'Response stopped. You can continue the conversation.');
   };
 
-// Upload disabled — not yet connected to RAG
+  // Upload disabled — not yet connected to RAG
   // const handleFilePick = async () => {
   //   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
   //   if (status !== 'granted') { Alert.alert('Permission Denied', 'Please allow access to your files.'); return; }
@@ -104,7 +100,6 @@ export default function Dashboard() {
     setActiveChatId(newId);
     setShowSidebar(false);
     setInputValue('');
-  
   };
 
   const handleSwitchChat = (id) => { setActiveChatId(id); setShowSidebar(false); };
@@ -117,22 +112,22 @@ export default function Dashboard() {
     setShowSidebar(false);
   };
 
-const handleLogout = () => {
-  if (Platform.OS === 'web') {
-    if (window.confirm('Are you sure you want to logout?')) {
-      AsyncStorage.removeItem('user');
-      router.replace('/login');
+  const handleLogout = () => {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Are you sure you want to logout?')) {
+        AsyncStorage.removeItem('user');
+        router.replace('/login');
+      }
+      return;
     }
-    return;
-  }
-  Alert.alert('Logout', 'Are you sure you want to logout?', [
-    { text: 'Cancel', style: 'cancel' },
-    { text: 'Logout', style: 'destructive', onPress: async () => {
-      await AsyncStorage.removeItem('user');
-      router.replace('/login');
-    }},
-  ]);
-};
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Logout', style: 'destructive', onPress: async () => {
+        await AsyncStorage.removeItem('user');
+        router.replace('/login');
+      }},
+    ]);
+  };
 
   const getChatTitle = (chat) => {
     const first = chat.messages.find(m => m.from === 'user');
@@ -180,7 +175,7 @@ const handleLogout = () => {
     );
   };
 
-  // ─── Render message — no avatars ─────────────────────────────────────────
+  // ─── Render message ───────────────────────────────────────────────────────
   const renderMessage = ({ item }) => {
     const isUser = item.from === 'user';
     return (
@@ -232,24 +227,27 @@ const handleLogout = () => {
                   </View>
                 )}
               />
-              <TouchableOpacity style={s.clearAllBtn} onPress={() => {
-                      if (Platform.OS === 'web') {
-                        if (window.confirm('Delete all conversations?')) {
-                          setChats([{ id: '1', messages: [] }]);
-                          setActiveChatId('1');
-                          setShowSidebar(false);
-                        }
-                        return;
-                      }
-                      Alert.alert('Clear All Chats', 'Delete all conversations?', [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Clear All', style: 'destructive', onPress: () => {
-                          setChats([{ id: '1', messages: [] }]);
-                          setActiveChatId('1');
-                          setShowSidebar(false);
-                        }},
-                      ]);
-                    }}>
+              <TouchableOpacity
+                style={s.clearAllBtn}
+                onPress={() => {
+                  if (Platform.OS === 'web') {
+                    if (window.confirm('Delete all conversations?')) {
+                      setChats([{ id: '1', messages: [] }]);
+                      setActiveChatId('1');
+                      setShowSidebar(false);
+                    }
+                    return;
+                  }
+                  Alert.alert('Clear All Chats', 'Delete all conversations?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Clear All', style: 'destructive', onPress: () => {
+                      setChats([{ id: '1', messages: [] }]);
+                      setActiveChatId('1');
+                      setShowSidebar(false);
+                    }},
+                  ]);
+                }}
+              >
                 <Ionicons name="trash-outline" size={14} color={C.red} />
                 <Text style={s.clearAllText}> Clear All Chats</Text>
               </TouchableOpacity>
@@ -261,7 +259,7 @@ const handleLogout = () => {
           </View>
         )}
 
-{/* ─── Header ──────────────────────────────────────────────── */}
+        {/* ─── Header ──────────────────────────────────────────────── */}
         <View style={s.header}>
           <TouchableOpacity style={s.menuBtn} onPress={() => setShowSidebar(true)}>
             <Ionicons name="menu-outline" size={24} color={C.text} />
@@ -290,43 +288,46 @@ const handleLogout = () => {
         )}
 
         {/* ─── Message area ────────────────────────────────────────── */}
-        <View style={s.messageArea}>
-          {isEmpty ? (
-            <View style={s.welcomeContainer}>
-              <View style={s.logoCircle}>
-                <Ionicons name="flash-outline" size={36} color={C.primary} />
+        {/* FIX: TouchableWithoutFeedback dismisses keyboard on tap anywhere in message area */}
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+          <View style={s.messageArea}>
+            {isEmpty ? (
+              <View style={s.welcomeContainer}>
+                <View style={s.logoCircle}>
+                  <Ionicons name="flash-outline" size={36} color={C.primary} />
+                </View>
+                <Text style={s.welcomeTitle}>Maintenance Copilot</Text>
+                <Text style={s.welcomeSub}>Your AI-powered maintenance assistant.</Text>
+                <Text style={s.welcomeSub2}>Ask me anything about equipment, procedures, or safety.</Text>
               </View>
-              <Text style={s.welcomeTitle}>Maintenance Copilot</Text>
-              <Text style={s.welcomeSub}>Your AI-powered maintenance assistant.</Text>
-              <Text style={s.welcomeSub2}>Ask me anything about equipment, procedures, or safety.</Text>
-            </View>
-          ) : (
-            <FlatList
-              ref={flatListRef}
-              data={messages}
-              keyExtractor={item => item.id}
-              renderItem={renderMessage}
-              contentContainerStyle={s.msgList}
-              onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="interactive"
-            />
-          )}
+            ) : (
+              <FlatList
+                ref={flatListRef}
+                data={messages}
+                keyExtractor={item => item.id}
+                renderItem={renderMessage}
+                contentContainerStyle={s.msgList}
+                onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+              />
+            )}
 
-{/* ─── Typing indicator ──────────────────────────────────── */}
-          {isProcessing && (
-            <View style={s.typingRow}>
-              <View style={s.typingBubble}>
-                <ActivityIndicator size="small" color={C.primary} />
-                <Text style={s.typingText}>Analyzing...</Text>
+            {/* ─── Typing indicator ──────────────────────────────────── */}
+            {isProcessing && (
+              <View style={s.typingRow}>
+                <View style={s.typingBubble}>
+                  <ActivityIndicator size="small" color={C.primary} />
+                  <Text style={s.typingText}>Analyzing...</Text>
+                </View>
+                <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
+                  <Ionicons name="close-circle-outline" size={14} color="#f87171" />
+                  <Text style={s.cancelText}> Cancel</Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
-                <Ionicons name="close-circle-outline" size={14} color="#f87171" />
-                <Text style={s.cancelText}> Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
+            )}
+          </View>
+        </TouchableWithoutFeedback>
 
         {/* ─── Input area ──────────────────────────────────────────── */}
         <View style={s.inputWrapper}>
@@ -433,11 +434,11 @@ const s = StyleSheet.create({
   input:            { flex: 1, backgroundColor: C.inputBg, color: C.text, borderRadius: 20, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 120 },
   sendBtn:          { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   sendBtnDisabled:  { backgroundColor: '#c4b5fd' },
-  thumbnail: { width: 220, height: 160, borderRadius: 6, marginTop: 4 },
+  thumbnail:        { width: 220, height: 160, borderRadius: 6, marginTop: 4 },
 });
 
 const markdownStyles = {
-  body:         { color: C.text, fontSize: 14, lineHeight: 20,  selectable: true},
+  body:         { color: C.text, fontSize: 14, lineHeight: 20, selectable: true },
   strong:       { fontWeight: '700' },
   bullet_list:  { marginVertical: 4 },
   ordered_list: { marginVertical: 4 },
