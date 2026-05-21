@@ -1,64 +1,39 @@
 {
-  "name": "fedex-copilot-frontend",
-  "private": true,
-  "version": "0.0.0",
-  "main": "electron/main.js",
+  "name": "llm-mobile",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "eslint .",
-    "preview": "vite preview",
-    "electron:dev": "npm run build && electron .",
-    "electron:build": "npm run build && electron-builder"
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web"
   },
   "dependencies": {
-    "@react-native-community/datetimepicker": "^9.1.0",
-    "axios": "^1.13.6",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
+    "@expo/vector-icons": "^15.1.1",
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "axios": "^1.15.0",
+    "expo": "~54.0.33",
+    "expo-constants": "~18.0.13",
+    "expo-dev-client": "~6.0.20",
+    "expo-file-system": "~19.0.21",
+    "expo-image-picker": "~17.0.10",
+    "expo-linking": "~8.0.11",
+    "expo-router": "~6.0.23",
+    "expo-status-bar": "~3.0.9",
     "firebase": "^12.12.0",
-    "firebase-admin": "^13.8.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "react-native-web": "^0.19.13",
-    "react-router-dom": "^7.13.2"
+    "react": "19.1.0",
+    "react-dom": "^19.1.0",
+    "react-native": "0.81.5",
+    "react-native-dotenv": "^3.4.11",
+    "react-native-markdown-display": "^7.0.2",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
+    "react-native-web": "^0.21.2"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "autoprefixer": "^10.4.27",
-    "electron": "^41.1.0",
-    "electron-builder": "^26.8.1",
-    "eslint": "^9.39.4",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
-    "globals": "^17.4.0",
-    "postcss": "^8.5.8",
-    "tailwindcss": "^3.4.19",
-    "vite": "^8.0.1"
+    "@expo/ngrok": "^4.1.0",
+    "babel-preset-expo": "^54.0.10",
+    "react-refresh": "^0.18.0"
   },
-  "build": {
-    "appId": "com.fedex.copilot",
-    "productName": "FedEx Maintenance Copilot",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*"
-    ],
-    "win": {
-      "target": "nsis",
-      "icon": "public/logo.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
-  }
+  "private": true
 }
