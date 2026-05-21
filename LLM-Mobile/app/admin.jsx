@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, Platform } from "react-native";
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from "@expo/vector-icons";
 import { collection, onSnapshot, query, orderBy, limit } from "firebase/firestore";
@@ -85,9 +85,14 @@ export default function AdminScreen() {
   );
 
   const handleLogout = async () => {
-    await AsyncStorage.removeItem('user');
-    setUser(null);
+  await AsyncStorage.removeItem('user');
+  setUser(null);
+  // Hard reload on web clears all onSnapshot listeners cleanly
+  if (Platform.OS === 'web') {
+    window.location.href = '/';
+  } else {
     router.replace('/login');
+  }
   };
 
   if (!authorized || !metricsLoaded) {

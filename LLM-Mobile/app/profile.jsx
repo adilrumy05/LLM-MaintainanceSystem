@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useUser } from './_layout';
 
+
 const ROLE_CONFIG = {
   admin:        { label: 'Supervisor / Admin',    color: '#7c3aed', bg: '#ede9fe', icon: 'shield-checkmark-outline', permissions: ['Manage Users & Roles', 'Configure AI Agents', 'Audit System Logs', 'Query RAG System', 'Approve / Reject Sessions'] },
   expert:       { label: 'Worker — Expert',       color: C.green,   bg: C.greenBg, icon: 'star-outline',            permissions: ['Full RAG Query Access', 'Update Maintenance Logs', 'Execute Disassembly Tasks', 'Authorize AI Recommendations'] },
@@ -56,24 +57,24 @@ export default function Profile() {
     }, [user])
   );
 
-  const handleLogout = () => {
-    if (Platform.OS === 'web') {
-      if (window.confirm('Are you sure you want to logout?')) {
-        AsyncStorage.removeItem('user');
-        setUser(null);
-        router.replace('/login');
+    const handleLogout = () => {
+      if (Platform.OS === 'web') {
+        if (window.confirm('Are you sure you want to logout?')) {
+          AsyncStorage.removeItem('user');
+          setUser(null);
+          window.location.href = '/';   // hard reload, clears all Firestore listeners
+        }
+        return;
       }
-      return;
-    }
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: async () => {
-        await AsyncStorage.removeItem('user');
-        setUser(null);
-        router.replace('/login');
-      }},
-    ]);
-  };
+      Alert.alert('Logout', 'Are you sure you want to logout?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Logout', style: 'destructive', onPress: async () => {
+          await AsyncStorage.removeItem('user');
+          setUser(null);
+          router.replace('/login');
+        }},
+      ]);
+    };
 
   if (loading) return (
     <SafeAreaView style={s.safe}><ActivityIndicator color={C.primary} size="large" style={{ marginTop: 60 }} /></SafeAreaView>
