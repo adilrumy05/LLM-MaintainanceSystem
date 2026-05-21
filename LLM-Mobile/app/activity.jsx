@@ -51,9 +51,10 @@ const TYPE_CONFIG = {
 };
 
 const TABS = [
-  { key: 'all',   label: 'All',    iconName: 'apps-outline'               },
-  { key: 'alert', label: 'Alerts', iconName: 'warning-outline'            },
-  { key: 'info',  label: 'System', iconName: 'information-circle-outline' },
+  { key: 'all',      label: 'All',      iconName: 'apps-outline'               },
+  { key: 'alert',    label: 'Alerts',   iconName: 'warning-outline'            },
+  { key: 'priority', label: 'Priority', iconName: 'flag-outline'               },
+  { key: 'info',     label: 'System',   iconName: 'information-circle-outline' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

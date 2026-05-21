@@ -2,7 +2,7 @@
 
 // Middleware to validate incoming request body for /api/query
 const validate = (req, res, next) => {
-  const { query, userId, sessionId, docGroup, classification, category1, category2, topK } = req.body;
+  const { query, userId, userEmail, sessionId, docGroup, classification, category1, category2, topK } = req.body;
 
   // Query is required and must be a non-empty string
   if (!query || typeof query !== 'string' || !query.trim()) {
@@ -12,6 +12,10 @@ const validate = (req, res, next) => {
   // Optional fields validation
   if (userId && typeof userId !== 'string') {
     return res.status(400).json({ error: "userId must be a string." });
+  }
+
+  if (userEmail && typeof userEmail !== 'string') {
+    return res.status(400).json({ error: "userEmail must be a string." });
   }
 
   if (sessionId && typeof sessionId !== 'string') {

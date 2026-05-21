@@ -1,8 +1,9 @@
-// GEMINI API INTEGRATION with RAG Server.js
+// OpenAI gpt-4o-mini with RAG Server.js
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const { logAuditRecord } = require('./server/services/auditLogger');
+const { runPriorityAdjustmentAgent } = require('./server/agents/priorityAdjustmentAgent');
 const fs = require('fs');
 const path = require('path');
 const sanitize = require('./server/middleware/sanitize');
@@ -64,6 +65,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       query,
       role,
       userId,
+      userEmail,
       sessionId,
       docGroup,
       classification,
@@ -78,10 +80,10 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       return res.status(400).json({ error: 'Query is required.' });
     }
 
-    // ── Use Gemini API key ────────────────────────────────────────────────────
-    const apiKey = process.env.GEMINI_API_KEY;
+    // ── Use OpenAI API key ────────────────────────────────────────────────────
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ error: 'Missing GEMINI_API_KEY in environment variables.' });
+      return res.status(500).json({ error: 'Missing OPENAI_API_KEY in environment variables.' });
     }
 
     // ── Get filters from retrieval service ────────────────────────────────────
@@ -141,37 +143,38 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       else     console.log(`Latest prompt saved to ${PROMPT_FILE_PATH}`);
     });
 
-    // ── Step 2: Send enriched prompt to Gemini 2.0 Flash ─────────────────────
+    // ── Step 2: Send enriched prompt to OpenAI ───────────────────────────────
     const systemPrompt = ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT;
-    const geminiUrl    = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
-    const geminiResponse = await fetch(geminiUrl, {
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type':  'application/json',
+      },
       body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [{ text: `${systemPrompt}\n\n${finalPrompt}` }],
-        }],
-        generationConfig: {
-          temperature:      0.2,
-          maxOutputTokens:  2048,
-        },
+        model:       'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: finalPrompt  },
+        ],
+        temperature: 0.2,
+        max_tokens:  2048,
       }),
     });
 
-    const data = await geminiResponse.json();
-    console.log('Gemini status:', geminiResponse.status);
+    const data = await openaiResponse.json();
+    console.log('OpenAI status:', openaiResponse.status);
 
-    if (!geminiResponse.ok) {
-      console.error('Gemini error:', JSON.stringify(data, null, 2));
-      return res.status(geminiResponse.status).json({
-        error:   'Gemini API request failed',
+    if (!openaiResponse.ok) {
+      console.error('OpenAI error:', JSON.stringify(data, null, 2));
+      return res.status(openaiResponse.status).json({
+        error:   'OpenAI API request failed',
         details: data,
       });
     }
 
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
+    const text = data?.choices?.[0]?.message?.content
       || 'No response text returned.';
 
     // ── Step 3: Fire the Audit Logger (Session Based) ────────────────────────
@@ -189,14 +192,24 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
 
     // ── Step 4: Alert Agent — detect safety-critical content ─────────────────
     const alert = detectAlerts(query, text, role);
+    const priorityResult = await runPriorityAdjustmentAgent(
+      alert,
+      query,
+      role,
+      userId,
+      userEmail,
+      sessionId,
+      retrievalData.sources
+    );
 
     // ── Step 5: Return answer + sources + alert metadata ──────────────────────
     res.json({
       text,
       sources:        retrievalData.sources,
       context_blocks: retrievalData.context_blocks,
-      reasoning:      'Generated via Gemini 2.0 Flash with RAG context',
+      reasoning:      'Generated via OpenAI gpt-4o-mini with RAG context',
       alert,
+      priorityTask: priorityResult,
     });
 
   } catch (error) {

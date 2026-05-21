@@ -267,6 +267,7 @@ class RetrievalPipeline:
         classification:    str   = None,
         category_level_1:  str   = None,
         category_level_2:  str   = None,
+        model_number:      str   = None,
         top_k:             int   = None,
         score_min:         float = None,
         chunk_types:       List[str] = None,  # default: ["child", "table"]
@@ -282,6 +283,7 @@ class RetrievalPipeline:
         classification    : e.g. "MANUAL"
         category_level_1  : e.g. "Air_Conditioner"
         category_level_2  : optional sub-category
+        model_number      : restrict to one indexed model number
         top_k             : override default RETRIEVAL_TOP_K
         score_min         : override default RETRIEVAL_SCORE_MIN
         chunk_types       : which chunk types to search
@@ -311,6 +313,7 @@ class RetrievalPipeline:
             f"  classification={classification}\n"
             f"  category_level_1={category_level_1}\n"
             f"  category_level_2={category_level_2}\n"
+            f"  model_number={model_number}\n"
             f"  chunk_types={types}\n"
             f"  top_k={k}  score_min={min_score}")
 
@@ -325,6 +328,7 @@ class RetrievalPipeline:
                 classification=classification,
                 category_level_1=category_level_1,
                 category_level_2=category_level_2,
+                model_number=model_number,
                 chunk_type=chunk_type,
             )
             raw_hits.extend(hits)

@@ -30,9 +30,11 @@ const sanitize = (req, res, next) => {
         return res.status(400).json({ error: "Input too long" });
       }
 
-      for (let pattern of injectionPatterns) {
-        if (pattern.test(value)) {
-          return res.status(400).json({ error: "Malicious input detected" });
+      if (key === 'query') {
+        for (let pattern of injectionPatterns) {
+          if (pattern.test(value)) {
+            return res.status(400).json({ error: "Malicious input detected" });
+          }
         }
       }
 

@@ -60,6 +60,7 @@ export const submitQuery = async (query) => {
         body:    JSON.stringify({
           query,
           userId:    loggedInUserId,
+          userEmail,
           sessionId: currentSessionId,
           role:      userRole,
         }),

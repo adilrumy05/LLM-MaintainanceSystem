@@ -329,7 +329,28 @@ export default function Dashboard() {
           </View>
         </TouchableWithoutFeedback>
 
-        {/* ─── Input area ──────────────────────────────────────────── */}
+
+
+        {/* Temporary test button — commented out for presentation
+        <TouchableOpacity
+          style={{ backgroundColor: '#dc2626', padding: 10, margin: 10, borderRadius: 8, alignItems: 'center' }}
+          onPress={async () => {
+            console.log('🔵 Test button pressed');
+            try {
+              const result = await submitQuery('test query');
+              console.log('✅ Test result:', result);
+              Alert.alert('Test Success', 'Check Metro logs');
+            } catch (err) {
+              console.error('❌ Test error:', err);
+              Alert.alert('Test Failed', err.message);
+            }
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: 'bold' }}>TEST API</Text>
+        </TouchableOpacity>
+        */}
+
+
         <View style={s.inputWrapper}>
 
           {/* Upload disabled — not yet connected to RAG */}

@@ -23,9 +23,11 @@ async def warmup():
 class RetrievalRequest(BaseModel):
     question: str
     document_group_id: Optional[str] = None
+    filename: Optional[str] = None
     classification: Optional[str] = None
     category_level_1: Optional[str] = None
     category_level_2: Optional[str] = None
+    model_number: Optional[str] = None
     top_k: int = 5
 
 class ContextBlock(BaseModel):
@@ -54,16 +56,18 @@ async def retrieve(request: RetrievalRequest):
         result = pipeline.retrieve(
             question=request.question,
             document_group_id=request.document_group_id,
+            filename=request.filename,
             classification=request.classification,
             category_level_1=request.category_level_1,
             category_level_2=request.category_level_2,
+            model_number=request.model_number,
             top_k=request.top_k,
         )
 
         # Build a dictionary of applied filters
         applied_filters = {
             k: v for k, v in request.dict().items()
-            if k in ["document_group_id", "classification", "category_level_1", "category_level_2"] and v is not None
+            if k in ["document_group_id", "filename", "classification", "category_level_1", "category_level_2", "model_number"] and v is not None
         }
 
         prompt = result.build_prompt(request.question)
@@ -90,10 +94,6 @@ async def retrieve(request: RetrievalRequest):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
 
 @app.get("/filters")
 async def get_filters():
@@ -154,3 +154,7 @@ async def debug_filters():
     except Exception as e:
         import traceback
         return {"error": str(e), "trace": traceback.format_exc()}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8001)
