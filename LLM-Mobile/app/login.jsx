@@ -7,6 +7,7 @@ import { C } from '../theme';
 import { auth, db } from '../firebaseConfig';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+import { useUser } from './_layout';              // ← FIX: import context
 
 const ROLE_MAP = {
   'admin':               'admin',
@@ -19,7 +20,8 @@ export default function Login() {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading]   = useState(false);
-  const router = useRouter();
+  const router                  = useRouter();
+  const { setUser }             = useUser();       // ← FIX: get setUser from context
 
   const handleSubmit = async () => {
     if (!email || !password) return;
@@ -46,14 +48,13 @@ export default function Login() {
       const token = await userCredential.user.getIdToken();
 
       // ── Persist full session ───────────────────────────────────
-      await AsyncStorage.setItem('user', JSON.stringify({
-        uid,
-        email: email.trim(),
-        role,
-        token,
-        username,
-        createdAt,
-      }));
+      const userObj = { uid, email: email.trim(), role, token, username, createdAt };
+      await AsyncStorage.setItem('user', JSON.stringify(userObj));
+
+      // ── FIX: update context immediately so all screens see the ─
+      // ── new user without waiting for AsyncStorage poll ─────────
+      setUser(userObj);
+
       router.replace(role === 'admin' ? '/admin' : '/dashboard');
     } catch (error) {
       Alert.alert('Login Failed', error.message);
