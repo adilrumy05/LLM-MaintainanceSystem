@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity,
   Alert, SafeAreaView, ScrollView, Platform,
@@ -7,7 +7,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { doc, setDoc } from "firebase/firestore";
 import { db, auth } from "../firebaseConfig";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
+import { useUser } from "./_layout";
 
 const ROLE_CONFIG = {
   admin:               { label: "Admin",        color: "#7c3aed", bg: "#ede9fe" },
@@ -25,6 +26,7 @@ const roles = [
 
 export default function UserFormScreen() {
   const router       = useRouter();
+  const { user }     = useUser();
   const params       = useLocalSearchParams();
   const existingUser = params.user ? JSON.parse(params.user) : null;
 
@@ -32,6 +34,13 @@ export default function UserFormScreen() {
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState(existingUser?.username || "");
   const [role, setRole]         = useState(existingUser?.role_id || "worker_beginner");
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) return;
+      if (user.role !== "admin") router.replace("/dashboard");
+    }, [user, router])
+  );
 
   const addUser = async () => {
     if (!username.trim() || !email.trim() || (!existingUser && !password.trim())) {
@@ -54,7 +63,7 @@ export default function UserFormScreen() {
 
     try {
       if (existingUser) {
-        await setDoc(doc(db, "Users", existingUser.id), { username, email, role_id: role });
+        await setDoc(doc(db, "Users", existingUser.id), { username, email, role_id: role }, { merge: true });
         // ── FIX: router.back() correctly returns to usermanagement ───────────
         // router.replace('/usermanagement') was navigating to admin because
         // usermanagement is a hidden tab (href: null) — replace doesn't stack.
@@ -67,7 +76,13 @@ export default function UserFormScreen() {
       } else {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const uid = userCredential.user.uid;
-        await setDoc(doc(db, "Users", uid), { username, email, role_id: role });
+        await setDoc(doc(db, "Users", uid), {
+          username,
+          email,
+          role_id: role,
+          isActive: true,
+          createdAt: new Date().toISOString(),
+        });
         if (Platform.OS === "web") {
           window.alert("User created successfully!");
         } else {
@@ -133,12 +148,18 @@ export default function UserFormScreen() {
                 placeholder="Enter email"
                 placeholderTextColor="#c4b5fd"
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={isEditing ? undefined : setEmail}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                style={styles.input}
+                editable={!isEditing}
+                style={[styles.input, isEditing && styles.inputDisabled]}
               />
             </View>
+            {isEditing && (
+              <Text style={styles.helperText}>
+                Email is managed by Firebase Auth and cannot be changed here.
+              </Text>
+            )}
           </View>
 
           {/* Password — create only */}
@@ -216,6 +237,8 @@ const styles = StyleSheet.create({
   inputWrapper:        { flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", borderRadius: 10, borderWidth: 1, borderColor: "#ddd6fe", paddingHorizontal: 12, height: 48 },
   inputIcon:           { marginRight: 8 },
   input:               { flex: 1, color: "#1e1b4b", fontSize: 14 },
+  inputDisabled:       { color: "#6b7280" },
+  helperText:          { marginTop: 6, color: "#7c3aed", fontSize: 11 },
   divider:             { height: 1, backgroundColor: "#ede9fe", marginVertical: 16 },
   roleGrid:            { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   roleChip:            { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: "#ddd6fe", backgroundColor: "#f5f3ff" },

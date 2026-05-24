@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, ActivityIndicator,
+  View, Text, FlatList, ScrollView, TouchableOpacity, ActivityIndicator,
   StyleSheet, LayoutAnimation, Platform, UIManager, TextInput, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -195,74 +195,6 @@ export default function Activity() {
     );
   };
 
-  const ListHeader = () => (
-    <View>
-      <View style={s.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.pageTitle}>Activity</Text>
-          <Text style={s.pageSub}>
-            {isAdmin ? 'System-wide activity feed' : 'Your personal activity feed'}
-          </Text>
-        </View>
-        <View style={s.headerRight}>
-          {alertCount > 0 && (
-            <View style={s.alertCountBadge}>
-              <Text style={s.alertCountText}>{alertCount}</Text>
-            </View>
-          )}
-          <View style={s.liveChip}>
-            <View style={s.liveDot} />
-            <Text style={s.liveText}>Live</Text>
-          </View>
-        </View>
-      </View>
-      {!isAdmin && (
-        <View style={s.noticeBanner}>
-          <Ionicons name="lock-closed-outline" size={13} color={C.primary} />
-          <Text style={s.noticeText}> Your activity only. Contact admin to view all.</Text>
-        </View>
-      )}
-      <View style={s.tabRow}>
-        {TABS.map(tab => {
-          const active = filter === tab.key;
-          const count  = tab.key === 'all'
-            ? alerts.length
-            : alerts.filter(a => a.type === tab.key).length;
-          return (
-            <TouchableOpacity
-              key={tab.key}
-              onPress={() => setFilter(tab.key)}
-              style={[s.tab, active && s.tabActive]}
-            >
-              <Ionicons name={tab.iconName} size={13} color={active ? C.primary : C.textMuted} />
-              <Text style={[s.tabText, active && s.tabTextActive]}>{tab.label}</Text>
-              {count > 0 && (
-                <View style={[s.tabCount, active && s.tabCountActive]}>
-                  <Text style={[s.tabCountText, active && s.tabCountTextActive]}>{count}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-      <View style={s.searchWrap}>
-        <Ionicons name="search-outline" size={16} color={C.textMuted} />
-        <TextInput
-          style={s.searchInput}
-          placeholder="Search alerts..."
-          placeholderTextColor={C.textMuted}
-          value={search}
-          onChangeText={setSearch}
-        />
-        {search.length > 0 && (
-          <TouchableOpacity onPress={() => setSearch('')}>
-            <Ionicons name="close-circle-outline" size={16} color={C.textMuted} />
-          </TouchableOpacity>
-        )}
-      </View>
-    </View>
-  );
-
   const ListEmpty = () => {
     if (loading) {
       return (
@@ -291,14 +223,85 @@ export default function Activity() {
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
+
+      {/* ── Fixed header (outside FlatList so TextInput keeps focus) ── */}
+      <View style={s.headerSection}>
+        <View style={s.header}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.pageTitle}>Activity</Text>
+            <Text style={s.pageSub}>
+              {isAdmin ? 'System-wide activity feed' : 'Your personal activity feed'}
+            </Text>
+          </View>
+          <View style={s.headerRight}>
+            {alertCount > 0 && (
+              <View style={s.alertCountBadge}>
+                <Text style={s.alertCountText}>{alertCount}</Text>
+              </View>
+            )}
+            <View style={s.liveChip}>
+              <View style={s.liveDot} />
+              <Text style={s.liveText}>Live</Text>
+            </View>
+          </View>
+        </View>
+        {!isAdmin && (
+          <View style={s.noticeBanner}>
+            <Ionicons name="lock-closed-outline" size={13} color={C.primary} />
+            <Text style={s.noticeText}> Your activity only. Contact admin to view all.</Text>
+          </View>
+        )}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.tabRow}>
+          {TABS.map(tab => {
+            const active = filter === tab.key;
+            const count  = tab.key === 'all'
+              ? alerts.length
+              : alerts.filter(a => a.type === tab.key).length;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                onPress={() => setFilter(tab.key)}
+                style={[s.tab, active && s.tabActive]}
+              >
+                <Ionicons name={tab.iconName} size={13} color={active ? C.primary : C.textMuted} />
+                <Text style={[s.tabText, active && s.tabTextActive]}>{tab.label}</Text>
+                {count > 0 && (
+                  <View style={[s.tabCount, active && s.tabCountActive]}>
+                    <Text style={[s.tabCountText, active && s.tabCountTextActive]}>{count}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        <View style={s.searchWrap}>
+          <Ionicons name="search-outline" size={16} color={C.textMuted} />
+          <TextInput
+            style={s.searchInput}
+            placeholder="Search alerts..."
+            placeholderTextColor={C.textMuted}
+            value={search}
+            onChangeText={setSearch}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch('')}>
+              <Ionicons name="close-circle-outline" size={16} color={C.textMuted} />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {/* ── Scrollable feed ── */}
       <FlatList
         data={flatData}
         keyExtractor={item => item.id}
         renderItem={renderItem}
-        ListHeaderComponent={ListHeader}
         ListEmptyComponent={ListEmpty}
         ListFooterComponent={<View style={{ height: 40 }} />}
         contentContainerStyle={s.scroll}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -315,6 +318,7 @@ export default function Activity() {
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   safe:               { flex: 1, backgroundColor: C.bg },
+  headerSection:      { paddingHorizontal: 16 },
   scroll:             { paddingHorizontal: 16 },
   header:             { flexDirection: 'row', alignItems: 'center', paddingTop: 20, paddingBottom: 12 },
   pageTitle:          { color: C.text, fontSize: 22, fontWeight: '700' },
@@ -327,7 +331,7 @@ const s = StyleSheet.create({
   liveText:           { color: '#16a34a', fontSize: 11, fontWeight: '700' },
   noticeBanner:       { flexDirection: 'row', alignItems: 'center', backgroundColor: C.primaryLight, borderRadius: 12, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: C.cardBorder },
   noticeText:         { color: C.primary, fontSize: 12, flex: 1, fontWeight: '500' },
-  tabRow:             { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  tabRow:             { flexDirection: 'row', gap: 8, marginBottom: 12, paddingHorizontal: 16, paddingVertical: 2 },
   tab:                { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderColor: C.cardBorder, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: C.card },
   tabActive:          { borderColor: C.primary, backgroundColor: C.primaryLight },
   tabText:            { fontSize: 12, fontWeight: '600', color: C.textMuted },

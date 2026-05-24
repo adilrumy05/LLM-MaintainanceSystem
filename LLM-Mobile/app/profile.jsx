@@ -127,7 +127,7 @@ export default function Profile() {
           </View>
           <Text style={s.sectionLabel}>QUICK ACTIONS</Text>
           <View style={s.actionsCard}>
-            <ActionRow iconName="time-outline"    label="View My Audit History"    onPress={() => router.push('/history')} />
+            <ActionRow iconName="time-outline"    label="View My Audit History"    onPress={() => router.push(user.role === 'admin' ? '/history' : '/mysessions')} />
             <View style={s.actionDivider} />
             <ActionRow iconName="flash-outline"   label="Open Maintenance Copilot" onPress={() => router.push('/dashboard')} />
             {user.role === 'admin' && (

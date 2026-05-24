@@ -7,7 +7,7 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 // On web (localhost:8081) the LAN IP in .env is unreachable from the browser,
 // so fall back to localhost. On mobile, use the EXPO_PUBLIC_ env var which
 // contains the LAN IP so the phone can reach the PC over WiFi.
-const API_URL =
+export const API_URL =
   Platform.OS === 'web'
     ? 'http://localhost:8000/api'
     : (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000/api');
@@ -68,7 +68,16 @@ export const submitQuery = async (query) => {
       120000
     );
 
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => null);
+      const details = errBody?.details;
+      const message =
+        (typeof details === 'string' && details) ||
+        errBody?.error ||
+        (details ? JSON.stringify(details) : null) ||
+        `HTTP ${response.status}`;
+      throw new Error(message);
+    }
     const data = await response.json();
 
     // ── Firebase logging (non-blocking) ─────────────────────────────────────

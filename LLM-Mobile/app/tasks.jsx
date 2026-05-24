@@ -27,6 +27,20 @@ const PRIORITY_CONFIG = {
   high:   { label: 'High',   color: C.red,    bg: C.redBg    },
 };
 
+const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
+
+const sortTasksByPriority = (items) =>
+  [...items].sort((a, b) => {
+    const priorityDiff =
+      (PRIORITY_ORDER[a.priority] ?? 3) -
+      (PRIORITY_ORDER[b.priority] ?? 3);
+    if (priorityDiff !== 0) return priorityDiff;
+
+    const bTime = b.createdAt?.toMillis?.() ?? 0;
+    const aTime = a.createdAt?.toMillis?.() ?? 0;
+    return bTime - aTime;
+  });
+
 const ROLES = ['all', 'expert', 'intermediate', 'beginner'];
 
 export default function Tasks() {
@@ -57,7 +71,7 @@ export default function Tasks() {
       if (role !== 'admin') {
         data = data.filter(t => t.assignedRole === role || t.assignedRole === 'all');
       }
-      setTasks(data);
+      setTasks(sortTasksByPriority(data));
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [role, userLoading]);

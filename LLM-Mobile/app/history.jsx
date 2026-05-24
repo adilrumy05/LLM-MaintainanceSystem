@@ -5,11 +5,11 @@ import {
   Modal, ActivityIndicator, Alert, Platform, TextInput, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { collection, onSnapshot, query, orderBy, limit, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
-import { API_BASE_URL } from '@env';
+import { API_URL } from '../services/api';
 import { useUser } from './_layout';
 
 const STATUS_CONFIG = {
@@ -34,7 +34,7 @@ export default function History() {
   useFocusEffect(
     useCallback(() => {
       if (!user) return;
-      if (user.role !== 'admin') { router.replace('/dashboard'); return; }
+      if (user.role !== 'admin') { router.replace('/mysessions'); return; }
 
       let unsubscribe;
       if (!hasLoadedRef.current) setLoading(true);
@@ -74,14 +74,22 @@ export default function History() {
         const newStatus = action === 'approve' ? 'approved' : 'rejected';
         const reviewer  = user?.email || user?.uid || 'admin';
         const timestamp = new Date().toISOString().replace('T', ' ').split('.')[0];
-        await updateDoc(doc(db, 'audit_logs', selectedLog.id), {
-          status: newStatus, reviewed_by: reviewer, reviewed_at: timestamp, last_updated: timestamp,
-        });
-        fetch(`${API_BASE_URL}/${action}`, {
-          method: 'POST',
+        const resp = await fetch(`${API_URL}/${action}`, {
+          method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: selectedLog.log_id, userId: selectedLog.user_id, reviewedBy: reviewer, reviewedAt: timestamp }),
-        }).catch(e => console.warn(e));
+          body:    JSON.stringify({
+            sessionId:  selectedLog.log_id || selectedLog.id,
+            userId:     selectedLog.user_id,
+            reviewedBy: reviewer,
+            reviewedAt: timestamp,
+          }),
+        });
+
+        if (!resp.ok) {
+          const errBody = await resp.json().catch(() => null);
+          throw new Error(errBody?.error || `HTTP ${resp.status}`);
+        }
+
         setSelectedLog(prev => ({ ...prev, status: newStatus, reviewed_by: reviewer, reviewed_at: timestamp }));
         if (Platform.OS === 'web') {
           window.alert(`Session ${newStatus.charAt(0).toUpperCase() + newStatus.slice(1)} — recorded in audit log.`);
@@ -89,14 +97,15 @@ export default function History() {
           Alert.alert(`Session ${newStatus.charAt(0).toUpperCase() + newStatus.slice(1)}`, `This session has been ${newStatus} and recorded in the audit log.`);
         }
       } catch (err) {
-        console.error('Status update error:', err);
+        console.error('HITL error:', err);
         if (Platform.OS === 'web') {
-          window.alert('Failed to update status.');
+          window.alert(err.message || 'Failed to update status.');
         } else {
-          Alert.alert('Error', 'Failed to update status.');
+          Alert.alert('Error', err.message || 'Failed to update status.');
         }
+      } finally {
+        setActionLoading(false);
       }
-      setActionLoading(false);
     };
 
     if (Platform.OS === 'web') {

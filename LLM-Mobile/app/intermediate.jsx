@@ -1,12 +1,12 @@
-import React from "react";
-import { View, Text } from "react-native";
+import { useEffect } from "react";
+import { useRouter } from "expo-router";
 
-export default function IntermediateScreen() {
-  return (
-    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-      <Text style={{ fontSize: 18 }}>Welcome Intermediate!</Text>
-    </View>
-  );
+export default function Intermediate() {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace("/dashboard");
+  }, [router]);
+
+  return null;
 }
-
-

@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Keyboard, TouchableWithoutFeedback } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
+import { useUser } from './_layout';
 import { submitQuery } from '../services/api';
 import * as ImagePicker from 'expo-image-picker';
 import Markdown from 'react-native-markdown-display';
@@ -23,6 +24,7 @@ export default function Dashboard() {
   const flatListRef                     = useRef(null);
   const router                          = useRouter();
   const { role, isJunior, isIntermediate } = useRole();
+  const { setUser } = useUser();
 
   const activeChat = chats.find(c => c.id === activeChatId);
   const messages   = activeChat?.messages || [];
@@ -35,7 +37,11 @@ export default function Dashboard() {
         const raw = await AsyncStorage.getItem(`chats_${role}`);
         if (raw) {
           const saved = JSON.parse(raw);
-          if (saved.length > 0) { setChats(saved); setActiveChatId(saved[0].id); }
+          if (saved.length > 0) {
+            setChats(saved);
+            setActiveChatId(saved[0].id);
+            setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
+          }
         }
       } catch (e) { console.log('Error loading chats:', e); }
       setLoaded(true);
@@ -51,7 +57,9 @@ export default function Dashboard() {
   const addMessage = (from, text, sources = []) => {
     const msg = { id: Date.now().toString() + Math.random(), from, text, sources };
     setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, messages: [...c.messages, msg] } : c));
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    requestAnimationFrame(() => {
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
+    });
   };
 
   const handleSend = async (overrideText) => {
@@ -124,6 +132,7 @@ export default function Dashboard() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Logout', style: 'destructive', onPress: async () => {
         await AsyncStorage.removeItem('user');
+        setUser(null);
         router.replace('/login');
       }},
     ]);
@@ -137,7 +146,7 @@ export default function Dashboard() {
   // ─── Horizontal scroll rule for tables ───────────────────────────────────
   const markdownRules = {
     table: (node, children) => (
-      <ScrollView key={node.key} horizontal showsHorizontalScrollIndicator style={s.tableScroll}>
+      <ScrollView key={node.key} horizontal nestedScrollEnabled directionalLockEnabled showsHorizontalScrollIndicator style={s.tableScroll}>
         <View>{children}</View>
       </ScrollView>
     ),
@@ -149,7 +158,7 @@ export default function Dashboard() {
     return (
       <View style={s.sourceContainer}>
         <TouchableOpacity onPress={() => setExpanded(!expanded)} style={s.sourceRow}>
-          <Text selectable style={s.sourceItem}>
+          <Text style={s.sourceItem}>
             • {source.filename || source.document_group_id}{source.page ? ` — p.${source.page}` : ''}
           </Text>
         </TouchableOpacity>
@@ -182,7 +191,7 @@ export default function Dashboard() {
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
         <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBot]}>
           {isUser
-            ? <Text selectable style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
+            ? <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
             : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
           }
           {item.sources?.length > 0 && (
@@ -206,7 +215,6 @@ export default function Dashboard() {
         {/* ─── Sidebar ─────────────────────────────────────────────── */}
         {showSidebar && (
           <View style={s.overlay}>
-            <TouchableOpacity style={s.overlayBg} onPress={() => setShowSidebar(false)} />
             <View style={s.sidebar}>
               <Text style={s.sidebarTitle}>Chats</Text>
               <TouchableOpacity style={s.newChatBtn} onPress={handleNewChat}>
@@ -256,6 +264,7 @@ export default function Dashboard() {
                 <Text style={s.logoutSidebarText}> Logout</Text>
               </TouchableOpacity>
             </View>
+            <TouchableOpacity style={s.overlayBg} onPress={() => setShowSidebar(false)} />
           </View>
         )}
 
@@ -288,46 +297,47 @@ export default function Dashboard() {
         )}
 
         {/* ─── Message area ────────────────────────────────────────── */}
-        {/* FIX: TouchableWithoutFeedback dismisses keyboard on tap anywhere in message area */}
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-          <View style={s.messageArea}>
-            {isEmpty ? (
-              <View style={s.welcomeContainer}>
-                <View style={s.logoCircle}>
-                  <Ionicons name="flash-outline" size={36} color={C.primary} />
-                </View>
-                <Text style={s.welcomeTitle}>Maintenance Copilot</Text>
-                <Text style={s.welcomeSub}>Your AI-powered maintenance assistant.</Text>
-                <Text style={s.welcomeSub2}>Ask me anything about equipment, procedures, or safety.</Text>
+        <View style={s.messageArea}>
+          {isEmpty ? (
+            <View style={s.welcomeContainer}>
+              <View style={s.logoCircle}>
+                <Ionicons name="flash-outline" size={36} color={C.primary} />
               </View>
-            ) : (
-              <FlatList
-                ref={flatListRef}
-                data={messages}
-                keyExtractor={item => item.id}
-                renderItem={renderMessage}
-                contentContainerStyle={s.msgList}
-                onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="on-drag"
-              />
-            )}
+              <Text style={s.welcomeTitle}>Maintenance Copilot</Text>
+              <Text style={s.welcomeSub}>Your AI-powered maintenance assistant.</Text>
+              <Text style={s.welcomeSub2}>Ask me anything about equipment, procedures, or safety.</Text>
+            </View>
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={item => item.id}
+              renderItem={renderMessage}
+              style={s.msgFlatList}
+              contentContainerStyle={s.msgList}
+              keyboardShouldPersistTaps="always"
+              keyboardDismissMode="on-drag"
+              nestedScrollEnabled
+              directionalLockEnabled
+              scrollEventThrottle={16}
+              showsVerticalScrollIndicator
+            />
+          )}
 
-            {/* ─── Typing indicator ──────────────────────────────────── */}
-            {isProcessing && (
-              <View style={s.typingRow}>
-                <View style={s.typingBubble}>
-                  <ActivityIndicator size="small" color={C.primary} />
-                  <Text style={s.typingText}>Analyzing...</Text>
-                </View>
-                <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
-                  <Ionicons name="close-circle-outline" size={14} color="#f87171" />
-                  <Text style={s.cancelText}> Cancel</Text>
-                </TouchableOpacity>
+          {/* ─── Typing indicator ──────────────────────────────────── */}
+          {isProcessing && (
+            <View style={s.typingRow}>
+              <View style={s.typingBubble}>
+                <ActivityIndicator size="small" color={C.primary} />
+                <Text style={s.typingText}>Analyzing...</Text>
               </View>
-            )}
-          </View>
-        </TouchableWithoutFeedback>
+              <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
+                <Ionicons name="close-circle-outline" size={14} color="#f87171" />
+                <Text style={s.cancelText}> Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
 
 
 
@@ -377,7 +387,6 @@ export default function Dashboard() {
               onChangeText={setInputValue}
               multiline
               editable={!isProcessing}
-              onFocus={() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 300)}
             />
             <TouchableOpacity
               style={[s.sendBtn, (!inputValue.trim() || isProcessing) && s.sendBtnDisabled]}
@@ -423,6 +432,7 @@ const s = StyleSheet.create({
   welcomeTitle:     { color: C.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
   welcomeSub:       { color: C.textSub, fontSize: 14, textAlign: 'center', marginBottom: 4 },
   welcomeSub2:      { color: C.textMuted, fontSize: 12, textAlign: 'center' },
+  msgFlatList:      { flex: 1 },
   msgList:          { padding: 16, paddingBottom: 12 },
   msgRow:           { flexDirection: 'row', marginBottom: 14 },
   msgRowUser:       { justifyContent: 'flex-end' },
@@ -459,7 +469,7 @@ const s = StyleSheet.create({
 });
 
 const markdownStyles = {
-  body:         { color: C.text, fontSize: 14, lineHeight: 20, selectable: true },
+  body:         { color: C.text, fontSize: 14, lineHeight: 20 },
   strong:       { fontWeight: '700' },
   bullet_list:  { marginVertical: 4 },
   ordered_list: { marginVertical: 4 },

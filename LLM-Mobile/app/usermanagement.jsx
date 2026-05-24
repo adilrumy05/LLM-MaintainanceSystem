@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity,
   FlatList, Alert, SafeAreaView, Platform,
@@ -6,7 +6,8 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useUser } from "./_layout";
 
 // ── Role config ───────────────────────────────────────────────────────────────
 const ROLE_CONFIG = {
@@ -34,9 +35,10 @@ function getInitials(name) {
 
 export default function UserManagementScreen() {
   const router = useRouter();
+  const { user } = useUser();
   const [users, setUsers] = useState([]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       const querySnapshot = await getDocs(collection(db, "Users"));
       const userList = querySnapshot.docs.map((docSnap) => ({
@@ -47,9 +49,18 @@ export default function UserManagementScreen() {
     } catch (error) {
       console.error("Error fetching users:", error);
     }
-  };
+  }, []);
 
-  useEffect(() => { fetchUsers(); }, []);
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) return;
+      if (user.role !== "admin") {
+        router.replace("/dashboard");
+        return;
+      }
+      fetchUsers();
+    }, [user, router, fetchUsers])
+  );
 
   // ── FIX: Alert.alert buttons don't fire on web — use window.confirm instead ──
   const deleteUser = (id, name) => {

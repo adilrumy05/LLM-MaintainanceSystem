@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Pressable, StyleSheet,
   ActivityIndicator, TextInput, Linking, Platform
@@ -132,7 +132,11 @@ function CsvViewer({ url }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useCallback(() => {
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    setRows(null);
+
     fetch(url)
       .then((r) => r.text())
       .then((text) => {
@@ -144,7 +148,7 @@ function CsvViewer({ url }) {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [url])();
+  }, [url]);
 
   if (loading) return <ActivityIndicator color={C.primary} style={{ margin: 12 }} />;
   if (error) return <Text style={styles.viewerFallbackText}>Failed to load CSV: {error}</Text>;

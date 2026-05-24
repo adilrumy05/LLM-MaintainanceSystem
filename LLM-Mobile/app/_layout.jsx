@@ -85,7 +85,7 @@ export default function Layout() {
       <Tabs.Screen name="history"   options={{ href: null }} />
 
       <Tabs.Screen name="dashboard" options={{
-        title: 'Dashboard',
+        title: 'Copilot',
         tabBarIcon: ({ color, size }) => <Ionicons name="flash-outline" size={size} color={color} />,
       }} />
       <Tabs.Screen name="activity" options={{

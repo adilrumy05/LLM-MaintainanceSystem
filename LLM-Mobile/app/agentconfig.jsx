@@ -27,7 +27,7 @@ const AGENTS = [
     icon:        'shield-checkmark-outline',
     color:       '#16a34a',
     bg:          '#f0fdf4',
-    endpoint:    'LLM · OpenRouter',
+    endpoint:    'LLM · OpenAI gpt-4o-mini',
   },
   {
     key:         'recommendation',
@@ -36,7 +36,7 @@ const AGENTS = [
     icon:        'flash-outline',
     color:       '#7c3aed',
     bg:          '#ede9fe',
-    endpoint:    'LLM · OpenRouter',
+    endpoint:    'LLM · OpenAI gpt-4o-mini',
   },
   {
     key:         'alert',
@@ -73,7 +73,7 @@ const SERVICES = [
   { key: 'rag',      label: 'RAG Service',       detail: 'FastAPI · Port 8001',      icon: 'git-network-outline' },
   { key: 'qdrant',   label: 'Vector DB',         detail: 'Qdrant · Port 6333',       icon: 'cube-outline'     },
   { key: 'firebase', label: 'Firebase',          detail: 'Firestore · rbacfyp',      icon: 'cloud-outline'    },
-  { key: 'llm',      label: 'LLM Provider',      detail: 'OpenRouter · Gemma 3 27B', icon: 'hardware-chip-outline' },
+  { key: 'llm',      label: 'LLM Provider',      detail: 'OpenAI · gpt-4o-mini', icon: 'hardware-chip-outline' },
 ];
 
 export default function AgentConfig() {
@@ -162,8 +162,8 @@ export default function AgentConfig() {
                 <Ionicons name="hardware-chip-outline" size={20} color={C.primary} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={s.modelName}>google/gemma-3-27b-it:free</Text>
-                <Text style={s.modelSub}>via OpenRouter API</Text>
+                <Text style={s.modelName}>gpt-4o-mini</Text>
+                <Text style={s.modelSub}>via OpenAI API</Text>
               </View>
               <View style={s.onlinePill}>
                 <View style={s.onlineDot} />
@@ -204,6 +204,7 @@ export default function AgentConfig() {
 
           {/* ─── Agent Pipeline ───────────────────────────────── */}
           <Text style={s.sectionLabel}>AGENT PIPELINE</Text>
+          <Text style={s.configNote}>Agent configuration is managed via server-side environment variables.</Text>
           {AGENTS.map((agent, i) => (
             <TouchableOpacity
               key={agent.key}
@@ -232,6 +233,7 @@ export default function AgentConfig() {
                 <Switch
                   value={agentEnabled[agent.key]}
                   onValueChange={() => toggleAgent(agent.key)}
+                  disabled={true}
                   trackColor={{ false: C.cardBorder, true: agent.color + '55' }}
                   thumbColor={agentEnabled[agent.key] ? agent.color : '#ccc'}
                 />
@@ -316,6 +318,7 @@ const s = StyleSheet.create({
   refreshBtn:       { width: 36, height: 36, borderRadius: 10, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center' },
   body:             { paddingHorizontal: 16 },
   sectionLabel:     { fontSize: 10, fontWeight: '700', color: C.primary, letterSpacing: 1.2, marginTop: 20, marginBottom: 10 },
+  configNote:       { color: C.textMuted, fontSize: 11, lineHeight: 16, marginTop: -4, marginBottom: 10 },
   card:             { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.cardBorder, padding: 16 },
 
   // Health banner

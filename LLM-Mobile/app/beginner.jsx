@@ -1,12 +1,12 @@
-import React from "react";
-import { View, Text } from "react-native";
+import { useEffect } from "react";
+import { useRouter } from "expo-router";
 
-export default function BeginnerScreen() {
-  return (
-    <View style={{ flex:1, justifyContent:"center", alignItems:"center" }}>
-      <Text>Welcome Beginner! Guided steps here.</Text>
-    </View>
-  );
+export default function Beginner() {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace("/dashboard");
+  }, [router]);
+
+  return null;
 }
-
-
