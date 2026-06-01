@@ -58,6 +58,21 @@ Base all analysis strictly on the retrieved manual content provided.`,
 
 const DEFAULT_SYSTEM_PROMPT = `You are a maintenance assistant. Give a clear, safe, step-by-step response to technical inspection and maintenance tasks. Base all guidance strictly on the retrieved manual content provided.`;
 
+function extractDateFromQuery(query) {
+  // Match YYYY-MM-DD
+  let match = query.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (match) return match[1];
+
+  // Match DD/MM/YYYY or D/M/YYYY
+  match = query.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (match) {
+    const day = match[1].padStart(2, '0');
+    const month = match[2].padStart(2, '0');
+    const year = match[3];
+    return `${year}-${month}-${day}`;
+  }
+  return null;
+}
 
 app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
   try {
@@ -106,6 +121,9 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       known.model_numbers || []
     );
 
+    // Auto-detect date from query
+    const matchedDate = extractDateFromQuery(query);
+
     // ── Step 1: Get RAG context from Python retrieval service ─────────────────
     console.log(`Calling retrieval service for: "${query}"`);
     const retrievalResponse = await fetch(`${RETRIEVAL_SERVICE_URL}/retrieve`, {
@@ -119,6 +137,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
         category_level_1: matchedCategory1 || category1 || null,
         category_level_2: matchedCategory2 || category2 || null,
         model_number: matchedModel || null,
+        date_added: matchedDate || null,
         top_k: topK,
       }),
     });

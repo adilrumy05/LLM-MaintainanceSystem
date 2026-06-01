@@ -36,6 +36,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from qdrant_client.models import MatchAny
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,7 @@ class VectorStore:
         limit:                   int      = 5,
         score_threshold:         float    = None,
         document_group_id:       str      = None,
+        date_added:              str      = None,
         filename:                str      = None,
         classification:          str      = None,
         category_level_1:        str      = None,
@@ -272,6 +274,7 @@ class VectorStore:
         )
 
         if document_group_id: _kw("document_group_id", document_group_id)
+        if date_added:        _kw("date_added", date_added)
         if filename:          _kw("filename",          filename)
         if classification:    _kw("classification",    classification)
         if category_level_1:  _kw("category_level_1",  category_level_1)
@@ -281,7 +284,14 @@ class VectorStore:
             conditions.append(
                 FieldCondition(key="page", match=MatchValue(value=page))
             )
-        if model_number:      _kw("model_number",      model_number)
+        if model_number:
+            
+            conditions.append(
+                FieldCondition(
+                    key="model_number",
+                    match=MatchAny(any=[model_number])
+                )
+            )
 
         query_filter = Filter(must=conditions) if conditions else None
 
@@ -350,7 +360,15 @@ class VectorStore:
                 if payload.get("category_level_2"):
                     seen_cat2.add(payload["category_level_2"])
                 if payload.get("model_number"):
-                    seen_models.add(payload["model_number"])
+                    models_val = payload["model_number"]
+                    if isinstance(models_val, str):
+                        model_list = [m.strip() for m in models_val.split(",") if m.strip()]
+                    elif isinstance(models_val, list):
+                        model_list = [str(m).strip() for m in models_val if str(m).strip()]
+                    else:
+                        model_list = []
+                    for model in model_list:
+                        seen_models.add(model)
 
             if not offset:
                 break
@@ -498,6 +516,13 @@ def _build_payload(chunk: Dict[str, Any]) -> Dict[str, Any]:
     """
     meta = chunk.get("metadata", {})
 
+    # Convert model_number from comma-separated string to list of strings
+    models_str = meta.get("model_number", "")
+    if models_str:
+        models_list = [m.strip() for m in models_str.split(",") if m.strip()]
+    else:
+        models_list = []
+
     payload: Dict[str, Any] = {
         # ── Core chunk identity ───────────────────────────────────────────
         "chunk_id":   chunk.get("id", ""),
@@ -514,7 +539,7 @@ def _build_payload(chunk: Dict[str, Any]) -> Dict[str, Any]:
         "classification":  meta.get("classification",  ""),
         "category_level_1": meta.get("category_level_1", ""),
         "category_level_2": meta.get("category_level_2", ""),
-        "model_number":    meta.get("model_number",    ""),
+        "model_number":    models_list,
         "date_added":      meta.get("date_added",      ""),
         "notes":           meta.get("notes",           ""),
 

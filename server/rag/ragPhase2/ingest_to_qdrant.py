@@ -117,6 +117,26 @@ def _mark_failed(cp: Dict, key: str, error: str):
     cp["failed"][key] = {"error": error, "timestamp": datetime.now().isoformat()}
     _save_checkpoint(cp)
 
+# ── Utility helpers ────────────────────────────────────────────────────────
+
+def normalize_date(date_str: str) -> str:
+    if not date_str or not date_str.strip():
+        return ""
+    date_str = date_str.strip()
+    # Try dd/mm/yyyy (dayfirst=True)
+    try:
+        dt = datetime.strptime(date_str, "%d/%m/%Y")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    # Try yyyy-mm-dd
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+    logger.warning(f"Unrecognized date format: {date_str}")
+    return date_str
 
 # ── Content-unit loader ───────────────────────────────────────────────────────
 
@@ -149,6 +169,9 @@ def _load_page_unit(
 
         with open(meta_path, encoding="utf-8") as fh:
             metadata = json.load(fh)
+
+        if "date_added" in metadata:
+            metadata["date_added"] = normalize_date(metadata["date_added"])
 
         page_num = metadata.get("page", int(page_dir.name.split("_")[1]))
 

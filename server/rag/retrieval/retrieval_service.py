@@ -23,6 +23,7 @@ async def warmup():
 class RetrievalRequest(BaseModel):
     question: str
     document_group_id: Optional[str] = None
+    date_added: Optional[str] = None
     filename: Optional[str] = None
     classification: Optional[str] = None
     category_level_1: Optional[str] = None
@@ -56,6 +57,7 @@ async def retrieve(request: RetrievalRequest):
         result = pipeline.retrieve(
             question=request.question,
             document_group_id=request.document_group_id,
+            date_added=request.date_added,
             filename=request.filename,
             classification=request.classification,
             category_level_1=request.category_level_1,

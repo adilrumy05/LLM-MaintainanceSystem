@@ -263,6 +263,7 @@ class RetrievalPipeline:
         self,
         question:          str,
         document_group_id: str   = None,
+        date_added:        str   = None,
         filename:          str   = None,
         classification:    str   = None,
         category_level_1:  str   = None,
@@ -314,6 +315,7 @@ class RetrievalPipeline:
             f"  category_level_1={category_level_1}\n"
             f"  category_level_2={category_level_2}\n"
             f"  model_number={model_number}\n"
+            f"  date_added={date_added}\n"
             f"  chunk_types={types}\n"
             f"  top_k={k}  score_min={min_score}")
 
@@ -324,6 +326,7 @@ class RetrievalPipeline:
                 limit=k,
                 score_threshold=min_score if min_score > 0 else None,
                 document_group_id=document_group_id,
+                date_added=date_added,
                 filename=filename,
                 classification=classification,
                 category_level_1=category_level_1,
@@ -597,61 +600,62 @@ def _build_firebase_url(self, abs_path: str, src_path: str) -> str | None:
 
 
 def _enrich_sources_with_images(sources: List[Dict], blocks: List[ContextBlock]) -> List[Dict]:
-    """
-    For each source, collect images from all context blocks that match the same
-    (document_group_id, filename, page) and convert local paths to public Firebase URLs.
-    """
-
-    print("[DEBUG] Enriching sources with images", flush=True)
-    # Build a map from source key to list of images (deduplicated by src_path)
     from collections import defaultdict
     key_to_images = defaultdict(list)
     seen_keys = defaultdict(set)
-    
+
+    def build_url(abs_path, src_path):
+        if abs_path and "/output/" in abs_path:
+            rel_path = "output/" + abs_path.split("/output/")[-1]
+        elif src_path:
+            rel_path = f"output/{src_path}"
+        else:
+            return None
+        encoded = rel_path.replace("/", "%2F")
+        return f"https://firebasestorage.googleapis.com/v0/b/{FIREBASE_BUCKET}/o/{encoded}?alt=media"
+
     for b in blocks:
         key = (b.document_group_id, b.filename, b.page)
         images = b.metadata.get("images", [])
-        print(f"DEBUG: Block {b.filename} page {b.page} - images found: {len(images)}")
-        for img in images:
-            src_path = img.get("src_path", "")
-            print(f"DEBUG: processing image src_path='{src_path}'")
-            abs_path = img.get("abs_path", "")
-            print(f"DEBUG: abs_path='{abs_path}'")
-            
-            # Skip duplicates per source
-            if src_path in seen_keys[key]:
-                print(f"DEBUG: duplicate src_path '{src_path}' for key {key}, skipping")
-                continue
-            seen_keys[key].add(src_path)
-            
-            # Convert local path to public Firebase URL
-            public_url = None
-            if abs_path and "/output/" in abs_path:
-                rel_path = "output/" + abs_path.split("/output/")[-1]
-                encoded = rel_path.replace("/", "%2F")
-                public_url = f"https://firebasestorage.googleapis.com/v0/b/{FIREBASE_BUCKET}/o/{encoded}?alt=media"
-                print(f"DEBUG: built URL from abs_path -> {public_url}")
-            elif src_path:
-                rel_path = f"output/{src_path}"
-                encoded = rel_path.replace("/", "%2F")
-                public_url = f"https://firebasestorage.googleapis.com/v0/b/{FIREBASE_BUCKET}/o/{encoded}?alt=media"
-                print(f"DEBUG: built URL from src_path -> {public_url}")
-            else:
-                print("DEBUG: no src_path and abs_path missing /output/, cannot build URL")
-            
-            if public_url:
-                key_to_images[key].append({
-                    "caption": img.get("caption", ""),
-                    "url": public_url,
-                })
-                print(f"DEBUG: added image for key {key}")
-            else:
-                print("DEBUG: public_url is None, image not added")
-    
-    # Attach images to each source
+
+        if images:
+            # Scenario 1: images list has entries — use them
+            for img in images:
+                src_path = img.get("src_path", "")
+                abs_path = img.get("abs_path", "")
+                if src_path in seen_keys[key]:
+                    continue
+                seen_keys[key].add(src_path)
+                url = build_url(abs_path, src_path)
+                if url:
+                    key_to_images[key].append({
+                        "caption": img.get("caption", ""),
+                        "url": url,
+                    })
+        else:
+            # Scenario 2: images empty — try page_image_path as fallback
+            page_image_path = b.metadata.get("page_image_path", "")
+            fallback_key = "__page_fallback__"
+            if page_image_path and fallback_key not in seen_keys[key]:
+                seen_keys[key].add(fallback_key)
+                # page.png lives at output/.../page_N/images/page.png
+                # same structure as other images, just swap the filename
+                if "/output/" in page_image_path:
+                    page_dir = page_image_path.split("/output/")[-1]  # e.g. MANUAL/.../page_1/page.png
+                    # insert images/ before page.png
+                    page_dir = page_dir.replace("/page.png", "/images/page.png")
+                    rel_path = "output/" + page_dir
+                    encoded = rel_path.replace("/", "%2F")
+                    url = f"https://firebasestorage.googleapis.com/v0/b/{FIREBASE_BUCKET}/o/{encoded}?alt=media"
+                    key_to_images[key].append({
+                        "caption": f"Page {b.page}",
+                        "url": url,
+                    })
+                    print(f"DEBUG: page.png fallback -> {url}")
+            # Scenario 3: both empty — nothing added
+
     for src in sources:
         key = (src["document_group_id"], src["filename"], src["page"])
         src["images"] = key_to_images.get(key, [])
-        print(f"DEBUG: source {key} now has images = {src['images']}")
-    
+
     return sources
