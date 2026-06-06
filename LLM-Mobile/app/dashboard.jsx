@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Dimensions, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -154,32 +154,80 @@ export default function Dashboard() {
 
   const SourceItem = ({ source }) => {
     const [expanded, setExpanded] = useState(false);
+    const [selectedImage, setSelectedImage] = useState(null);
     const hasImages = source.images && source.images.length > 0;
+
     return (
       <View style={s.sourceContainer}>
+
+        {/* Fullscreen Modal */}
+        <Modal
+          visible={!!selectedImage}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setSelectedImage(null)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }}>
+            {/* Close button */}
+            <TouchableOpacity
+              onPress={() => setSelectedImage(null)}
+              style={{ position: 'absolute', top: 50, right: 20, zIndex: 10 }}
+            >
+              <Ionicons name="close-circle" size={36} color="#fff" />
+            </TouchableOpacity>
+
+            {/* Zoomable ScrollView */}
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
+              maximumZoomScale={5}
+              minimumZoomScale={1}
+              centerContent
+              showsHorizontalScrollIndicator={false}
+              showsVerticalScrollIndicator={false}
+            >
+              <Image
+                source={{ uri: selectedImage }}
+                style={{
+                  width: Dimensions.get('window').width,
+                  height: Dimensions.get('window').height * 0.8,
+                }}
+                resizeMode="contain"
+              />
+            </ScrollView>
+          </View>
+        </Modal>
+
+        {/* Source row toggle */}
         <TouchableOpacity onPress={() => setExpanded(!expanded)} style={s.sourceRow}>
           <Text style={s.sourceItem}>
             • {source.filename || source.document_group_id}{source.page ? ` — p.${source.page}` : ''}
           </Text>
         </TouchableOpacity>
+
+        {/* Image dropdown */}
         {expanded && hasImages && (
           <View style={s.imageDropdown}>
             {source.images.map((img, imgIdx) => (
               <View key={imgIdx} style={s.imageCard}>
                 {img.url ? (
-                  <Image
-                    source={{ uri: img.url }}
-                    style={s.thumbnail}
-                    resizeMode="contain"
-                  />
+                  <TouchableOpacity onPress={() => setSelectedImage(img.url)} activeOpacity={0.8}>
+                    <Image source={{ uri: img.url }} style={s.thumbnail} resizeMode="contain" />
+                    {/* Hint icon */}
+                    <View style={{
+                      position: 'absolute', bottom: 6, right: 6,
+                      backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12, padding: 4
+                    }}>
+                      <Ionicons name="expand-outline" size={14} color="#fff" />
+                    </View>
+                  </TouchableOpacity>
                 ) : null}
-                {img.caption ? (
-                  <Text style={s.imagePlaceholder}>{img.caption}</Text>
-                ) : null}
+                {img.caption ? <Text style={s.imagePlaceholder}>{img.caption}</Text> : null}
               </View>
             ))}
           </View>
         )}
+
       </View>
     );
   };
