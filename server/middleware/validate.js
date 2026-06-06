@@ -38,7 +38,7 @@ const validate = (req, res, next) => {
     return res.status(400).json({ error: "category2 must be a string." });
   }
 
-  if (topK && (typeof topK !== 'number' || topK <= 0)) {
+  if (topK !== undefined && topK !== null && (typeof topK !== 'number' || topK <= 0)) {
     return res.status(400).json({ error: "topK must be a positive number." });
   }
 

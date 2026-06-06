@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const { logAuditRecord } = require('./server/services/auditLogger');
-const { db } = require('./server/config/firebaseAdmin');
+const firebaseAdmin = require('./server/config/firebaseAdmin');
 const { runPriorityAdjustmentAgent } = require('./server/agents/priorityAdjustmentAgent');
 const fs = require('fs');
 const path = require('path');
@@ -247,14 +247,14 @@ app.post('/api/approve', async (req, res) => {
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId required' });
   }
-  if (!db) {
+  if (!firebaseAdmin.db) {
     return res.status(503).json({ error: 'Firebase Admin not configured' });
   }
 
   const timestamp = new Date().toISOString().replace('T', ' ').split('.')[0];
 
   try {
-    await db.collection('audit_logs').doc(sessionId).update({
+    await firebaseAdmin.db.collection('audit_logs').doc(sessionId).update({
       status: 'approved',
       reviewed_by: reviewedBy || 'admin',
       reviewed_at: reviewedAt || timestamp,
@@ -272,14 +272,14 @@ app.post('/api/reject', async (req, res) => {
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId required' });
   }
-  if (!db) {
+  if (!firebaseAdmin.db) {
     return res.status(503).json({ error: 'Firebase Admin not configured' });
   }
 
   const timestamp = new Date().toISOString().replace('T', ' ').split('.')[0];
 
   try {
-    await db.collection('audit_logs').doc(sessionId).update({
+    await firebaseAdmin.db.collection('audit_logs').doc(sessionId).update({
       status: 'rejected',
       reviewed_by: reviewedBy || 'admin',
       reviewed_at: reviewedAt || timestamp,
@@ -308,10 +308,14 @@ app.get('/api/documents', async (req, res) => {
 
 // ── Start server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 8000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Node backend running at http://localhost:${PORT}`);
-  console.log(`Expecting retrieval service at ${RETRIEVAL_SERVICE_URL}`);
-});
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Node backend running at http://localhost:${PORT}`);
+    console.log(`Expecting retrieval service at ${RETRIEVAL_SERVICE_URL}`);
+  });
+}
+
+module.exports = app;
 
 // ── Alert Agent ───────────────────────────────────────────────────────────────
 function detectAlerts(query, responseText, role) {
