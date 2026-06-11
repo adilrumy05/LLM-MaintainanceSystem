@@ -28,7 +28,7 @@ Developed as part of the **Computing Technology Project A** curriculum, this pla
 - **Mobile:** React Native + Expo (SDK 55), Expo Router
 - **Backend:** Node.js + Express (port 8000)
 - **RAG Service:** Python FastAPI (port 8001), Qdrant vector DB (port 6333)
-- **LLM:** OpenRouter API (Google Gemma 3 27B)
+- **LLM:** OpenAI API
 - **Database:** Firebase Firestore
 - **Auth:** Firebase Authentication
 
