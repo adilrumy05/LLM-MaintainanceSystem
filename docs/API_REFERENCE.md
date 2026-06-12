@@ -1,4 +1,4 @@
-# API Reference — Maintenance Copilot Backend
+# API Reference - Maintenance Copilot Backend
 
 **Base URL:** `http://localhost:8000`  
 **Server:** Node.js + Express  
@@ -34,7 +34,7 @@ Submits a maintenance query. Retrieves relevant document chunks via the RAG pipe
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `query` | string | Yes | The maintenance question. Max 1000 characters. |
-| `role` | string | No | User role — `beginner`, `intermediate`, `expert`, `admin`. Determines system prompt. Defaults to generic prompt if omitted. |
+| `role` | string | No | User role - `beginner`, `intermediate`, `expert`, `admin`. Determines system prompt. Defaults to generic prompt if omitted. |
 | `userId` | string | No | Firebase user ID. Used for audit logging. |
 | `userEmail` | string | No | User email. Used by the priority adjustment agent. |
 | `sessionId` | string | No | Session identifier. Used to group audit log entries. |
@@ -56,7 +56,7 @@ Submits a maintenance query. Retrieves relevant document chunks via the RAG pipe
 }
 ```
 
-**Success response — 200 OK**
+**Success response - 200 OK**
 
 ```json
 {
@@ -125,7 +125,7 @@ Approves an audit log session. Updates the `audit_logs` Firestore document for t
 }
 ```
 
-**Success response — 200 OK**
+**Success response - 200 OK**
 ```json
 { "status": "approved" }
 ```
@@ -170,7 +170,7 @@ Rejects an audit log session. Updates the `audit_logs` Firestore document for th
 }
 ```
 
-**Success response — 200 OK**
+**Success response - 200 OK**
 ```json
 { "status": "rejected" }
 ```
@@ -203,7 +203,7 @@ Health check endpoint. Returns immediately with no external calls.
 GET http://localhost:8000/api/health
 ```
 
-**Success response — 200 OK**
+**Success response - 200 OK**
 ```json
 { "status": "ok" }
 ```
@@ -212,14 +212,14 @@ GET http://localhost:8000/api/health
 
 ### GET /api/documents
 
-Returns all known filter values from the RAG retrieval service — document group IDs, filenames, classifications, categories, and model numbers. Used by the mobile app to populate filter dropdowns.
+Returns all known filter values from the RAG retrieval service - document group IDs, filenames, classifications, categories, and model numbers. Used by the mobile app to populate filter dropdowns.
 
 **Example request**
 ```
 GET http://localhost:8000/api/documents
 ```
 
-**Success response — 200 OK**
+**Success response - 200 OK**
 ```json
 {
   "document_group_ids": ["panasonic_aircon_E7JKEW", "panasonic_aircon_CS5"],
