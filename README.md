@@ -1,113 +1,133 @@
-# Maintenance Copilot
+# Maintenance Copilot: AI-Powered Decision Support
 
-An AI-powered, Human-in-the-Loop decision support system for FedEx maintenance technicians.
+![React Native](https://img.shields.io/badge/React_Native-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
+![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)
 
-Built with React Native + Expo (mobile), Node.js (backend), and a Python FastAPI RAG service.
+An advanced, Human-in-the-Loop (HITL) decision support system designed specifically for FedEx maintenance technicians. 
+
+Developed as part of the **Computing Technology Project A** curriculum, this platform leverages a custom Retrieval-Augmented Generation (RAG) pipeline to provide accurate, context-aware maintenance guidance, troubleshooting, and system monitoring.
 
 ---
 
-## Tech Stack
+## ✨ Key Features
+
+* **Multi-Agent Architecture:** Features autonomous background agents, including a **Priority Adjustment Agent**, which evaluates incoming queries and dynamically escalates critical maintenance tasks within the system.
+* **Advanced RAG Pipeline with OCR:** Utilizes a Qdrant vector database and Python FastAPI service to feed high-fidelity context to the LLM. Includes custom Jupyter notebook pipelines for Optical Character Recognition (OCR) to parse complex maintenance diagrams.
+* **Mobile Support:** Built with React Native and Expo Router, ensuring technicians have immediate, localized access to AI assistance directly on the workshop floor.
+* **Real-Time Audit Logging:** Fully integrated with Firebase Firestore. Every user query, AI response, and source document citation is permanently logged, establishing a verifiable trail for safety and compliance.
+* **Security & Sanitization Middleware:** Implements robust backend validation and LLM output sanitization to prevent prompt injection and ensure AI responses adhere to strict mechanical safety guidelines.
+* **Role-Based Access Control (RBAC):** Distinct interfaces and strict permission boundaries tailored for `Admin`, `Expert`, `Intermediate`, and `Beginner` roles.
+
+---
+
+## 🛠️ Tech Stack
 
 - **Mobile:** React Native + Expo (SDK 55), Expo Router
 - **Backend:** Node.js + Express (port 8000)
 - **RAG Service:** Python FastAPI (port 8001), Qdrant vector DB (port 6333)
-- **LLM:** OpenRouter API (Google Gemma 3 27B)
+- **LLM:** OpenAI API
 - **Database:** Firebase Firestore
 - **Auth:** Firebase Authentication
 
 ---
 
-## Roles
+## 🔒 Roles & Permissions
 
-| Role | Access |
+| Role | Access Level |
 |---|---|
-| Admin | Full access — dashboard, activity, audit logs, analytics, tasks, documents, user management |
-| Expert | Dashboard, activity, sessions |
-| Intermediate | Dashboard, activity, sessions |
-| Beginner | Dashboard, activity, sessions |
+| **Admin** | Full access — dashboard, activity, global audit logs, analytics, tasks, documents, user management |
+| **Expert** | Dashboard, activity, personal sessions |
+| **Intermediate** | Dashboard, activity, personal sessions |
+| **Beginner** | Dashboard, activity, personal sessions |
 
 ---
 
-## Getting Started
+## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js
+- Node.js (v18+)
 - Python 3.10+
 - Docker (for Qdrant)
-- Expo Go app on your phone
-- Phone and PC on the same WiFi network
+- Expo Go app installed on your mobile device
+- **Network Note:** Your mobile phone and PC *must* be on the same WiFi network.
 
-### Setup
+### Setup Instructions
 
-1. Copy `.env.example` to `.env` and fill in your API keys
-2. Install server dependencies:
+1. Copy `.env.example` to `.env` and fill in your required API keys.
+2. Install the Node backend dependencies:
    ```bash
    npm install
    ```
-3. Install mobile dependencies:
+3. Install the mobile frontend dependencies:
    ```bash
    cd LLM-Mobile
    npm install
    ```
 
-### Running
+### Running the System
 
-Use the startup script from the root folder:
+Use the one-click startup script from the root folder:
 
 ```bash
 start.bat
 ```
 
-This starts all 4 services automatically:
-1. Qdrant vector database (Docker)
-2. FastAPI RAG service on port 8001
-3. Node.js backend on port 8000
-4. Expo in LAN mode — scan QR code with Expo Go
-
-> **Important:** Your phone must be on the same WiFi as your PC.
+This script automatically orchestrates all 4 primary services:
+1. Qdrant vector database (via Docker)
+2. Python FastAPI RAG service (Port 8001)
+3. Node.js Express backend (Port 8000)
+4. Expo Mobile Server in LAN mode (Scan the generated QR code with Expo Go)
 
 ---
 
-## Project Structure
+## 🏗️ Project Structure
 
-```
+```text
 LLM-MaintainanceSystem/
 ├── LLM-Mobile/          # React Native Expo mobile app
 │   ├── app/             # Screens (Expo Router file-based navigation)
-│   ├── hooks/           # Custom hooks (useRole)
-│   ├── services/        # API service layer
-│   └── firebaseConfig.js
-├── server/              # Python FastAPI RAG service
+│   ├── hooks/           # Custom hooks (e.g., useRole)
+│   ├── services/        # API service layer integration
+│   └── firebaseConfig.js# Mobile Firebase initialization
+├── server/              # Python FastAPI RAG retrieval service
 ├── server.js            # Node.js Express backend entry point
-├── models/              # AI models
-├── uploads/             # Uploaded documents
-└── start.bat            # One-click startup script
+├── models/              # AI data processing models
+├── uploads/             # Script uploads and document ingestion
+└── start.bat            # One-click system startup script
 ```
 
 ---
 
-## Environment Variables
+## ⚙️ Environment Variables
 
-Copy `.env.example` to `.env` — the file contains all required keys with descriptions.
+Copy `.env.example` to `.env`. This file contains all required keys with descriptions.
 
-> The `.env` file is not committed to Git. Each developer sets their own local IP and API keys.
-> Check `.env.example` for the full list of required variables.
+> **Security Note:** The `.env` file is excluded from version control via `.gitignore`. Each developer must set their own local IP, API keys, and Firebase configurations. Check `.env.example` for the complete list of required variables.
 
 ---
 
-## Firebase Setup
+## 🔥 Firebase Setup
 
-1. Create a Firebase project
-2. Enable Firestore and Authentication (Email/Password)
-3. Add your `serviceAccountKey.json` to the root folder
-4. Update `firebaseConfig.js` with your project credentials
+1. Create a project in the [Firebase Console](https://console.firebase.google.com/).
+2. Enable **Firestore Database** and **Authentication** (Email/Password provider).
+3. Generate a new private key and add your `serviceAccountKey.json` to the root folder.
+4. Update `firebaseConfig.js` (inside `LLM-Mobile/`) with your public project credentials.
 
-### Firestore Collections
+### Firestore Database Schema
 
 | Collection | Purpose |
 |---|---|
-| `Users` | User accounts and roles |
-| `Alerts` | Real-time activity feed |
-| `audit_logs` | HITL session history |
-| `maintenance_tasks` | Task management |
-| `ManualDocuments` | RAG document library |
+| `Users` | Stores user accounts, permissions, and roles |
+| `Alerts` | Powers the real-time activity feed |
+| `audit_logs` | Stores all HITL session history, AI outputs, and user inputs |
+| `maintenance_tasks` | Handles active task tracking and management |
+| `ManualDocuments` | Metadata and references for the RAG document library |
+
+---
+
+## 👥 Contributors
+
+This system was collaboratively designed, developed, and tested by a 5-person project team to provide an enterprise-grade AI solution for modern maintenance workflows.
