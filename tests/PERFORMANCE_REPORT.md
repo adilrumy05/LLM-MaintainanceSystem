@@ -1,4 +1,4 @@
-# Performance Testing Report — Maintenance Copilot Backend
+# Performance Testing Report - Maintenance Copilot Backend
 
 **Date:** 2026-06-13  
 **Environment:** Node.js v24.12.0, AMD Ryzen 5 3500U, 8 cores, 7GB RAM  
