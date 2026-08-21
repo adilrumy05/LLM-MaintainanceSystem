@@ -1,9 +1,15 @@
 # server\rag\retrieval\retrieval_service.py
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
+# Project root — allows imports like "from server...."
 BASE_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(BASE_DIR))
+
+ENV_PATH = BASE_DIR / ".env"
+loaded = load_dotenv(dotenv_path=ENV_PATH)
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any

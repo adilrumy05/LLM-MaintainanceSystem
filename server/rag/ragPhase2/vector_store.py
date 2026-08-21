@@ -36,7 +36,15 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from qdrant_client.models import MatchAny
+from qdrant_client.models import (
+    VectorParams, Distance, PayloadSchemaType,
+    SparseVectorParams, SparseVector, PointStruct,
+    Prefetch, FusionQuery, Fusion,
+    Filter, FieldCondition, MatchValue, MatchAny,
+)
+
+DENSE_VECTOR_NAME  = "dense"
+SPARSE_VECTOR_NAME = "sparse"
 
 logger = logging.getLogger(__name__)
 
@@ -85,18 +93,7 @@ class VectorStore:
 
     # ── Collection management ─────────────────────────────────────────────────
 
-    def ensure_collection(self, embedding_dim: int = 768):
-        """
-        Create the collection if it does not exist.
-        If it exists but has the wrong vector size, recreate it (data loss warning).
-        Then ensure all payload indexes exist.
-
-        Qdrant 1.16 API: uses client.collection_exists() and client.create_collection().
-        """
-        from qdrant_client.models import (
-            VectorParams, Distance, PayloadSchemaType
-        )
-
+    def ensure_collection(self, embedding_dim: int = 1024):
         try:
             self.client.get_collection(self.collection)
             exists = True
@@ -104,27 +101,36 @@ class VectorStore:
             exists = False
 
         if exists:
-            info     = self.client.get_collection(self.collection)
-            existing = info.config.params.vectors.size
-            if existing != embedding_dim:
+            info = self.client.get_collection(self.collection)
+            vectors_cfg = info.config.params.vectors
+            has_sparse  = bool(info.config.params.sparse_vectors)
+            existing_dim = None
+            if isinstance(vectors_cfg, dict):
+                dense_cfg = vectors_cfg.get(DENSE_VECTOR_NAME)
+                existing_dim = dense_cfg.size if dense_cfg else None
+
+            if existing_dim != embedding_dim or not has_sparse:
                 logger.warning(
-                    f"Collection '{self.collection}' has dim={existing}, "
-                    f"expected {embedding_dim}. Recreating — all data will be lost."
+                    f"Collection '{self.collection}' schema mismatch "
+                    f"(dim={existing_dim}, sparse={has_sparse}), expected dim={embedding_dim} "
+                    f"+ sparse. Recreating — all data will be lost."
                 )
                 self.client.delete_collection(self.collection)
                 exists = False
             else:
-                print(f"Collection '{self.collection}' already exists (dim={existing}) ✓")
+                print(f"Collection '{self.collection}' already exists (dim={existing_dim}, hybrid) ✓")
 
         if not exists:
             self.client.create_collection(
                 collection_name=self.collection,
-                vectors_config=VectorParams(
-                    size=embedding_dim,
-                    distance=Distance.COSINE,
-                ),
+                vectors_config={
+                    DENSE_VECTOR_NAME: VectorParams(size=embedding_dim, distance=Distance.COSINE),
+                },
+                sparse_vectors_config={
+                    SPARSE_VECTOR_NAME: SparseVectorParams(),
+                },
             )
-            print(f"Created collection '{self.collection}' (dim={embedding_dim})")
+            print(f"Created hybrid collection '{self.collection}' (dense dim={embedding_dim} + sparse)")
 
         self._ensure_indexes()
 
@@ -154,44 +160,32 @@ class VectorStore:
 
     # ── Upsert — embedded chunks (children + tables) ─────────────────────────
 
-    def upsert_chunks(
-        self,
-        chunks: List[Dict[str, Any]],
-        batch_size: int = 100,
-    ) -> int:
-        """
-        Upsert child or table chunks that have an "embedding" field.
-
-        Each chunk's metadata is flattened into the Qdrant payload so every
-        searchable/filterable field is at the top level.
-
-        Returns the number of points upserted.
-        """
-        from qdrant_client.models import PointStruct
-
+    def upsert_chunks(self, chunks: List[Dict[str, Any]], batch_size: int = 100) -> int:
         if not chunks:
             return 0
 
-        points = []
-        skipped = 0
-
+        points, skipped = [], 0
         for chunk in chunks:
-            embedding = chunk.get("embedding")
-            if not embedding:
+            dense = chunk.get("embedding")
+            if not dense:
                 skipped += 1
                 continue
 
-            payload = _build_payload(chunk)
-            pid     = _point_id(chunk["id"])
+            vector = {DENSE_VECTOR_NAME: dense}
+            sparse = chunk.get("sparse_embedding")
+            if sparse and sparse.get("indices"):
+                vector[SPARSE_VECTOR_NAME] = SparseVector(
+                    indices=sparse["indices"], values=sparse["values"]
+                )
 
             points.append(PointStruct(
-                id=pid,
-                vector=embedding,
-                payload=payload,
+                id=_point_id(chunk["id"]),
+                vector=vector,
+                payload=_build_payload(chunk),
             ))
 
         if skipped:
-            logger.warning(f"Skipped {skipped} chunks without embeddings")
+            logger.warning(f"Skipped {skipped} chunks without dense embeddings")
 
         stored = _batch_upsert(self.client, self.collection, points, batch_size)
         print(f"Upserted {stored} chunk(s) into '{self.collection}'")
@@ -199,37 +193,18 @@ class VectorStore:
 
     # ── Upsert — parent payloads (no vector) ─────────────────────────────────
 
-    def upsert_parent_payloads(
-        self,
-        parent_chunks: List[Dict[str, Any]],
-        embedding_dim: int = 768,
-        batch_size: int = 100,
-    ) -> int:
-        """
-        Store parent chunks as payload-only points (zero vector).
-
-        They are retrievable by ID (child.metadata.parent_id) so the
-        retrieval layer can hydrate full context for any matched child.
-
-        Parameters
-        ----------
-        embedding_dim : must match the collection's vector size
-        """
-        from qdrant_client.models import PointStruct
-
+    def upsert_parent_payloads(self, parent_chunks, embedding_dim: int = 1024, batch_size: int = 100) -> int:
         if not parent_chunks:
             return 0
 
         zero_vec = [0.0] * embedding_dim
-        points   = []
-
+        points = []
         for chunk in parent_chunks:
             payload = _build_payload(chunk)
             payload["is_parent_store"] = True
-            pid = _point_id(chunk["id"])
             points.append(PointStruct(
-                id=pid,
-                vector=zero_vec,
+                id=_point_id(chunk["id"]),
+                vector={DENSE_VECTOR_NAME: zero_vec},
                 payload=payload,
             ))
 
@@ -238,83 +213,99 @@ class VectorStore:
         return stored
 
     # ── Search ────────────────────────────────────────────────────────────────
-
     def search(
-        self,
-        query:                   str,
-        embedder,                         # Embedder instance
-        limit:                   int      = 5,
-        score_threshold:         float    = None,
-        document_group_id:       str      = None,
-        date_added:              str      = None,
-        filename:                str      = None,
-        classification:          str      = None,
-        category_level_1:        str      = None,
-        category_level_2:        str      = None,
-        chunk_type:              str      = None,   # "child", "table"
-        page:                    int      = None,
-        model_number: str = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Embed query and return top-k results with optional filters.
+        self, query=None, embedder=None, precomputed_query=None, limit=5, score_threshold=None,
+        document_group_id=None, date_added=None, filename=None, classification=None,
+        category_level_1=None, category_level_2=None, chunk_type=None, page=None, model_number=None,
+        mode="hybrid",   # "hybrid" (RRF fusion) | "dense" | "sparse"
+    ):
+        if precomputed_query is not None:
+            q = precomputed_query
+        else:
+            if embedder is None:
+                raise ValueError("search() requires either precomputed_query or (query + embedder)")
+            q = embedder.embed_query(query)
 
-        All filters are AND-combined.
-
-        Returns
-        -------
-        List of dicts: {id, score, payload}
-        """
-        from qdrant_client.models import Filter, FieldCondition, MatchValue
-
-        query_vec = embedder.embed_query(query).tolist()
+        dense_vec = q["dense"].tolist() if hasattr(q["dense"], "tolist") else q["dense"]
+        sparse = q["sparse"]
 
         conditions = []
-        _kw = lambda key, val: conditions.append(
-            FieldCondition(key=key, match=MatchValue(value=val))
-        )
-
+        _kw = lambda key, val: conditions.append(FieldCondition(key=key, match=MatchValue(value=val)))
         if document_group_id: _kw("document_group_id", document_group_id)
         if date_added:        _kw("date_added", date_added)
-        if filename:          _kw("filename",          filename)
-        if classification:    _kw("classification",    classification)
-        if category_level_1:  _kw("category_level_1",  category_level_1)
-        if category_level_2:  _kw("category_level_2",  category_level_2)
-        if chunk_type:        _kw("chunk_type",        chunk_type)
+        if filename:          _kw("filename", filename)
+        if classification:    _kw("classification", classification)
+        if category_level_1:  _kw("category_level_1", category_level_1)
+        if category_level_2:  _kw("category_level_2", category_level_2)
+        if chunk_type:        _kw("chunk_type", chunk_type)
         if page is not None:
-            conditions.append(
-                FieldCondition(key="page", match=MatchValue(value=page))
-            )
+            conditions.append(FieldCondition(key="page", match=MatchValue(value=page)))
         if model_number:
-            
-            conditions.append(
-                FieldCondition(
-                    key="model_number",
-                    match=MatchAny(any=[model_number])
-                )
-            )
+            conditions.append(FieldCondition(key="model_number", match=MatchAny(any=[model_number])))
 
         query_filter = Filter(must=conditions) if conditions else None
 
-        kwargs: Dict[str, Any] = {}
+        kwargs = {}
         if score_threshold is not None:
             kwargs["score_threshold"] = score_threshold
 
-        # Qdrant Python client >= 1.x: client.search() removed -> query_points()
+        if mode == "dense":
+            response = self.client.query_points(
+                collection_name=self.collection,
+                query=dense_vec,
+                using=DENSE_VECTOR_NAME,
+                query_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+                **kwargs,
+            )
+            return [{"id": r.id, "score": r.score, "payload": r.payload or {}} for r in response.points]
+
+        if mode == "sparse":
+            if not sparse["indices"]:
+                return []   # nothing to search — query had no lexical weights
+            response = self.client.query_points(
+                collection_name=self.collection,
+                query=SparseVector(indices=sparse["indices"], values=sparse["values"]),
+                using=SPARSE_VECTOR_NAME,
+                query_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+                **kwargs,
+            )
+            return [{"id": r.id, "score": r.score, "payload": r.payload or {}} for r in response.points]
+
+        if mode != "hybrid":
+            raise ValueError(f"mode must be 'hybrid', 'dense', or 'sparse' — got {mode!r}")
+
+        # ── hybrid (RRF) — unchanged from before ──
+        prefetch_limit = max(limit * 4, 20)
+        prefetch = [
+            Prefetch(query=dense_vec, using=DENSE_VECTOR_NAME, filter=query_filter, limit=prefetch_limit),
+        ]
+        if sparse["indices"]:
+            prefetch.append(
+                Prefetch(
+                    query=SparseVector(indices=sparse["indices"], values=sparse["values"]),
+                    using=SPARSE_VECTOR_NAME,
+                    filter=query_filter,
+                    limit=prefetch_limit,
+                )
+            )
+
         response = self.client.query_points(
             collection_name=self.collection,
-            query=query_vec,
+            prefetch=prefetch,
+            query=FusionQuery(fusion=Fusion.RRF),
             query_filter=query_filter,
             limit=limit,
             with_payload=True,
             with_vectors=False,
             **kwargs,
         )
-
-        # query_points returns QueryResponse; .points is the list of ScoredPoint
-        return [
-            {"id": r.id, "score": r.score, "payload": r.payload or {}}
-            for r in response.points
-        ]
+        return [{"id": r.id, "score": r.score, "payload": r.payload or {}} for r in response.points]
     
     def get_known_filters(self):
         seen_groups = set()

@@ -27,7 +27,7 @@ Required env vars
     CHILD_OVERLAP                 e.g. 80
     MIN_CHUNK_SIZE                e.g. 50
     SEMANTIC_BOUNDARY_THRESHOLD   e.g. 0.65  (cosine-sim below → new parent)
-    EMBEDDING_MODEL               e.g. BAAI/bge-base-en-v1.5
+    EMBEDDING_MODEL               e.g. BAAI/bge-m3
     DEVICE                        e.g. cpu  or  cuda
 
 Public API
@@ -49,6 +49,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
 
 import numpy as np
+
+import torch as _torch
+_torch.inference_mode = lambda mode=True: _torch.no_grad()
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +87,14 @@ def _env_float(name: str, default: float = None) -> float:
         return float(val)
     except ValueError:
         raise RuntimeError(f"Env var {name} must be a float, got: {val!r}")
+
+
+def _resolve_device_str(device: str) -> str:
+    """Translate our 'dml' shorthand into the real torch device string."""
+    if device == "dml":
+        import torch_directml
+        return str(torch_directml.device())
+    return device
 
 
 # ── Optional dependency flags ─────────────────────────────────────────────────
@@ -257,12 +268,19 @@ class IntelligentChunker:
             p in self.embedding_model_name.lower()
             for p in ["jina", "nomic"]
         )
-        logger.info(f"Loading chunker embedding model: {self.embedding_model_name}")
+        resolved_device = _resolve_device_str(self.device)
+        cache_folder = os.getenv("MODEL_LOCAL_PATH")  # reuse the same on-disk weights as Embedder
+        logger.info(
+            f"Loading chunker embedding model: {self.embedding_model_name} "
+            f"(device={self.device} -> {resolved_device}, cache_folder={cache_folder})"
+        )
         self._embedding_model = SentenceTransformer(
             self.embedding_model_name,
-            device=self.device,
+            device=resolved_device,
             trust_remote_code=trust,
+            cache_folder=cache_folder,
         )
+        self._embedding_model.max_seq_length = 256
         logger.info("Chunker embedding model loaded.")
 
     # ── Public entry point ────────────────────────────────────────────────────
@@ -509,7 +527,7 @@ class IntelligentChunker:
         """Batch-encode sentences with the loaded SentenceTransformer."""
         return self._embedding_model.encode(
             texts,
-            batch_size=32,
+            batch_size=_env_int("EMBED_BATCH_SIZE"),
             show_progress_bar=False,
             convert_to_numpy=True,
             normalize_embeddings=True,

@@ -50,6 +50,7 @@ Checkpoint
 import json
 import os
 import sys
+import gc
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -80,8 +81,7 @@ CHECKPOINT_FILE       = Path(os.getenv("CHECKPOINT_DIR", "./checkpoint")) / "ing
 LIMIT                 = int(os.getenv("LIMIT", "0")) or None          # 0 = no limit
 DOC_GROUP_FILTER      = os.getenv("DOC_GROUP_FILTER",      None)
 CLASSIFICATION_FILTER = os.getenv("CLASSIFICATION_FILTER", None)
-
-EMBED_DIM = 768   # fixed for bge-base-en-v1.5
+EMBED_DIM = int(os.getenv("EMBED_DIM"))
 
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
@@ -296,8 +296,8 @@ def main():
     print("=" * 70)
     print(f"  Extraction dir : {EXTRACTION_DIR}")
     print(f"  Checkpoint     : {CHECKPOINT_FILE}")
-    print(f"  Qdrant         : {os.getenv('QDRANT_URL', 'http://localhost:6333')}")
-    print(f"  Model          : {os.getenv('MODEL_LOCAL_PATH', './models/bge-base-en-v1.5')}")
+    print(f"  Qdrant         : {os.getenv('QDRANT_URL')}")
+    print(f"  Model          : {os.getenv('MODEL_LOCAL_PATH')}")
     print("=" * 70)
 
     # ── Init components ───────────────────────────────────────────────────────
@@ -354,6 +354,7 @@ def main():
                 f"  Chunks: {len(parents)} parents | "
                 f"{len(children)} children | {len(tables)} tables"
             )
+            gc.collect()
 
             # ── 3. Embed children + tables ─────────────────────────────────
             to_embed = children + tables

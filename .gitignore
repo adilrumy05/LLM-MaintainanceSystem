@@ -24,6 +24,8 @@ __pycache__/
 dist/
 dist-ssr/
 build/
+server/rag/ragPhase2/last_retrieval_debug.json
+server/rag/ragPhase2/last_retrieval_prompt.txt
 
 # Environment variables
 .env

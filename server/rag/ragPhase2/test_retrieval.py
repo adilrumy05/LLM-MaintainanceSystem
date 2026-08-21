@@ -17,7 +17,7 @@ Configuration (.env or environment)
 -------------------------------------
     # Required
     QDRANT_URL          http://localhost:6333
-    MODEL_LOCAL_PATH    ./models/bge-base-en-v1.5
+    MODEL_LOCAL_PATH    ./models/bge-m3
     DEVICE              cpu
 
     # Retrieval tuning
@@ -78,8 +78,8 @@ def main():
     print(f"  Classification : {CLASSIFICATION or '(all)'}")
     print(f"  Category L1    : {CATEGORY_1 or '(all)'}")
     print(f"  Top-K          : {TOP_K}")
-    print(f"  Qdrant URL     : {os.getenv('QDRANT_URL', 'http://localhost:6333')}")
-    print(f"  Model path     : {os.getenv('MODEL_LOCAL_PATH', './models/bge-base-en-v1.5')}")
+    print(f"  Qdrant URL     : {os.getenv('QDRANT_URL')}")
+    print(f"  Model path     : {os.getenv('MODEL_LOCAL_PATH')}")
 
     # ── 1. Init pipeline ──────────────────────────────────────────────────────
     print("\nInitialising retrieval pipeline...")
@@ -127,6 +127,51 @@ def main():
     except Exception as e:
         print(f"\n❌  Retrieval failed: {e}")
         raise
+
+        # ── 4b. Mode comparison — dense vs sparse vs hybrid ─────────────────────
+    _print_section("MODE COMPARISON — dense vs sparse vs hybrid")
+    vs       = pipeline._get_vs()
+    embedder = pipeline._get_embedder()
+    mode_query_vec = embedder.embed_query(QUESTION)
+
+    mode_hits = {}
+    for mode in ("dense", "sparse", "hybrid"):
+        combined = []
+        for chunk_type in ["child", "table"]:
+            hits = vs.search(
+                precomputed_query=mode_query_vec,
+                limit=TOP_K,
+                document_group_id=DOC_GROUP,
+                classification=CLASSIFICATION,
+                category_level_1=CATEGORY_1,
+                category_level_2=CATEGORY_2,
+                chunk_type=chunk_type,
+                mode=mode,
+            )
+            combined.extend(hits)
+        combined.sort(key=lambda h: h["score"], reverse=True)
+        mode_hits[mode] = combined[:TOP_K]
+
+        print(f"\n  [{mode.upper()}]" + ("  (RRF rank-fused score, not comparable to raw cosine/dot below)" if mode == "hybrid" else ""))
+        if not mode_hits[mode]:
+            print("    (no hits)")
+        for i, hit in enumerate(mode_hits[mode], 1):
+            p = hit["payload"]
+            print(
+                f"    [{i}] score={hit['score']:.4f}  "
+                f"type={p.get('chunk_type','?'):8}  "
+                f"page={p.get('page','?'):>4}  "
+                f"file={p.get('filename','?')}"
+            )
+            preview = p.get("text", "")[:100].replace("\n", " ")
+            print(f"         text: {preview}...")
+
+    print(
+        "\n  Note: dense scores are cosine similarity (0-1), sparse scores are "
+        "lexical dot-product (unbounded), hybrid scores are RRF rank-fusion "
+        "(~0-0.03 scale). Not directly comparable across modes — compare rank "
+        "order, not raw magnitude."
+    )
 
     # ── 5. TOC nav result ─────────────────────────────────────────────────────
     _print_section("TOC NAVIGATION")
@@ -209,6 +254,20 @@ def main():
         "question":    QUESTION,
         "toc_section": result.toc_section,
         "sources":     result.sources,
+        "mode_comparison": {
+            mode: [
+                {
+                    "score":        h["score"],
+                    "chunk_type":   h["payload"].get("chunk_type"),
+                    "page":         h["payload"].get("page"),
+                    "doc_group":    h["payload"].get("document_group_id"),
+                    "filename":     h["payload"].get("filename"),
+                    "text_preview": h["payload"].get("text", ""),
+                }
+                for h in hits
+            ]
+            for mode, hits in mode_hits.items()
+        },
         "raw_hits": [
             {
                 "score":      h["score"],
@@ -216,7 +275,7 @@ def main():
                 "page":       h["payload"].get("page"),
                 "doc_group":  h["payload"].get("document_group_id"),
                 "filename":   h["payload"].get("filename"),
-                "text_preview": h["payload"].get("text", "")[:200],
+                "text_preview": h["payload"].get("text", ""),
             }
             for h in result.raw_hits
         ],

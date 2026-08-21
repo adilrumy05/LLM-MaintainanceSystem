@@ -247,13 +247,19 @@ class RetrievalPipeline:
 
     def _get_embedder(self):
         if self._embedder is None:
-            from .embedder import Embedder
+            try:
+                from .embedder import Embedder
+            except ImportError:
+                from embedder import Embedder
             self._embedder = Embedder()
         return self._embedder
 
     def _get_vs(self):
         if self._vector_store is None:
-            from .vector_store import VectorStore
+            try:
+                from .vector_store import VectorStore
+            except ImportError:
+                from vector_store import VectorStore
             self._vector_store = VectorStore()
         return self._vector_store
 
@@ -319,10 +325,12 @@ class RetrievalPipeline:
             f"  chunk_types={types}\n"
             f"  top_k={k}  score_min={min_score}")
 
+        # Embed the query once and reuse it for all chunk types
+        query_vec = embedder.embed_query(question)
+
         for chunk_type in types:
             hits = vs.search(
-                query=question,
-                embedder=embedder,
+                precomputed_query=query_vec,
                 limit=k,
                 score_threshold=min_score if min_score > 0 else None,
                 document_group_id=document_group_id,
@@ -341,8 +349,22 @@ class RetrievalPipeline:
         raw_hits = raw_hits[:k]
 
         # ── 3. TOC section filtering ──────────────────────────────────────
-        if toc_section:
-            raw_hits = self._filter_by_toc_section(raw_hits, toc_section)
+        # if toc_section:
+        #     raw_hits = self._filter_by_toc_section(raw_hits, toc_section)
+
+        # ── 3b. Guarantee dense+sparse agreement survives fusion/TOC cuts ──
+        filters = dict(
+            document_group_id=document_group_id, date_added=date_added, filename=filename,
+            classification=classification, category_level_1=category_level_1,
+            category_level_2=category_level_2, model_number=model_number,
+        )
+        agreed_hits = self._dense_sparse_agreement_hits(vs, query_vec, types, k, **filters)
+        existing_ids = {h["id"] for h in raw_hits}
+        for hit in agreed_hits:
+            if hit["id"] not in existing_ids:
+                raw_hits.append(hit)
+                existing_ids.add(hit["id"])
+                logger.info(f"Re-added dense+sparse-agreed hit dropped by fusion/TOC filter: {hit['id']}")
 
         # ── 4. Hydrate with parent context ────────────────────────────────
         context_blocks = self._build_context_blocks(raw_hits, vs)
@@ -361,8 +383,19 @@ class RetrievalPipeline:
             raw_hits=raw_hits,
         )
 
+    
     # ── TOC nav layer ─────────────────────────────────────────────────────────
+    def _dense_sparse_agreement_hits(self, vs, query_vec, chunk_types, k, **filters) -> List[Dict]:
+        """Chunks ranked in BOTH dense-only and sparse-only top-k for every chunk_type searched."""
+        agreed = []
+        for chunk_type in chunk_types:
+            dense_hits  = vs.search(precomputed_query=query_vec, limit=k, chunk_type=chunk_type, mode="dense",  **filters)
+            sparse_hits = vs.search(precomputed_query=query_vec, limit=k, chunk_type=chunk_type, mode="sparse", **filters)
+            sparse_ids  = {h["id"] for h in sparse_hits}
+            agreed.extend(h for h in dense_hits if h["id"] in sparse_ids)
+        return agreed
 
+    # ── TOC nav layer ─────────────────────────────────────────────────────────
     def _toc_section_for_query(
         self,
         question:          str,
@@ -580,6 +613,8 @@ def _deduplicate_sources(blocks: List[ContextBlock]) -> List[Dict[str, Any]]:
                 "classification":    b.classification,
             })
     return sources
+
+
 
 def _build_firebase_url(self, abs_path: str, src_path: str) -> str | None:
     rel_path = None
