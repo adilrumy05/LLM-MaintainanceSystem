@@ -122,3 +122,24 @@ export const submitQuery = async (query) => {
     throw err;
   }
 };
+
+// ── Voice input: upload a recorded clip, get transcribed text back ──────────
+export const transcribeAudio = async (localUri) => {
+  const fullUrl = `${API_URL}/transcribe`;
+
+  const formData = new FormData();
+  formData.append('audio', {
+    uri: localUri,
+    name: 'recording.m4a',
+    type: 'audio/m4a',
+  });
+
+  const response = await fetchWithTimeout(fullUrl, {
+    method: 'POST',
+    body: formData,
+  }, 60000);
+
+  if (!response.ok) throw new Error(`Transcription failed: HTTP ${response.status}`);
+  const data = await response.json();
+  return data.text;
+};

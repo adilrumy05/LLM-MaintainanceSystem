@@ -10,7 +10,8 @@ import { useUser } from './_layout';
 import { submitQuery } from '../services/api';
 import * as ImagePicker from 'expo-image-picker';
 import Markdown from 'react-native-markdown-display';
-
+import MicButton from '../components/MicButton';
+import { transcribeAudio } from '../services/api';
 
 export default function Dashboard() {
   const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
@@ -25,6 +26,7 @@ export default function Dashboard() {
   const router                          = useRouter();
   const { role, isJunior, isIntermediate } = useRole();
   const { setUser } = useUser();
+
 
   const activeChat = chats.find(c => c.id === activeChatId);
   const messages   = activeChat?.messages || [];
@@ -413,20 +415,17 @@ export default function Dashboard() {
 
           {/* Upload disabled — not yet connected to RAG */}
           {/* {uploadedFile && (
-            <View style={s.fileBadge}>
-              <Ionicons name="attach-outline" size={14} color={C.primary} />
-              <Text style={s.fileBadgeText} numberOfLines={1}> {uploadedFile.fileName || 'Attached file'}</Text>
-              <TouchableOpacity onPress={() => setUploadedFile(null)}>
-                <Ionicons name="close-outline" size={16} color={C.primary} />
-              </TouchableOpacity>
-            </View>
+            ...
           )} */}
 
           <View style={s.inputBar}>
-            {/* Upload disabled — not yet connected to RAG */}
-            {/* <TouchableOpacity style={s.iconBtn} onPress={handleFilePick} disabled={isProcessing}>
-              <Ionicons name="attach-outline" size={20} color={C.primary} />
-            </TouchableOpacity> */}
+
+          <MicButton
+            style={s.iconBtn}
+            disabled={isProcessing}
+            onTranscript={(text) => setInputValue(text)}
+          />
+
             <TextInput
               style={s.input}
               placeholder="Ask a maintenance question..."

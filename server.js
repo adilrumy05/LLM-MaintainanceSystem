@@ -23,7 +23,8 @@ process.on('uncaughtException', (err) => {
 const app = express();
 app.use(cors());
 app.use(express.json());
-
+const transcribeRouter = require('./server/routes/transcribe');
+app.use('/api', transcribeRouter);
 const RETRIEVAL_SERVICE_URL = process.env.RETRIEVAL_SERVICE_URL || 'http://localhost:8001';
 const PROMPT_FILE_PATH = path.join(__dirname, 'latest_prompt.txt');
 

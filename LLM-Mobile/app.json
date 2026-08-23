@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "We use speech recognition to let you speak your maintenance queries.",
-        "NSMicrophoneUsageDescription": "We use the microphone to record your voice queries."
+        "NSMicrophoneUsageDescription": "We use the microphone to record your voice queries.",
+        "NSMotionUsageDescription": "Used to detect a shake gesture to start voice input."
       }
     },
     "android": {
@@ -34,7 +35,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-speech-recognition"
+      "expo-speech-recognition",
+      "expo-audio"
     ]
   }
 }
