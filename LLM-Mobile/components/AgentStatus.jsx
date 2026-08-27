@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { C } from '../app/theme';
 
 const AGENTS = [
-  { name: 'Data Retrieval Agent',    status: 'Searching manuals…',  icon: '📚', color: C.blue   },
-  { name: 'Safety Validation Agent', status: 'Checking protocols…', icon: '🛡', color: C.green  },
-  { name: 'Recommendation Agent',    status: 'Generating plan…',    icon: '🧠', color: C.primary },
+  { name: 'Data Retrieval Agent',    status: 'Searching manuals…',  icon: 'library-outline',         color: C.blue   },
+  { name: 'Safety Validation Agent', status: 'Checking protocols…', icon: 'shield-checkmark-outline', color: C.green  },
+  { name: 'Recommendation Agent',    status: 'Generating plan…',    icon: 'bulb-outline',             color: C.primary },
 ];
 
 export default function AgentStatus() {
@@ -43,6 +44,7 @@ export default function AgentStatus() {
         const badge = stateBadgeStyle(state);
         const isDone   = state === 'done';
         const isActive = state === 'active';
+        const iconColor = isDone ? C.green : isActive ? C.blue : C.textMuted;
 
         return (
           <View key={agent.name} style={[
@@ -55,20 +57,23 @@ export default function AgentStatus() {
               backgroundColor: isDone   ? C.greenBg :
                                isActive ? C.blueBg  : C.primaryLight,
             }]}>
-              <Text style={{ fontSize: 16 }}>{agent.icon}</Text>
+              <Ionicons name={agent.icon} size={16} color={iconColor} />
             </View>
 
             {/* Info */}
             <View style={s.agentInfo}>
               <Text style={s.agentName}>{agent.name}</Text>
-              <Text style={[s.agentStatus, {
-                color: isDone   ? C.green    :
-                       isActive ? C.blue     : C.textMuted,
-              }]}>
-                {isDone   && '✓ Complete'}
-                {isActive && agent.status}
-                {state === 'queued' && 'Awaiting previous agent…'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                {isDone && <Ionicons name="checkmark-outline" size={12} color={C.green} />}
+                <Text style={[s.agentStatus, {
+                  color: isDone   ? C.green    :
+                         isActive ? C.blue     : C.textMuted,
+                }]}>
+                  {isDone   && 'Complete'}
+                  {isActive && agent.status}
+                  {state === 'queued' && 'Awaiting previous agent…'}
+                </Text>
+              </View>
             </View>
 
             {/* Badge */}

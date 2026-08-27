@@ -3,6 +3,7 @@ import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { createContext, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 import { C } from '../theme';
 
 // ── UserContext — created once here, consumed in every screen ─
@@ -127,6 +128,7 @@ export default function Layout() {
             <View style={web.btnRight} />
             <View style={web.screen}>
               {loading ? spinner : tabNav}
+              <Toast />
             </View>
           </View>
         </View>
@@ -138,6 +140,7 @@ export default function Layout() {
   return (
     <UserContext.Provider value={{ user, setUser, role }}>
       {tabNav}
+      <Toast />
     </UserContext.Provider>
   );
 }

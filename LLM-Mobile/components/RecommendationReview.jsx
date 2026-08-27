@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { C } from '../app/theme';
 
 const STEPS = [
@@ -68,24 +69,26 @@ export default function RecommendationReview({ recommendation, onApprove, onReje
 
       {/* AI badge */}
       <View style={s.aiBadge}>
-        <Text style={{ fontSize: 16, marginRight: 8 }}>🤖</Text>
+        <Ionicons name="sparkles-outline" size={16} color={C.primaryText} style={{ marginRight: 8 }} />
         <Text style={s.aiBadgeText}>AI recommendation generated · Review all steps before deciding</Text>
       </View>
 
       {/* Beginner banner */}
       {isJunior && (
-        <View style={[s.banner, { borderColor: C.blue, backgroundColor: C.blueBg }]}>
-          <Text style={[s.bannerText, { color: C.blue }]}>
-            💡 <Text style={{ fontWeight: '700' }}>Beginner tip:</Text> Read every step carefully before touching anything. If unsure, stop and contact a senior technician.
+        <View style={[s.banner, { borderColor: C.blue, backgroundColor: C.blueBg, flexDirection: 'row', alignItems: 'flex-start', gap: 8 }]}>
+          <Ionicons name="bulb-outline" size={14} color={C.blue} style={{ marginTop: 1 }} />
+          <Text style={[s.bannerText, { color: C.blue, flex: 1 }]}>
+            <Text style={{ fontWeight: '700' }}>Beginner tip:</Text> Read every step carefully before touching anything. If unsure, stop and contact a senior technician.
           </Text>
         </View>
       )}
 
       {/* Intermediate banner */}
       {isIntermediate && (
-        <View style={[s.banner, { borderColor: '#fcd34d', backgroundColor: '#fef9c3' }]}>
-          <Text style={[s.bannerText, { color: '#d97706' }]}>
-            ⚠️ <Text style={{ fontWeight: '700' }}>Safety reminder:</Text> Verify LOTO is applied before proceeding. Consult an Expert for any HIGH difficulty steps.
+        <View style={[s.banner, { borderColor: '#fcd34d', backgroundColor: '#fef9c3', flexDirection: 'row', alignItems: 'flex-start', gap: 8 }]}>
+          <Ionicons name="warning-outline" size={14} color="#d97706" style={{ marginTop: 1 }} />
+          <Text style={[s.bannerText, { color: '#d97706', flex: 1 }]}>
+            <Text style={{ fontWeight: '700' }}>Safety reminder:</Text> Verify LOTO is applied before proceeding. Consult an Expert for any HIGH difficulty steps.
           </Text>
         </View>
       )}
@@ -103,9 +106,10 @@ export default function RecommendationReview({ recommendation, onApprove, onReje
             <View style={s.tagRow}>
               {step.tag && (
                 <View style={[s.tag, { backgroundColor: step.tagBg, borderColor: step.tagColor }]}>
-                  <Text style={[s.tagText, { color: step.tagColor }]}>
-                    {step.tagColor === C.red ? '⚠ ' : ''}{step.tag}
-                  </Text>
+                  {step.tagColor === C.red && (
+                    <Ionicons name="warning-outline" size={11} color={step.tagColor} style={{ marginRight: 3 }} />
+                  )}
+                  <Text style={[s.tagText, { color: step.tagColor }]}>{step.tag}</Text>
                 </View>
               )}
               {needsGuidance && (
@@ -123,7 +127,10 @@ export default function RecommendationReview({ recommendation, onApprove, onReje
       <View style={s.divider} />
 
       {/* Sources */}
-      <Text style={s.sectionLabel}>📎 SOURCE CITATIONS</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 }}>
+        <Ionicons name="attach-outline" size={11} color={C.textMuted} />
+        <Text style={[s.sectionLabel, { marginBottom: 0 }]}>SOURCE CITATIONS</Text>
+      </View>
       {recommendation.sources.map((src, i) => (
         <View key={i} style={s.citationCard}>
           <Text style={s.citationTitle}>{src.title}</Text>
@@ -145,18 +152,19 @@ export default function RecommendationReview({ recommendation, onApprove, onReje
           {showReasoning && (
             <View style={s.reasoningBox}>
               {[
-                ['📚', 'Data Retrieval Agent',      'Found procedure 5.2 · 3 relevant documents'],
-                ['🛡',  'Safety Validation Agent',   'LOTO required · OSHA compliant · Verified'],
-                ['📊', 'Priority Adjustment Agent', 'Task classified HIGH · Overdue 2 days'],
+                ['library-outline', 'Data Retrieval Agent',      'Found procedure 5.2 · 3 relevant documents'],
+                ['shield-checkmark-outline', 'Safety Validation Agent',   'LOTO required · OSHA compliant · Verified'],
+                ['stats-chart-outline', 'Priority Adjustment Agent', 'Task classified HIGH · Overdue 2 days'],
               ].map(([icon, name, detail]) => (
                 <View key={name} style={s.reasoningItem}>
-                  <Text style={{ fontSize: 14, marginRight: 8 }}>{icon}</Text>
+                  <Ionicons name={icon} size={14} color={C.textSub} style={{ marginRight: 8 }} />
                   <View style={{ flex: 1 }}>
                     <Text style={s.reasoningName}>{name}</Text>
                     <Text style={s.reasoningDetail}>{detail}</Text>
                   </View>
                   <View style={s.verifiedBadge}>
-                    <Text style={s.verifiedText}>✓ Verified</Text>
+                    <Ionicons name="checkmark-outline" size={10} color={C.green} style={{ marginRight: 2 }} />
+                    <Text style={s.verifiedText}>Verified</Text>
                   </View>
                 </View>
               ))}
@@ -170,25 +178,32 @@ export default function RecommendationReview({ recommendation, onApprove, onReje
       {/* HITL Buttons */}
       {canApprove ? (
         <View>
-          <Text style={s.sectionLabel}>⚖ HUMAN-IN-THE-LOOP DECISION</Text>
-          <TouchableOpacity style={s.approveBtn} onPress={onApprove}>
-            <Text style={s.approveBtnText}>✓  Approve & Log</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10 }}>
+            <Ionicons name="people-outline" size={11} color={C.textMuted} />
+            <Text style={[s.sectionLabel, { marginBottom: 0 }]}>HUMAN-IN-THE-LOOP DECISION</Text>
+          </View>
+          <TouchableOpacity style={[s.approveBtn, s.btnRow]} onPress={onApprove}>
+            <Ionicons name="checkmark-circle-outline" size={16} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={s.approveBtnText}>Approve & Log</Text>
           </TouchableOpacity>
           {(isAdmin || isExpert) && (
-            <TouchableOpacity style={s.revisionBtn}>
-              <Text style={s.revisionBtnText}>✏  Request Revision</Text>
+            <TouchableOpacity style={[s.revisionBtn, s.btnRow]}>
+              <Ionicons name="create-outline" size={16} color="#d97706" style={{ marginRight: 6 }} />
+              <Text style={s.revisionBtnText}>Request Revision</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={s.rejectBtn} onPress={onReject}>
-            <Text style={s.rejectBtnText}>✕  Override / Reject</Text>
+          <TouchableOpacity style={[s.rejectBtn, s.btnRow]} onPress={onReject}>
+            <Ionicons name="close-circle-outline" size={16} color="#fff" style={{ marginRight: 6 }} />
+            <Text style={s.rejectBtnText}>Override / Reject</Text>
           </TouchableOpacity>
-          <View style={s.auditNotice}>
-            <Text style={s.auditText}>🔒 This action will be recorded in the audit trail</Text>
+          <View style={[s.auditNotice, s.btnRow]}>
+            <Ionicons name="lock-closed-outline" size={12} color={C.primaryText} style={{ marginRight: 6 }} />
+            <Text style={s.auditText}>This action will be recorded in the audit trail</Text>
           </View>
         </View>
       ) : (
         <View style={s.lockedBox}>
-          <Text style={{ fontSize: 24, marginBottom: 8 }}>🔒</Text>
+          <Ionicons name="lock-closed-outline" size={24} color={C.textMuted} style={{ marginBottom: 8 }} />
           <Text style={s.lockedTitle}>Approval not available at your access level</Text>
           <Text style={s.lockedSub}>Share this recommendation with an Intermediate Technician or above to approve.</Text>
         </View>
@@ -214,7 +229,7 @@ const s = StyleSheet.create({
   stepTitle:       { color: C.text, fontSize: 13, fontWeight: '700', marginBottom: 4 },
   stepDesc:        { color: C.textSub, fontSize: 12, lineHeight: 18 },
   tagRow:          { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-  tag:             { borderWidth: 1, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
+  tag:             { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
   tagText:         { fontSize: 10, fontWeight: '700' },
   divider:         { height: 1, backgroundColor: C.cardBorder, marginVertical: 14 },
   citationCard:    { backgroundColor: C.inputBg, borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: C.cardBorder },
@@ -227,8 +242,9 @@ const s = StyleSheet.create({
   reasoningItem:   { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.cardBorder },
   reasoningName:   { color: C.text, fontSize: 12, fontWeight: '700' },
   reasoningDetail: { color: C.textSub, fontSize: 11, marginTop: 2 },
-  verifiedBadge:   { backgroundColor: C.greenBg, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
+  verifiedBadge:   { flexDirection: 'row', alignItems: 'center', backgroundColor: C.greenBg, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
   verifiedText:    { color: C.green, fontSize: 10, fontWeight: '700' },
+  btnRow:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   approveBtn:      { backgroundColor: C.green, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 8 },
   approveBtnText:  { color: '#fff', fontWeight: '700', fontSize: 14 },
   revisionBtn:     { backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#fcd34d', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 8 },

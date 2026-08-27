@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import Toast from 'react-native-toast-message';
 import { useRole } from '../hooks/useRole';
 import {
   collection, addDoc, getDocs, updateDoc, doc,
@@ -83,7 +84,10 @@ export default function Tasks() {
   );
 
   const handleCreate = async () => {
-    if (!title.trim()) { Alert.alert('Error', 'Task title is required.'); return; }
+    if (!title.trim()) {
+      Toast.show({ type: 'error', text1: 'Task title is required' });
+      return;
+    }
     setSaving(true);
     try {
       const userId = user?.uid || user?.email || 'unknown';
@@ -100,10 +104,10 @@ export default function Tasks() {
       setTitle(''); setDescription(''); setPriority('medium'); setAssignedRole('all');
       setShowCreate(false);
       await fetchTasks();
-      Alert.alert('Success', 'Task created successfully.');
+      Toast.show({ type: 'success', text1: 'Task created successfully' });
     } catch (e) {
       console.error(e);
-      Alert.alert('Error', 'Failed to create task.');
+      Toast.show({ type: 'error', text1: 'Failed to create task' });
     }
     setSaving(false);
   };
@@ -121,8 +125,9 @@ export default function Tasks() {
         try {
           await updateDoc(doc(db, 'maintenance_tasks', taskId), { status: nextStatus });
           setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: nextStatus } : t));
+          Toast.show({ type: 'success', text1: `Marked as ${label}` });
         } catch (e) {
-          Alert.alert('Error', 'Failed to update status.');
+          Toast.show({ type: 'error', text1: 'Failed to update status' });
         }
       }},
     ]);

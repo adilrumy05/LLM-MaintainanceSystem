@@ -78,3 +78,5 @@ activate.*
 # upload_checkpoint.json
 # uploadToFirebase.js
 output/
+
+uploads/audio/
