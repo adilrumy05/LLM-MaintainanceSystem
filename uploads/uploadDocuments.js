@@ -1,19 +1,23 @@
-const admin = require('firebase-admin');
+// firebase-admin v13+ dropped the namespaced API (admin.credential / admin.firestore).
+// See server/config/firebaseAdmin.js for the full explanation.
+const { initializeApp, cert, getApps } = require('firebase-admin/app');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { getStorage } = require('firebase-admin/storage');
 const fs = require('fs').promises;
 const path = require('path');
 
 // ==========================================
 // ⚙️ CONFIGURATION
 // ==========================================
-// Re-using your existing service account and bucket
-const serviceAccount = require('./serviceAccountKey.json');
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+// Single canonical location: the repository root. See uploadToFirebase.js.
+const serviceAccount = require('../serviceAccountKey.json');
+const app = getApps().length ? getApps()[0] : initializeApp({
+  credential: cert(serviceAccount),
   storageBucket: "rbacfyp.firebasestorage.app" 
 });
 
-const bucket = admin.storage().bucket();
-const db = admin.firestore();
+const bucket = getStorage(app).bucket();
+const db = getFirestore(app);
 
 // 📂 Points to the 'data' folder in your current directory
 const DATA_ROOT = "C:/Users/phill/Downloads/data"; 
@@ -100,7 +104,7 @@ async function uploadAndIndexDocuments() {
                 fileName: actualFileName,
                 storagePath: firebasePath,
                 documentUrl: publicUrl,
-                uploadedAt: admin.firestore.FieldValue.serverTimestamp()
+                uploadedAt: FieldValue.serverTimestamp()
             });
 
             // 6. Save checkpoint after success
