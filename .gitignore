@@ -47,11 +47,18 @@ Thumbs.db
 # Project-specific ML / RAG
 server/rag/ragPhase2/models/
 checkpoint/
+# per-model ingest checkpoints, e.g. checkpoint_bgem3/
+checkpoint_*/
 models/
 latest_prompt.txt
 
 # Firebase / Secrets
+# Canonical location is the repo root; both uploads/ scripts read ../ from there.
+# No leading slash, so this also catches stray copies in subfolders.
 serviceAccountKey.json
+# Firebase Console downloads the key as e.g. rbacfyp-firebase-adminsdk-ab12c-....json.
+# Without this, that filename is NOT ignored and gets committed by accident.
+*-firebase-adminsdk-*.json
 
 # Chat / debug artifacts
 chat_transcripts/
