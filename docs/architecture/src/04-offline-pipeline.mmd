@@ -1,0 +1,76 @@
+---
+config:
+  layout: elk
+---
+%% D4 Offline Ingestion Pipeline (current). Owner Andrei. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+flowchart TB
+
+    subgraph SRC["📄 Source material"]
+        CSV["data_information.csv<br/>NOT IN REPO<br/>drives paths, metadata and<br/>the Qdrant filter schema"]
+        PDFS["9 aircon manuals<br/>Google Drive RAG_OCRv1/data/"]
+    end
+
+    subgraph COLAB1["☁️ Google Colab — GPU required"]
+        OCR["phase1_ocr.ipynb<br/>PyMuPDF raster 300 DPI<br/>MonkeyOCR via subprocess"]
+        CP1["ocr_checkpoint.json"]
+        OUT1["output/{CLASS}/{group}/{stem}/page_N/<br/>page.png, *.md, images/*.jpg"]
+    end
+
+    subgraph COLAB2["☁️ Google Colab — CPU by default"]
+        PARSE["phase1_llm_parsing.ipynb<br/>BeautifulSoup tables<br/>Qwen3.5-4B only if toggled"]
+        HELP["4 helper modules<br/>general_processor.py<br/>general_content_extractor.py<br/>html_table_converter.py<br/>llm_table_normalizer.py<br/>EXIST ONLY ON GOOGLE DRIVE"]
+        CP2["content_extraction_checkpoint.json"]
+        OUT2["content_extraction/.../page_N/<br/>processed_content.txt + metadata.json"]
+    end
+
+    subgraph DEV["💻 Developer laptop"]
+        ING["ingest_to_qdrant.py<br/>chunker → embedder → vector_store<br/>bge-base-en-v1.5, 768d"]
+        CP3["ingest_checkpoint.json"]
+        MIG["migrateImages.js<br/>hardcoded G:\ Drive shortcut"]
+        UPI["uploadToFirebase.js"]
+        UPD["uploadDocuments.js<br/>hardcoded C:/Users/phill/"]
+    end
+
+    subgraph TARGETS["🎯 Runtime stores"]
+        QDR[("Qdrant<br/>text_chunks_general")]
+        STOR[("Firebase Storage<br/>output/ and data/")]
+        FSI[("Firestore<br/>ManualImages, ManualDocuments")]
+    end
+
+    CSV -.->|"① human uploads"| OCR
+    PDFS -.->|"① human uploads"| OCR
+    OCR --> CP1
+    OCR --> OUT1
+    OUT1 -.->|"② human runs next notebook"| PARSE
+    CP1 --> PARSE
+    HELP -.->|"③ human copies to Drive/scripts"| PARSE
+    PARSE --> CP2
+    PARSE --> OUT2
+    OUT2 -.->|"④ human syncs Drive → laptop<br/>sets EXTRACTION_DIR"| ING
+    ING --> CP3
+    ING -->|"⑤ upsert"| QDR
+    OUT1 -.->|"⑥ human runs, needs G:\ mount"| MIG
+    MIG --> UPI
+    UPI --> STOR
+    UPI --> FSI
+    PDFS -.->|"⑦ different machine entirely"| UPD
+    UPD --> STOR
+    UPD --> FSI
+
+    classDef existing fill:#E8F0FB,stroke:#0B63CE,stroke-width:2px,color:#0F1620
+    classDef store fill:#EEF1F0,stroke:#5A6B7A,stroke-width:2px,color:#0F1620
+    classDef missing fill:#FCEDE4,stroke:#E8621D,stroke-width:2px,stroke-dasharray: 5 3,color:#0F1620
+    classDef ckpt fill:#F7F8F7,stroke:#8A98A4,stroke-width:1px,color:#33414F
+
+    class OCR,PARSE,ING,MIG,UPI,UPD existing
+    class QDR,STOR,FSI,PDFS store
+    class CSV,HELP missing
+    class CP1,CP2,CP3,OUT1,OUT2 ckpt
+
+    style COLAB1 fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style COLAB2 fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style DEV fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style SRC fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style TARGETS fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px

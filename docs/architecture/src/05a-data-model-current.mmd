@@ -1,0 +1,94 @@
+%% D5a Data Model (current). Owner Phillip. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+erDiagram
+    Users {
+        string uid PK "= Firebase Auth uid"
+        string username
+        string email
+        string role_id "worker_beginner|worker_intermediate|worker_expert|admin"
+        bool   isActive "set once, never updated"
+        string createdAt "ISO string"
+    }
+
+    audit_logs {
+        string log_id PK "= sessionId, doc id"
+        string user_id "client-asserted, unverified"
+        string action "always llm_chat_session"
+        string status "pending_review|approved|rejected"
+        string last_updated "STRING not Timestamp - sorts lexicographically"
+        array  messages "arrayUnion of turns"
+        string reviewed_by "HITL"
+        string reviewed_at "HITL"
+        string rejection_reason "never populated - client sends no reason"
+    }
+
+    Alerts {
+        string id PK
+        string type "info|alert|priority - 'share' defined in UI, never written"
+        string title
+        string message
+        string userEmail
+        string role
+        array  sources
+        ts     createdAt
+        string linkedTaskId "priority alerts only"
+    }
+
+    maintenance_tasks {
+        string id PK
+        string title
+        string description
+        string priority "low|medium|high"
+        string assignedRole "all|expert|intermediate|beginner - NOT a person"
+        string status "pending|in_progress|done - reversible, no timestamp"
+        string createdBy
+        ts     createdAt "the ONLY timestamp"
+        string linkedSessionId "set by priority agent only"
+        string alertLevel "agent-created only"
+        string alertReason "agent-created only"
+    }
+
+    ManualDocuments {
+        string id PK
+        string documentGroup
+        string fileName
+        string storagePath
+        string documentUrl
+        ts     uploadedAt
+    }
+
+    ManualImages {
+        string id PK "WRITE-ONLY - nothing in the system reads this"
+        string classification
+        string documentGroup
+        string filename
+        int    pageNum
+        string imageName
+        string storagePath
+        string imageUrl
+    }
+
+    qdrant_text_chunks_general {
+        int    point_id PK
+        vector embedding "768d dense, bge-base-en-v1.5, unnamed"
+        string chunk_type "child|table|parent - parents stored as zero-vector"
+        string text
+        int    page
+        string document_group_id "INDEXED"
+        string filename "INDEXED"
+        string classification "INDEXED"
+        string category_level_1 "INDEXED"
+        string category_level_2 "INDEXED"
+        array  model_number "INDEXED, list - matched with MatchAny"
+        string content_type "INDEXED, unused by search()"
+        string parent_id
+        array  images "caption, src_path, abs_path"
+        string page_image_path
+        array  toc_headings
+        bool   use_toc_nav "filtered on, NOT indexed"
+    }
+
+    Users ||--o{ audit_logs : "user_id, no FK enforcement"
+    Users ||--o{ Alerts : "userEmail, string match only"
+    Alerts }o--|| maintenance_tasks : "linkedTaskId"
+    audit_logs }o--o| maintenance_tasks : "linkedSessionId"
+

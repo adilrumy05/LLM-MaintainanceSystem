@@ -1,0 +1,60 @@
+---
+config:
+  layout: elk
+---
+%% D2 Runtime Topology (current). Owner Adil + Prince. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+flowchart TB
+
+    subgraph PHONE["📱 Technician's phone — untrusted"]
+        APP["Expo / React Native app<br/>expo-router, port 8081 dev"]
+    end
+
+    subgraph LAPTOP["💻 Developer laptop — LAN exposed"]
+        NODE["Node / Express<br/>server.js : 8000<br/>bound 0.0.0.0, CORS open"]
+        FAST["Python FastAPI<br/>retrieval_service.py : 8001<br/>bound 0.0.0.0, no auth"]
+        QDR[("Qdrant<br/>Docker : 6333<br/>text_chunks_general")]
+        DISK["latest_prompt.txt<br/>overwritten every request"]
+    end
+
+    subgraph CLOUD["☁️ Cloud"]
+        AUTH["Firebase Auth"]
+        FS[("Firestore<br/>6 collections")]
+        STOR[("Firebase Storage<br/>public ?alt=media")]
+        OAI["OpenAI API<br/>gpt-4o-mini"]
+    end
+
+    %% ---- Phone to backend: only three flows ----
+    APP -. "POST /api/query<br/>Bearer token sent, NEVER verified" .-> NODE
+    APP -. "POST /api/approve, /api/reject<br/>no token at all" .-> NODE
+
+    %% ---- Phone straight to Google: everything else ----
+    APP ==>|"signIn, createUser"| AUTH
+    APP ==>|"read + write<br/>Users, Alerts, audit_logs,<br/>maintenance_tasks, ManualDocuments"| FS
+    APP ==>|"unauthenticated GET<br/>manual PDFs and page images"| STOR
+
+    %% ---- Backend egress ----
+    NODE -->|"GET /filters — every single query"| FAST
+    NODE -->|"POST /retrieve"| FAST
+    NODE -->|"POST /v1/chat/completions"| OAI
+    NODE -->|"Admin SDK — audit_logs,<br/>maintenance_tasks, Alerts"| FS
+    NODE --> DISK
+
+    %% ---- Retrieval egress ----
+    FAST -->|"query_points x2, scroll, retrieve"| QDR
+
+    classDef existing fill:#E8F0FB,stroke:#0B63CE,stroke-width:2px,color:#0F1620
+    classDef store fill:#EEF1F0,stroke:#5A6B7A,stroke-width:2px,color:#0F1620
+    classDef external fill:#F2F3F2,stroke:#8A98A4,stroke-width:1px,color:#33414F
+    classDef weak fill:#FCEDE4,stroke:#E8621D,stroke-width:2px,color:#0F1620
+
+    class APP,NODE,FAST existing
+    class QDR,FS,STOR store
+    class AUTH,OAI external
+    class DISK weak
+
+    style PHONE fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style LAPTOP fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style CLOUD fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px
+    linkStyle 2,3,4 stroke:#1F2A33,stroke-width:4.5px

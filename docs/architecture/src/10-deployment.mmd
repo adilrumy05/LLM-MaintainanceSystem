@@ -1,0 +1,64 @@
+---
+config:
+  layout: elk
+---
+%% D10 Deployment Topology. Owner Aichner. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+flowchart LR
+
+    subgraph TODAY["Today — a developer laptop"]
+        L1["start.bat<br/>launches 3 processes by hand"]
+        L2["Node · FastAPI · Qdrant<br/>all on one machine"]
+        L3["Secrets: serviceAccountKey.json<br/>plaintext on disk, no secrets manager"]
+        L4["Logs: console.log"]
+        L5["CI/CD: none"]
+        L6["Backups: none for Qdrant<br/>recovery = re-run 7 manual stages"]
+        L7["Availability: whenever someone<br/>has their laptop open"]
+    end
+
+    subgraph TARGET["Target — one small cloud host"]
+        subgraph HOST["Container host"]
+            C1["node-backend<br/>public, TLS"]
+            C2["fastapi-retrieval<br/>internal only"]
+            C3["qdrant<br/>internal only, API key set"]
+            C4["Named volume<br/>qdrant storage"]
+        end
+        S1["Secrets manager<br/>one source, injected at runtime"]
+        S2["CI/CD<br/>build · test · deploy on merge"]
+        S3["Log aggregation<br/>structured, searchable"]
+        S4["Monitoring + alerting<br/>uptime, latency, error rate"]
+        S5["Backups<br/>Qdrant snapshot on a schedule<br/>Firestore managed export"]
+        S6["Documented recovery<br/>restore snapshot, not re-ingest"]
+    end
+
+    MANAGED["☁️ Firebase — already managed<br/>Auth · Firestore · Storage"]
+    DEV["💻 docker-compose<br/>retained for local development"]
+
+    TODAY ==>|"decision A2"| TARGET
+
+    C1 --> C2
+    C2 --> C3
+    C3 --> C4
+    S1 --> C1
+    S2 --> HOST
+    HOST --> S3
+    S3 --> S4
+    C3 --> S5
+    S5 --> S6
+    C1 --> MANAGED
+
+    classDef today fill:#F7F8F7,stroke:#8A98A4,stroke-width:1px,color:#33414F
+    classDef gap fill:#FCEDE4,stroke:#E8621D,stroke-width:2px,color:#0F1620
+    classDef target fill:#E8F0FB,stroke:#0B63CE,stroke-width:2px,color:#0F1620
+    classDef managed fill:#E4F1EA,stroke:#1E8A5A,stroke-width:2px,color:#0F1620
+
+    class L1,L2,L7 today
+    class L3,L4,L5,L6 gap
+    class C1,C2,C3,C4,S1,S2,S3,S4,S5,S6,DEV target
+    class MANAGED managed
+
+    style TODAY fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style TARGET fill:#FFFFFF,stroke:#0B63CE,stroke-width:2px
+    style HOST fill:#FFFFFF,stroke:#0B63CE,stroke-width:2px
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px
+    linkStyle 0 stroke:#1F2A33,stroke-width:4.5px
