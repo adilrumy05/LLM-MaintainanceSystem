@@ -60,6 +60,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# The Windows console defaults to cp1252, which cannot encode the "✓" this
+# script prints after each file. That raised UnicodeEncodeError *after*
+# _mark_done() had already recorded success, so the per-file except block then
+# re-marked every completed file as FAILED — a run that ingested all 843 pages
+# correctly reported "Files failed: 9". Force UTF-8 so output can never decide
+# whether ingestion succeeded.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if _stream and getattr(_stream, "encoding", "").lower() not in ("utf-8", "utf8"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass  # non-reconfigurable stream (piped, redirected); errors="replace" is enough
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
