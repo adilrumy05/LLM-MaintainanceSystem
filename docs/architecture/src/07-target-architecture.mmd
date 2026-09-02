@@ -1,0 +1,96 @@
+---
+config:
+  layout: elk
+---
+%% D7 Target Architecture. Owner Adil + Prince. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+flowchart TB
+
+    subgraph PHONE["📱 Technician's phone"]
+        APP["Maintenance Copilot app<br/>Expo / React Native"]
+        CAM["Camera + vision capture<br/>identify · ask · scan tag"]
+        VOICE["Hands-free<br/>on-device STT + TTS"]
+        TIMER["Procedure timer engine<br/>deadline-based, offline"]
+        MEAS["Readings capture<br/>offline queue"]
+        CACHE["Offline cache<br/>assets · open procedures"]
+    end
+
+    subgraph EDGE["🔐 Backend — authenticated boundary"]
+        VERIFY["Token verification<br/>+ server-side role check"]
+        MW["sanitize · validate · outputSanitize"]
+        QUERY["Query orchestrator"]
+        VISION["Vision handler<br/>nameplate · fault · confidence"]
+        SPEC["Specification evaluator<br/>deterministic, not the LLM"]
+        ASSET["Asset service<br/>QR lifecycle + history"]
+        AGENTS["Alert agent + priority agent"]
+    end
+
+    subgraph RETRIEVAL["🔎 Retrieval service — internal network only"]
+        FAST["FastAPI pipeline"]
+        HYBRID["Dense + sparse fusion"]
+        QDR[("Qdrant — dense 768d")]
+        QDR2[("Qdrant v2 — dense 1024d + sparse<br/>blue-green via alias")]
+    end
+
+    subgraph DATA["☁️ Data"]
+        AUTH["Firebase Auth"]
+        FS[("Firestore<br/>Users · Alerts · audit_logs<br/>+ Asset · ServiceVisit<br/>· Measurement · MediaCapture")]
+        STOR[("Firebase Storage<br/>PRIVATE, signed access")]
+    end
+
+    subgraph EXT["🌐 External"]
+        OAI["OpenAI gpt-4o-mini<br/>text + vision"]
+        WX["Weather API<br/>ambient by location"]
+    end
+
+    APP --> CAM
+    APP --> VOICE
+    APP --> TIMER
+    APP --> MEAS
+    APP --> CACHE
+
+    APP -->|"all requests"| VERIFY
+    APP --> AUTH
+    APP -.->|"reads only, governed by<br/>Firestore security rules"| FS
+
+    VERIFY --> MW
+    MW --> QUERY
+    CAM -->|"image + question"| VISION
+    MEAS -->|"reading + ambient"| SPEC
+    CAM -->|"scanned assetId"| ASSET
+    TIMER -->|"timer events"| ASSET
+
+    VISION --> QUERY
+    SPEC --> QUERY
+    ASSET --> FS
+    QUERY --> FAST
+    QUERY --> OAI
+    VISION --> OAI
+    QUERY --> AGENTS
+    AGENTS --> FS
+    QUERY -->|"authority-carrying writes only"| FS
+    SPEC --> WX
+
+    FAST --> HYBRID
+    HYBRID --> QDR
+    HYBRID -.->|"only if benchmark passes"| QDR2
+    QUERY --> STOR
+    CAM -->|"signed upload"| STOR
+
+    classDef existing fill:#E8F0FB,stroke:#0B63CE,stroke-width:2px,color:#0F1620
+    classDef extended fill:#FFFFFF,stroke:#E8621D,stroke-width:2.5px,color:#0F1620
+    classDef new fill:#FCEDE4,stroke:#E8621D,stroke-width:2px,stroke-dasharray: 5 3,color:#0F1620
+    classDef conditional fill:#F7F8F7,stroke:#8A98A4,stroke-width:2px,stroke-dasharray: 3 3,color:#33414F
+    classDef store fill:#EEF1F0,stroke:#5A6B7A,stroke-width:2px,color:#0F1620
+
+    class APP,FAST,QDR,AUTH,OAI,AGENTS existing
+    class MW,QUERY,FS,STOR extended
+    class CAM,VOICE,TIMER,MEAS,CACHE,VERIFY,VISION,SPEC,ASSET,WX new
+    class QDR2,HYBRID conditional
+
+    style PHONE fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style EDGE fill:#FFFFFF,stroke:#0B63CE,stroke-width:2px
+    style RETRIEVAL fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style DATA fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style EXT fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px

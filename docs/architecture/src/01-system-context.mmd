@@ -1,0 +1,42 @@
+---
+config:
+  layout: elk
+---
+%% D1 System Context. Owner Prince. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+flowchart LR
+
+    TECH["👷 Maintenance technician<br/>beginner · intermediate · expert"]
+    SUP["👔 Supervisor / administrator"]
+
+    SYS["<b>Maintenance Copilot</b><br/><br/>Answers maintenance questions<br/>from the equipment manuals,<br/>cites the page, and keeps a<br/>human in the loop"]
+
+    MANUALS[("📚 Equipment manuals<br/>9 air-conditioner PDFs")]
+    AI["🤖 OpenAI<br/>language + vision"]
+    GOOGLE["🔐 Firebase<br/>accounts, data, files"]
+
+    CAMERA["📷 Camera<br/>identify · ask · scan"]
+    MIC["🎙️ Microphone<br/>hands-free"]
+    WX["🌤️ Ambient conditions"]
+
+    TECH -->|"asks questions,<br/>records work done"| SYS
+    SUP -->|"reviews and approves,<br/>sees fleet patterns"| SYS
+
+    CAMERA -.->|"NEW"| SYS
+    MIC -.->|"NEW"| SYS
+    WX -.->|"NEW"| SYS
+
+    SYS --> MANUALS
+    SYS --> AI
+    SYS --> GOOGLE
+
+    classDef actor fill:#FFFFFF,stroke:#5A6B7A,stroke-width:2px,color:#0F1620
+    classDef system fill:#E8F0FB,stroke:#0B63CE,stroke-width:3px,color:#0F1620
+    classDef external fill:#F2F3F2,stroke:#8A98A4,stroke-width:1px,color:#33414F
+    classDef new fill:#FCEDE4,stroke:#E8621D,stroke-width:2px,stroke-dasharray: 5 3,color:#0F1620
+
+    class TECH,SUP actor
+    class SYS system
+    class MANUALS,AI,GOOGLE external
+    class CAMERA,MIC,WX new
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px
