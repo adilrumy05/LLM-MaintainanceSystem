@@ -1,0 +1,46 @@
+%% D3 Query Flow (current). Owner Adil. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+sequenceDiagram
+    autonumber
+    participant A as 📱 App
+    participant N as Node :8000
+    participant F as FastAPI :8001
+    participant Q as Qdrant :6333
+    participant O as OpenAI
+    participant FS as Firestore
+
+    A->>N: POST /api/query<br/>{query, role, userId, userEmail, sessionId}<br/>Bearer token attached
+    Note over N: Token is NEVER verified.<br/>role and userId trusted as sent.
+
+    N->>N: sanitize → validate → outputSanitize<br/>server.js:78
+
+    N->>F: GET /filters
+    F->>Q: scroll ENTIRE collection, 1000/page
+    Note over F,Q: Uncached. Runs on every single query.<br/>vector_store.py:329-342
+    Q-->>F: all distinct filter values
+    F-->>N: 6 filter lists
+
+    N->>N: extractFilters — substring match<br/>q.includes(modelNumber)<br/>server.js:359-391
+
+    N->>F: POST /retrieve {question, 7 filters, top_k=5}
+    F->>Q: scroll — TOC heading probe
+    F->>Q: query_points chunk_type=child
+    F->>Q: query_points chunk_type=table
+    Note over F,Q: 2 searches, k each, then truncated to k total.<br/>Tables and text compete for the same 5 slots.
+    F->>Q: retrieve — parent hydration per matched child
+    F->>F: build prompt + rebuild Storage image URLs
+    F-->>N: {prompt, sources[], context_blocks[]}
+
+    N->>N: write latest_prompt.txt<br/>single global file, overwritten
+    N->>O: POST /v1/chat/completions<br/>role system prompt + retrieved context
+    O-->>N: answer text
+
+    N->>FS: audit_logs.set merge, arrayUnion message
+    N->>N: detectAlerts — keyword scan of the answer
+    alt alert.level == critical
+        N->>FS: maintenance_tasks.add + Alerts.add
+    end
+    N-->>A: {text, sources, context_blocks, alert, priorityTask}
+
+    A->>FS: Alerts.add x2 — client-side, after the fact
+    Note over A,FS: The phone writes its own audit trail entries.<br/>services/api.js:85-113
+

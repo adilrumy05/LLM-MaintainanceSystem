@@ -1,0 +1,92 @@
+%% D5b Shared Target Domain Model. Owner Phillip. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+erDiagram
+    Asset {
+        string assetId PK "opaque - what the QR code carries"
+        string modelNumber "joins to the Qdrant filter schema"
+        string serialNumber
+        string siteId
+        string location "e.g. Level 3 plant room"
+        date   installedOn "drives warranty and age"
+        string qrIssuedAt
+        string qrStatus "active|reissued|retired"
+    }
+
+    ServiceVisit {
+        string visitId PK
+        string assetId FK
+        string technicianId "server-verified, not client-asserted"
+        ts     startedAt
+        ts     completedAt "makes time-to-resolve computable"
+        string outcome "resolved|partial|escalated"
+        string summary
+    }
+
+    ProcedureRun {
+        string runId PK
+        string visitId FK
+        string assetId FK "DENORMALISED"
+        string procedureRef "manual page or section"
+        int    stepCount
+        int    stepsCompleted
+    }
+
+    StepEvent {
+        string eventId PK
+        string runId FK
+        string assetId FK "DENORMALISED"
+        int    stepIndex
+        string type "started|completed|skipped|timer_started|timer_elapsed"
+        ts     occurredAt
+        ts     endsAt "timer deadline - NOT a countdown"
+        int    durationSeconds "for timer events"
+    }
+
+    Measurement {
+        string measurementId PK
+        string visitId FK
+        string assetId FK "DENORMALISED"
+        string quantity "suction_pressure|running_current|temp_split"
+        number value
+        string unit "explicit - never inferred"
+        string provenance "gauge|meter|manual_entry"
+        ts     takenAt
+        string verdict "in_range|out_of_range|inconclusive"
+        string specRef "which manual table judged it"
+    }
+
+    AmbientContext {
+        number ambientTempC
+        number humidityPct
+        string source "weather_api|manual_override"
+        bool   indoorOverrideRequired "true in plant rooms"
+        ts     capturedAt
+    }
+
+    MediaCapture {
+        string mediaId PK
+        string visitId FK
+        string assetId FK "DENORMALISED"
+        string purpose "identification|fault_question|completion_evidence"
+        string storagePath "PRIVATE - signed access only"
+        ts     capturedAt
+        ts     retainUntil "media retention rule"
+    }
+
+    AIInteraction {
+        string interactionId PK
+        string visitId FK
+        string assetId FK "DENORMALISED"
+        string sessionId FK "links to existing audit_logs doc"
+        string modality "text|image|voice"
+        array  citations "existing source format, reused unchanged"
+        number confidence "drives the confirmation step"
+    }
+
+    Asset            ||--o{ ServiceVisit  : "has"
+    ServiceVisit     ||--o{ ProcedureRun  : "contains"
+    ProcedureRun     ||--o{ StepEvent     : "emits"
+    ServiceVisit     ||--o{ Measurement   : "records"
+    Measurement      ||--|| AmbientContext: "embeds snapshot"
+    ServiceVisit     ||--o{ MediaCapture  : "captures"
+    ServiceVisit     ||--o{ AIInteraction : "logs"
+
