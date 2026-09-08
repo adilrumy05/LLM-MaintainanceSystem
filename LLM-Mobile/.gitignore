@@ -1,0 +1,8 @@
+# Expo local state — machine-specific device history and dev server settings.
+# Also covered by the repo-root .gitignore, but expo-doctor checks the Expo
+# project root specifically, so it is declared here too.
+.expo/
+
+# Bundle output from `expo export` — build artifacts, never committed.
+dist/
+dist-*/
