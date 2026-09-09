@@ -6,15 +6,10 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "We use speech recognition to let you speak your maintenance queries.",
         "NSMicrophoneUsageDescription": "We use the microphone to record your voice queries.",
         "NSMotionUsageDescription": "Used to detect a shake gesture to start voice input."
       }
@@ -34,9 +29,20 @@
     },
     "plugins": [
       "expo-router",
+      "expo-speech-recognition",
       "expo-audio",
       "expo-font",
-      "expo-asset"
+      "expo-asset",
+      "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff",
+          "imageWidth": 200
+        }
+      ]
     ]
   }
 }
