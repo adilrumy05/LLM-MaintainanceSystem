@@ -12,6 +12,7 @@ import * as ImagePicker from 'expo-image-picker';
 import Markdown from 'react-native-markdown-display';
 import MicButton from '../components/MicButton';
 import { transcribeAudio } from '../services/api';
+import { getFilters } from '../services/api';
 
 export default function Dashboard() {
   const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
@@ -26,6 +27,9 @@ export default function Dashboard() {
   const router                          = useRouter();
   const { role, isJunior, isIntermediate } = useRole();
   const { setUser } = useUser();
+  const [allFilters, setAllFilters]         = useState(null);
+  const [showFilterPicker, setShowFilterPicker] = useState(false);
+  const [filterSearchText, setFilterSearchText] = useState('');
 
 
   const activeChat = chats.find(c => c.id === activeChatId);
@@ -40,7 +44,12 @@ export default function Dashboard() {
         if (raw) {
           const saved = JSON.parse(raw);
           if (saved.length > 0) {
-            setChats(saved);
+            setChats(
+              saved.map(c => ({
+                ...c,
+                filter: c.filter || null,
+              }))
+            );
             setActiveChatId(saved[0].id);
             setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
           }
@@ -55,6 +64,14 @@ export default function Dashboard() {
     if (!role || !loaded) return;
     AsyncStorage.setItem(`chats_${role}`, JSON.stringify(chats)).catch(e => console.log('Error saving chats:', e));
   }, [chats, role, loaded]);
+
+  useEffect(() => {
+  getFilters()
+    .then(setAllFilters)
+    .catch(e => console.log('Error loading filters:', e));
+}, []);
+
+
 
   const addMessage = (from, text, sources = []) => {
     const msg = { id: Date.now().toString() + Math.random(), from, text, sources };
@@ -77,12 +94,58 @@ export default function Dashboard() {
     addMessage('user', queryText);
     setIsProcessing(true);
     try {
-      const result = await submitQuery(queryText);
+      const result = await submitQuery(queryText, activeChat?.filter?.id || null);
       if (!cancelRef.current) addMessage('bot', result.text, result.sources || []);
     } catch (err) {
       if (!cancelRef.current) addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`);
     }
     setIsProcessing(false);
+  };
+
+  const prettifyFilterLabel = (id) => {
+    if (!id) return '';
+
+    const parts = id.split('_');
+    const model = parts.pop();
+
+    const rest = parts
+      .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+      .join(' ');
+
+    return `${rest} ${model}`;
+  };
+
+  const filterOptions = (allFilters?.document_group_ids || []).map(
+    (id, idx) => ({
+      id,
+      label: prettifyFilterLabel(id),
+      filename: allFilters?.filenames?.[idx] || '',
+    })
+  );
+
+  const filteredOptions = filterOptions.filter(opt => {
+    const q = filterSearchText.trim().toLowerCase();
+
+    if (!q) return true;
+
+    return (
+      opt.label.toLowerCase().includes(q) ||
+      opt.id.toLowerCase().includes(q) ||
+      opt.filename.toLowerCase().includes(q)
+    );
+  });
+
+  const handleSelectFilter = (opt) => {
+    setChats(prev =>
+      prev.map(c =>
+        c.id === activeChatId
+          ? { ...c, filter: opt || null }
+          : c
+      )
+    );
+
+    setShowFilterPicker(false);
+    setFilterSearchText('');
   };
 
   const handleCancel = () => {
@@ -106,7 +169,16 @@ export default function Dashboard() {
 
   const handleNewChat = () => {
     const newId = Date.now().toString();
-    setChats(prev => [...prev, { id: newId, messages: [] }]);
+
+    setChats(prev => [
+      ...prev,
+      {
+        id: newId,
+        messages: [],
+        filter: null,
+      },
+    ]);
+
     setActiveChatId(newId);
     setShowSidebar(false);
     setInputValue('');
@@ -115,7 +187,7 @@ export default function Dashboard() {
   const handleSwitchChat = (id) => { setActiveChatId(id); setShowSidebar(false); };
 
   const handleDeleteChat = (id) => {
-    if (chats.length === 1) { setChats([{ id: '1', messages: [] }]); setActiveChatId('1'); setShowSidebar(false); return; }
+    if (chats.length === 1) { setChats([{ id: '1', messages: [], filter: null }]); setActiveChatId('1'); setShowSidebar(false); return; }
     const remaining = chats.filter(c => c.id !== id);
     setChats(remaining);
     if (activeChatId === id) setActiveChatId(remaining[0].id);
@@ -318,6 +390,109 @@ export default function Dashboard() {
           </View>
         )}
 
+         {/* ─── Model Filter Modal ─────────────────────────────────── */}
+        <Modal
+          visible={showFilterPicker}
+          animationType="slide"
+          onRequestClose={() => setShowFilterPicker(false)}
+        >
+          <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+
+            <View style={s.filterModalHeader}>
+              <Text style={s.filterModalTitle}>
+                Ground to a model
+              </Text>
+
+              <TouchableOpacity
+                onPress={() => setShowFilterPicker(false)}
+              >
+                <Ionicons
+                  name="close-outline"
+                  size={26}
+                  color={C.text}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={s.filterSearchBar}>
+              <Ionicons
+                name="search-outline"
+                size={16}
+                color={C.textMuted}
+              />
+
+              <TextInput
+                style={s.filterSearchInput}
+                placeholder="Search model number, brand..."
+                placeholderTextColor={C.textMuted}
+                value={filterSearchText}
+                onChangeText={setFilterSearchText}
+                autoFocus
+              />
+            </View>
+
+            <TouchableOpacity
+              style={s.filterAllOption}
+              onPress={() => handleSelectFilter(null)}
+            >
+              <Ionicons
+                name="layers-outline"
+                size={16}
+                color={C.primary}
+              />
+
+              <Text style={s.filterAllOptionText}>
+                {' '}All models (no filter)
+              </Text>
+            </TouchableOpacity>
+
+            <FlatList
+              data={filteredOptions}
+              keyExtractor={item => item.id}
+              keyboardShouldPersistTaps="handled"
+
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={s.filterOptionRow}
+                  onPress={() => handleSelectFilter(item)}
+                >
+                  <View style={{ flex: 1 }}>
+
+                    <Text style={s.filterOptionLabel}>
+                      {item.label}
+                    </Text>
+
+                    {!!item.filename && (
+                      <Text
+                        style={s.filterOptionSub}
+                        numberOfLines={1}
+                      >
+                        {item.filename}
+                      </Text>
+                    )}
+
+                  </View>
+
+                  {activeChat?.filter?.id === item.id && (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={18}
+                      color={C.primary}
+                    />
+                  )}
+                </TouchableOpacity>
+              )}
+
+              ListEmptyComponent={
+                <Text style={s.filterEmptyText}>
+                  No models match "{filterSearchText}"
+                </Text>
+              }
+            />
+
+          </SafeAreaView>
+        </Modal>
+
         {/* ─── Header ──────────────────────────────────────────────── */}
         <View style={s.header}>
           <TouchableOpacity style={s.menuBtn} onPress={() => setShowSidebar(true)}>
@@ -418,6 +593,47 @@ export default function Dashboard() {
             ...
           )} */}
 
+          <View style={s.filterBar}>
+            <TouchableOpacity
+              style={s.filterChip}
+              onPress={() => setShowFilterPicker(true)}
+            >
+              <Ionicons
+                name="filter-outline"
+                size={13}
+                color={activeChat?.filter ? C.primary : C.textMuted}
+              />
+
+              <Text
+                style={[
+                  s.filterChipText,
+                  activeChat?.filter && {
+                    color: C.primary,
+                    fontWeight: '700',
+                  },
+                ]}
+                numberOfLines={1}
+              >
+                {activeChat?.filter
+                  ? activeChat.filter.label
+                  : 'All models (no filter)'}
+              </Text>
+            </TouchableOpacity>
+
+            {activeChat?.filter && (
+              <TouchableOpacity
+                onPress={() => handleSelectFilter(null)}
+                style={s.filterClearBtn}
+              >
+                <Ionicons
+                  name="close-circle"
+                  size={16}
+                  color={C.textMuted}
+                />
+              </TouchableOpacity>
+            )}
+          </View>
+
           <View style={s.inputBar}>
 
           <MicButton
@@ -513,6 +729,20 @@ const s = StyleSheet.create({
   sendBtn:          { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   sendBtnDisabled:  { backgroundColor: '#c4b5fd' },
   thumbnail:        { width: 220, height: 160, borderRadius: 6, marginTop: 4 },
+  filterBar:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, gap: 6 },
+  filterChip:         { flexDirection: 'row', alignItems: 'center', backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, gap: 4, flexShrink: 1 },
+  filterChipText:     { fontSize: 12, color: C.textSub, flexShrink: 1 },
+  filterClearBtn:     { padding: 4 },
+  filterModalHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderColor: C.cardBorder },
+  filterModalTitle:   { fontSize: 17, fontWeight: '700', color: C.text },
+  filterSearchBar:    { flexDirection: 'row', alignItems: 'center', margin: 12, backgroundColor: C.inputBg, borderRadius: 12, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 12, gap: 8 },
+  filterSearchInput:  { flex: 1, paddingVertical: 10, color: C.text, fontSize: 14 },
+  filterAllOption:    { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderColor: C.cardBorder },
+  filterAllOptionText:{ color: C.primary, fontWeight: '700', fontSize: 13 },
+  filterOptionRow:    { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderColor: C.cardBorder },
+  filterOptionLabel:  { color: C.text, fontSize: 14, fontWeight: '600' },
+  filterOptionSub:    { color: C.textMuted, fontSize: 11, marginTop: 2 },
+  filterEmptyText:    { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 24 },
 });
 
 const markdownStyles = {
