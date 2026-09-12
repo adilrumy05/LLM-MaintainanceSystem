@@ -22,6 +22,14 @@ process.on('uncaughtException', (err) => {
 
 const app = express();
 app.use(cors());
+// Photo-and-ask posts a base64 image, which is 300kB-2MB - far past express's
+// 100kB default. This parser is mounted BEFORE the global one and scoped to the
+// single route that needs it: express runs middleware in order, so this claims
+// /api/query, and the global parser below then sees req.body already populated
+// and skips. Mounting a larger limit after the global parser would never run,
+// and raising the global limit would open 12MB on every route including the
+// unauthenticated ones.
+app.use('/api/query', express.json({ limit: '12mb' }));
 app.use(express.json());
 const transcribeRouter = require('./server/routes/transcribe');
 app.use('/api', transcribeRouter);
