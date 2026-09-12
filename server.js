@@ -10,6 +10,7 @@ const path = require('path');
 const sanitize = require('./server/middleware/sanitize');
 const validate = require('./server/middleware/validate');
 const outputSanitize = require('./server/middleware/outputSanitize');
+const { resolveVisualIntake } = require('./server/services/visionIntake');
 
 dotenv.config();
 
@@ -22,6 +23,7 @@ process.on('uncaughtException', (err) => {
 
 const app = express();
 app.use(cors());
+
 // Photo-and-ask posts a base64 image, which is 300kB-2MB - far past express's
 // 100kB default. This parser is mounted BEFORE the global one and scoped to the
 // single route that needs it: express runs middleware in order, so this claims
@@ -96,7 +98,9 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       classification,
       category1,
       category2,
-      topK = 5
+      topK = 5,
+      imageBase64,
+      confirmedModel,
     } = req.body;
 
     console.log('📥 Query received:', query);
@@ -134,19 +138,63 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     // Auto-detect date from query
     const matchedDate = extractDateFromQuery(query);
 
+    // ── Photo intake ──────────────────────────────────────────────────────────
+    // When a photo is attached we read it FIRST and only continue once we know
+    // which machine we are looking at. Every uncertain outcome returns 200 with
+    // `needsInput` so the app renders it as a normal reply and keeps the photo,
+    // rather than surfacing an error banner the technician cannot act on.
+    let visualReading   = null;
+    let visualModel     = null;
+    let retrievalQuery  = query;
+
+    if (imageBase64) {
+      const intake = await resolveVisualIntake({
+        imageBase64,
+        query,
+        docGroup: docGroup || null,
+        confirmedModel: confirmedModel || null,
+        known,
+        knownOk: known.ok !== false,
+        apiKey,
+      });
+
+      if (intake.action !== 'proceed') {
+        console.log(`[VISION] stopped: ${intake.action} (${intake.reason || 'n/a'})`);
+        return res.status(200).json({
+          text: intake.message,
+          sources: [],
+          needsInput: intake.action,      // ask_photo | ask_model | no_manual | conflict | error
+          candidates: intake.candidates || [],
+          readModel: intake.readModel || intake.model || null,
+          imageAttached: true,
+        });
+      }
+
+      visualReading  = intake.reading;
+      visualModel    = intake.model;
+      // The photo's findings go into the text we EMBED AND SEARCH WITH, not
+      // just the answer prompt. Without this, "what does this mean?" retrieves
+      // vaguely from the right manual instead of the page about this fault.
+      retrievalQuery = intake.retrievalQuery;
+      console.log(`[VISION] model=${visualModel} fault=${visualReading?.faultCode || '-'}`);
+    }
+
     // ── Step 1: Get RAG context from Python retrieval service ─────────────────
     console.log(`Calling retrieval service for: "${query}"`);
     const retrievalResponse = await fetch(`${RETRIEVAL_SERVICE_URL}/retrieve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        question: query,
+        // Enriched with the photo's findings when one was attached.
+        question: retrievalQuery,
         document_group_id: matchedGroup || docGroup || null,
         filename: matchedFile || null,
         classification: matchedClassification || classification || null,
         category_level_1: matchedCategory1 || category1 || null,
         category_level_2: matchedCategory2 || category2 || null,
-        model_number: matchedModel || null,
+        // A model read off the nameplate is stronger evidence than a substring
+        // match against the typed text, so it wins.
+        model_number: visualModel || matchedModel || null,
         date_added: matchedDate || null,
         top_k: topK,
       }),
@@ -166,6 +214,26 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
 
     console.log(`Retrieved ${retrievalData.context_blocks.length} context blocks`);
 
+    // Stop rather than answer from the image alone.
+    //
+    // Qdrant ANDs its filters (vector_store.py builds Filter(must=conditions)),
+    // so a model filter that disagrees with the selected document group returns
+    // nothing at all. Answering anyway would mean the LLM inventing maintenance
+    // guidance with no manual behind it - ungrounded and uncitable, which is the
+    // one thing this system exists to avoid.
+    if (imageBase64 && (retrievalData.context_blocks?.length || 0) === 0) {
+      console.log('[VISION] no context retrieved — refusing to answer unsupported');
+      return res.status(200).json({
+        text: visualModel
+          ? `I identified this as ${visualModel}, but found nothing in that manual for this question. Try rephrasing, or check the selected manual is the right one.`
+          : 'I could not find anything in the manuals for this. Try rephrasing, or photograph the nameplate.',
+        sources: [],
+        needsInput: 'no_context',
+        readModel: visualModel || null,
+        imageAttached: true,
+      });
+    }
+
     // ── Save latest prompt to file ────────────────────────────────────────────
     fs.writeFile(PROMPT_FILE_PATH, finalPrompt, 'utf8', (err) => {
       if (err) console.error('Failed to write latest prompt file:', err);
@@ -174,6 +242,31 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
 
     // ── Step 2: Send enriched prompt to OpenAI ───────────────────────────────
     const systemPrompt = ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT;
+
+    // With a photo attached, the image rides alongside the retrieved context so
+    // the model can describe what is shown - but the ANSWER still has to come
+    // from the manual extracts, and still has to cite pages. The image adds
+    // context; it is not a second source of truth.
+    const visionRules = `
+
+The user attached a photograph. It has already been read as: ${JSON.stringify({
+      model: visualModel,
+      faultCode: visualReading?.faultCode || null,
+      observation: visualReading?.observation || null,
+    })}.
+Answer using ONLY the manual extracts above, and cite pages exactly as normal.
+Refer to what is visible in the photo where it helps, but never state a
+specification, torque figure, tolerance or procedure that is not in the extracts.`;
+
+    const userContent = imageBase64
+      ? [
+          { type: 'text', text: finalPrompt },
+          {
+            type: 'image_url',
+            image_url: { url: `data:image/jpeg;base64,${imageBase64}`, detail: 'auto' },
+          },
+        ]
+      : finalPrompt;
 
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -184,8 +277,8 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       body: JSON.stringify({
         model:       'gpt-4o-mini',
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user',   content: finalPrompt  },
+          { role: 'system', content: imageBase64 ? systemPrompt + visionRules : systemPrompt },
+          { role: 'user',   content: userContent },
         ],
         temperature: 0.2,
         max_tokens:  2048,
@@ -402,18 +495,31 @@ function extractFilters(
 }
 
 // ── Fetch known filters from retrieval service ────────────────────────────────
+// The `ok` flag matters for photo-and-ask. This used to return empty arrays on
+// failure, which is indistinguishable from "the corpus contains no models" -
+// so a catalogue outage would tell the technician "there is no manual for this
+// machine" and send them looking for the wrong problem. Callers that care can
+// now tell a service fault from a fact about the corpus.
+const EMPTY_FILTERS = {
+  document_group_ids: [],
+  filenames:          [],
+  classifications:    [],
+  category_level_1:   [],
+  category_level_2:   [],
+  model_numbers:      [],
+};
+
 async function getKnownFilters() {
-  const res = await fetch(`${RETRIEVAL_SERVICE_URL}/filters`);
-  if (!res.ok) {
-    console.error(`Failed to fetch filters: ${res.status} ${res.statusText}`);
-    return {
-      document_group_ids: [],
-      filenames:          [],
-      classifications:    [],
-      category_level_1:   [],
-      category_level_2:   [],
-      model_numbers:      [],
-    };
+  try {
+    const res = await fetch(`${RETRIEVAL_SERVICE_URL}/filters`);
+    if (!res.ok) {
+      console.error(`Failed to fetch filters: ${res.status} ${res.statusText}`);
+      return { ...EMPTY_FILTERS, ok: false };
+    }
+    const data = await res.json();
+    return { ...data, ok: true };
+  } catch (err) {
+    console.error('Failed to fetch filters:', err.message);
+    return { ...EMPTY_FILTERS, ok: false };
   }
-  return await res.json();
 }
