@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { File } from 'expo-file-system';
 import { db } from '../firebaseConfig';
 
 import {
@@ -306,11 +307,26 @@ export const transcribeAudio = async (localUri) => {
 
   const formData = new FormData();
 
-  formData.append('audio', {
-    uri: localUri,
-    name: 'recording.m4a',
-    type: 'audio/m4a',
-  });
+  // SDK 57 installs expo/fetch as the global fetch, and its FormData encoder
+  // rejects React Native's { uri, name, type } parts with "Unsupported
+  // FormDataPart implementation". It accepts objects that expose bytes(),
+  // which expo-file-system's File does. The server renames the upload to
+  // audio.m4a before transcription, so the part's filename is not load-bearing.
+  if (Platform.OS === 'web') {
+    formData.append('audio', {
+      uri: localUri,
+      name: 'recording.m4a',
+      type: 'audio/m4a',
+    });
+  } else {
+    const recording = new File(localUri);
+    // Fail with a clear message if the recorder produced nothing, rather than
+    // uploading an empty part and getting an opaque transcription error back.
+    if (!recording.exists || !recording.size) {
+      throw new Error('The recording is empty. Hold the mic a little longer and try again.');
+    }
+    formData.append('audio', recording);
+  }
 
   try {
     const response = await fetchWithTimeout(
