@@ -202,7 +202,9 @@ const MIN_CONFIDENCE = 0.5;
  *   ask_model    - ask the user to confirm which model
  *   no_manual    - readable, but nothing in the catalogue matches
  *   conflict     - the photo disagrees with the selected document group
- *   error        - vision or catalogue unavailable (NOT the same as no_manual)
+ *   error        - vision or catalogue unavailable (NOT the same as no_manual).
+ *                  A service failure, not an outcome: the route answers HTTP 503
+ *                  with `code` = reason, never a 200 needsInput reply.
  */
 async function resolveVisualIntake({
   imageBase64,

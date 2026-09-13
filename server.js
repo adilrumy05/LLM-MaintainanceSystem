@@ -112,7 +112,10 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     // ── Use OpenAI API key ────────────────────────────────────────────────────
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ error: 'Missing OPENAI_API_KEY in environment variables.' });
+      return res.status(500).json({
+        error: 'Missing OPENAI_API_KEY in environment variables.',
+        code: 'server_misconfigured',
+      });
     }
 
     // ── Get filters from retrieval service ────────────────────────────────────
@@ -140,9 +143,14 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
 
     // ── Photo intake ──────────────────────────────────────────────────────────
     // When a photo is attached we read it FIRST and only continue once we know
-    // which machine we are looking at. Every uncertain outcome returns 200 with
-    // `needsInput` so the app renders it as a normal reply and keeps the photo,
-    // rather than surfacing an error banner the technician cannot act on.
+    // which machine we are looking at.
+    //
+    // Response contract (docs/API_REFERENCE.md):
+    //  - EXPECTED outcomes that need the technician (retake, confirm the model,
+    //    no manual, conflict) return 200 with `needsInput`, so the app renders a
+    //    normal reply and keeps the photo.
+    //  - SERVICE FAILURES (catalogue or vision unavailable) are not outcomes. They
+    //    return 503 with `error`, `code` and `retryable`, like any other outage.
     let visualReading   = null;
     let visualModel     = null;
     let retrievalQuery  = query;
@@ -158,12 +166,17 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
         apiKey,
       });
 
+      if (intake.action === 'error') {
+        console.error(`[VISION] service failure: ${intake.reason}`);
+        return serviceFailure(res, 503, intake.reason, intake.message, true);
+      }
+
       if (intake.action !== 'proceed') {
         console.log(`[VISION] stopped: ${intake.action} (${intake.reason || 'n/a'})`);
         return res.status(200).json({
           text: intake.message,
           sources: [],
-          needsInput: intake.action,      // ask_photo | ask_model | no_manual | conflict | error
+          needsInput: intake.action,      // ask_photo | ask_model | no_manual | conflict
           candidates: intake.candidates || [],
           readModel: intake.readModel || intake.model || null,
           imageAttached: true,
@@ -198,15 +211,21 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
         date_added: matchedDate || null,
         top_k: topK,
       }),
+    }).catch((err) => {
+      console.error('Retrieval service unreachable:', err.message);
+      return null;
     });
 
-    if (!retrievalResponse.ok) {
-      const errText = await retrievalResponse.text();
-      console.error('Retrieval service error:', retrievalResponse.status, errText);
-      return res.status(503).json({
-        error: 'Retrieval service unavailable',
-        details: errText,
-      });
+    if (!retrievalResponse || !retrievalResponse.ok) {
+      if (retrievalResponse) {
+        const errText = await retrievalResponse.text().catch(() => '');
+        console.error('Retrieval service error:', retrievalResponse.status, errText);
+      }
+      // The raw upstream body stays in the server log. The app shows `error`
+      // verbatim, and a Python traceback is not something a technician can act on.
+      return serviceFailure(res, 503, 'retrieval_unavailable',
+        'Retrieval service unavailable. Try again in a moment. If it keeps failing, check that the retrieval service is running.',
+        Boolean(imageBase64));
     }
 
     const retrievalData = await retrievalResponse.json();
@@ -283,17 +302,26 @@ specification, torque figure, tolerance or procedure that is not in the extracts
         temperature: 0.2,
         max_tokens:  2048,
       }),
+    }).catch((err) => {
+      console.error('OpenAI unreachable:', err.message);
+      return null;
     });
 
-    const data = await openaiResponse.json();
+    if (!openaiResponse) {
+      return serviceFailure(res, 503, 'answer_unavailable',
+        'Could not reach the answer service. Try again in a moment.', Boolean(imageBase64));
+    }
+
+    const data = await openaiResponse.json().catch(() => null);
     console.log('OpenAI status:', openaiResponse.status);
 
     if (!openaiResponse.ok) {
       console.error('OpenAI error:', JSON.stringify(data, null, 2));
-      return res.status(openaiResponse.status).json({
-        error:   'OpenAI API request failed',
-        details: data,
-      });
+      // Never pass the provider's status through: a 401 from OpenAI means OUR key
+      // is wrong, not the technician's session, and a 429 is our quota. 502 says
+      // an upstream service failed.
+      return serviceFailure(res, 502, 'answer_unavailable',
+        'The answer service failed. Try again in a moment.', Boolean(imageBase64));
     }
 
     const text = data?.choices?.[0]?.message?.content
@@ -337,8 +365,8 @@ specification, torque figure, tolerance or procedure that is not in the extracts
   } catch (error) {
     console.error('Server error:', error);
     res.status(500).json({
-      error:   'Internal server error',
-      details: error.message,
+      error: 'Internal server error. Try again, and report it if it keeps happening.',
+      code:  'internal_error',
     });
   }
 });
@@ -407,6 +435,47 @@ app.get('/api/documents', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Service failures ──────────────────────────────────────────────────────────
+// One shape for every upstream outage on /api/query: a real error status, a
+// message the app can show as-is, a stable code to branch on, and whether
+// retrying makes sense. `imageAttached` tells the app to keep the photo.
+function serviceFailure(res, status, code, message, imageAttached = false) {
+  return res.status(status).json({
+    error: message,
+    code,
+    retryable: true,
+    ...(imageAttached ? { imageAttached: true } : {}),
+  });
+}
+
+// ── Body parser errors ────────────────────────────────────────────────────────
+// Without this, express answers an oversized or malformed body with its default
+// HTML error page: not JSON, and nothing the app can show. Parser errors are
+// routed here even though this is registered after the routes.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+
+  if (err.type === 'entity.too.large') {
+    const isQuery = req.originalUrl.startsWith('/api/query');
+    return res.status(413).json({
+      error: isQuery
+        ? 'Image too large. Retake the photo at a lower resolution and try again.'
+        : 'Request body too large.',
+      code: isQuery ? 'image_too_large' : 'payload_too_large',
+    });
+  }
+
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Request body is not valid JSON.', code: 'invalid_json' });
+  }
+
+  console.error('Unhandled middleware error:', err);
+  return res.status(500).json({
+    error: 'Internal server error. Try again, and report it if it keeps happening.',
+    code:  'internal_error',
+  });
 });
 
 // ── Start server ──────────────────────────────────────────────────────────────

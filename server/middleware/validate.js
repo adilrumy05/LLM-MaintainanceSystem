@@ -47,17 +47,32 @@ const validate = (req, res, next) => {
   // The limit is on DECODED bytes, not string length: base64 inflates by ~4/3,
   // so a 4MB image is a ~5.5MB string and a string-length check would mislead.
   const { imageBase64 } = req.body;
+  //
+  // Invalid uploads are 400 and oversized ones 413, each with a message the app
+  // can show as-is and a stable `code` to branch on.
   if (imageBase64 !== undefined && imageBase64 !== null) {
     if (typeof imageBase64 !== 'string') {
-      return res.status(400).json({ error: "imageBase64 must be a string." });
+      return res.status(400).json({ error: "imageBase64 must be a string.", code: "invalid_image" });
+    }
+    // The most likely client mistake: sending the data URL the image picker
+    // produces instead of the base64 payload inside it.
+    if (/^data:/i.test(imageBase64)) {
+      return res.status(400).json({
+        error: "imageBase64 must be the base64 data only. Remove the data URL prefix and send again.",
+        code: "invalid_image",
+      });
     }
     if (!/^[A-Za-z0-9+/]+={0,2}$/.test(imageBase64)) {
-      return res.status(400).json({ error: "imageBase64 is not valid base64." });
+      return res.status(400).json({
+        error: "imageBase64 is not valid base64. Send the photo as a base64-encoded JPEG.",
+        code: "invalid_image",
+      });
     }
     const decodedBytes = Math.floor((imageBase64.length * 3) / 4);
     if (decodedBytes > 4 * 1024 * 1024) {
-      return res.status(400).json({
-        error: "Image too large. Retake at a lower resolution.",
+      return res.status(413).json({
+        error: "Image too large (over 4 MB). Retake the photo at a lower resolution and try again.",
+        code: "image_too_large",
       });
     }
   }

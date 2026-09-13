@@ -41,8 +41,18 @@ const reading = (over = {}) => JSON.stringify({
  * @param opts.vision   content for the vision call (first openai hit)
  * @param opts.blocks   context blocks retrieval returns
  * @param opts.filtersOk whether the catalogue service answers
+ * @param opts.visionOk  whether the vision (extraction) call succeeds
+ * @param opts.retrieveOk whether /retrieve succeeds
+ * @param opts.answerStatus HTTP status of the answer call
  */
-function mockPipeline({ vision = reading(), blocks = [{ text: 'ctx', chunk_type: 'text', page: 12 }], filtersOk = true } = {}) {
+function mockPipeline({
+  vision = reading(),
+  blocks = [{ text: 'ctx', chunk_type: 'text', page: 12 }],
+  filtersOk = true,
+  visionOk = true,
+  retrieveOk = true,
+  answerStatus = 200,
+} = {}) {
   const retrieveCalls = [];
   const extractionCalls = [];
   const answerCalls = [];
@@ -61,6 +71,10 @@ function mockPipeline({ vision = reading(), blocks = [{ text: 'ctx', chunk_type:
 
     if (url.includes('/retrieve')) {
       retrieveCalls.push(JSON.parse(opts.body));
+      if (!retrieveOk) {
+        return Promise.resolve({ ok: false, status: 500,
+          text: async () => 'Traceback (most recent call last): qdrant connection refused' });
+      }
       return Promise.resolve({ ok: true, json: async () => ({
         prompt: 'CONTEXT PROMPT',
         context_blocks: blocks,
@@ -84,6 +98,14 @@ function mockPipeline({ vision = reading(), blocks = [{ text: 'ctx', chunk_type:
 
       const content = isExtraction ? vision : 'Step 1: isolate the supply.';
       if (isExtraction) extractionCalls.push(sent); else answerCalls.push(sent);
+
+      if (isExtraction && !visionOk) {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: { message: 'server error' } }) });
+      }
+      if (!isExtraction && answerStatus !== 200) {
+        return Promise.resolve({ ok: false, status: answerStatus,
+          json: async () => ({ error: { message: 'Incorrect API key provided: sk-***' } }) });
+      }
 
       return Promise.resolve({ ok: true, status: 200, json: async () => ({
         choices: [{ finish_reason: 'stop', message: { content } }],
@@ -158,6 +180,7 @@ describe('photo-and-ask — every uncertain path stops', () => {
     const m = mockPipeline({ vision: reading({ modelNumber: 'RAS-30' }) });
     const res = await post({ imageBase64: BIG_IMAGE });
 
+    expect(res.status).toBe(200);
     expect(res.body.needsInput).toBe('ask_model');
     expect(res.body.candidates).toContain('RAS-30-BKVS-A');
     expect(m.retrieveCalls).toHaveLength(0);
@@ -167,6 +190,7 @@ describe('photo-and-ask — every uncertain path stops', () => {
     const m = mockPipeline({ vision: reading({ modelNumber: 'LG-NOPE-1' }) });
     const res = await post({ imageBase64: BIG_IMAGE });
 
+    expect(res.status).toBe(200);
     expect(res.body.needsInput).toBe('no_manual');
     expect(res.body.text).toContain('LG-NOPE-1');
     expect(m.retrieveCalls).toHaveLength(0);
@@ -176,6 +200,7 @@ describe('photo-and-ask — every uncertain path stops', () => {
     const m = mockPipeline({ vision: reading({ modelNumber: 'CS-C18DKV' }) });
     const res = await post({ imageBase64: BIG_IMAGE, confirmedModel: 'CS-E7JKEW' });
 
+    expect(res.status).toBe(200);
     expect(res.body.needsInput).toBe('conflict');
     expect(m.retrieveCalls).toHaveLength(0);
   });
@@ -186,18 +211,60 @@ describe('photo-and-ask — every uncertain path stops', () => {
     const m = mockPipeline({ vision: reading({ modelNumber: 'CS-C18DKV' }), blocks: [] });
     const res = await post({ imageBase64: BIG_IMAGE });
 
+    expect(res.status).toBe(200);
     expect(res.body.needsInput).toBe('no_context');
     expect(res.body.sources).toEqual([]);
     expect(m.extractionCalls).toHaveLength(1);
     expect(m.answerCalls).toHaveLength(0);    // extraction ran; the answer call did not
   });
 
-  test('a catalogue outage is distinct from "no manual"', async () => {
-    mockPipeline({ vision: reading({ modelNumber: 'CS-C18DKV' }), filtersOk: false });
+});
+
+describe('photo-and-ask — service failures keep real error statuses', () => {
+  // Expected outcomes that need the technician are 200 + needsInput (above).
+  // An outage is not an outcome: it must be a non-2xx so clients, retries and
+  // monitoring treat it as a failure, with a message the app can show as-is.
+
+  test('a catalogue outage is 503, retryable, and distinct from "no manual"', async () => {
+    const m = mockPipeline({ vision: reading({ modelNumber: 'CS-C18DKV' }), filtersOk: false });
     const res = await post({ imageBase64: BIG_IMAGE });
 
-    expect(res.body.needsInput).toBe('error');
-    expect(res.body.text).not.toMatch(/no manual/i);
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: 'catalogue_unavailable', retryable: true, imageAttached: true });
+    expect(res.body.error).toMatch(/try again/i);
+    expect(res.body.error).not.toMatch(/no manual/i);
+    expect(res.body.needsInput).toBeUndefined();
+    expect(m.retrieveCalls).toHaveLength(0);
+  });
+
+  test('a vision provider failure is 503 vision_unavailable, not ask_photo', async () => {
+    const m = mockPipeline({ visionOk: false });
+    const res = await post({ imageBase64: BIG_IMAGE });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: 'vision_unavailable', retryable: true, imageAttached: true });
+    expect(res.body.needsInput).toBeUndefined();
+    expect(m.retrieveCalls).toHaveLength(0);
+    expect(m.answerCalls).toHaveLength(0);
+  });
+
+  test('a retrieval failure is 503 without leaking the upstream body', async () => {
+    mockPipeline({ vision: reading({ modelNumber: 'CS-C18DKV' }), retrieveOk: false });
+    const res = await post({ imageBase64: BIG_IMAGE });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: 'retrieval_unavailable', retryable: true, imageAttached: true });
+    expect(JSON.stringify(res.body)).not.toMatch(/traceback|qdrant/i);
+    expect(res.body.details).toBeUndefined();
+  });
+
+  test('an answer-model failure is 502, never the provider status passed through', async () => {
+    mockPipeline({ vision: reading({ modelNumber: 'CS-C18DKV' }), answerStatus: 401 });
+    const res = await post({ imageBase64: BIG_IMAGE });
+
+    expect(res.status).toBe(502);
+    expect(res.body).toMatchObject({ code: 'answer_unavailable', retryable: true });
+    expect(JSON.stringify(res.body)).not.toMatch(/api key|sk-/i);
   });
 });
 
@@ -223,18 +290,47 @@ describe('photo-and-ask — middleware no longer rejects images', () => {
     expect(res.body.error).toMatch(/malicious/i);
   });
 
-  test('non-base64 content is rejected', async () => {
+  test('non-base64 content is rejected with 400 invalid_image', async () => {
     mockPipeline();
     const res = await post({ imageBase64: '!!!not base64!!!' });
     expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_image');
     expect(res.body.error).toMatch(/base64/i);
   });
 
-  test('an oversized image is rejected on DECODED size', async () => {
+  test('a data URL instead of raw base64 gets an actionable 400', async () => {
     mockPipeline();
-    const res = await post({ imageBase64: 'A'.repeat(7 * 1024 * 1024) });
+    const res = await post({ imageBase64: `data:image/jpeg;base64,${BIG_IMAGE}` });
     expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_image');
+    expect(res.body.error).toMatch(/data URL prefix/i);
+  });
+
+  test('an oversized image is 413 on DECODED size', async () => {
+    const m = mockPipeline();
+    const res = await post({ imageBase64: 'A'.repeat(7 * 1024 * 1024) });
+    expect(res.status).toBe(413);
+    expect(res.body.code).toBe('image_too_large');
     expect(res.body.error).toMatch(/too large/i);
+    expect(m.openaiHits()).toBe(0);
+  });
+
+  test('a body over the parser limit is a JSON 413, not the default HTML page', async () => {
+    mockPipeline();
+    const res = await post({ imageBase64: 'A'.repeat(13 * 1024 * 1024) });
+    expect(res.status).toBe(413);
+    expect(res.headers['content-type']).toMatch(/json/);
+    expect(res.body.code).toBe('image_too_large');
+  });
+
+  test('malformed JSON is a JSON 400', async () => {
+    const res = await request(app)
+      .post('/api/query')
+      .set('Content-Type', 'application/json')
+      .send('{"query": "broken');
+    expect(res.status).toBe(400);
+    expect(res.headers['content-type']).toMatch(/json/);
+    expect(res.body.code).toBe('invalid_json');
   });
 });
 
