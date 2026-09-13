@@ -141,7 +141,8 @@ export const decodeEntities = (text) =>
  * @param {string} query
  * @param {object} [options]
  * @param {string} [options.docGroup]       manual selected in the filter
- * @param {string} [options.imageBase64]    JPEG as raw base64, no data-URL prefix
+ * @param {string[]} [options.images]      up to 4 JPEGs as raw base64, no data-URL prefix
+ * @param {string} [options.imageBase64]    a single photo (older form of `images`)
  * @param {string} [options.confirmedModel] machine confirmed in this chat
  * @param {boolean} [options.voice]         ask for a spoken form of the answer
  *
@@ -155,10 +156,13 @@ export const submitQuery = async (query, options = {}) => {
   const opts = options === null || typeof options === 'string' ? { docGroup: options } : options;
   const {
     docGroup = null,
-    imageBase64 = null,
+    images: imageList = null,
+    imageBase64: singleImage = null,
     confirmedModel = null,
     voice = false,
   } = opts;
+  const images = imageList?.length ? imageList : singleImage ? [singleImage] : [];
+  const imageBase64 = images.length > 0;
 
   const fullUrl = `${API_URL}/query`;
 
@@ -196,7 +200,10 @@ export const submitQuery = async (query, options = {}) => {
   console.log('[API] Role:', userRole);
   console.log('[API] Session:', currentSessionId);
   console.log('[API] Document group:', docGroup || 'ALL');
-  if (imageBase64) console.log('[API] Photo attached:', Math.round((imageBase64.length * 3) / 4 / 1024), 'KB');
+  if (imageBase64) {
+    const kb = images.reduce((sum, b64) => sum + (b64.length * 3) / 4, 0) / 1024;
+    console.log(`[API] ${images.length} photo(s) attached: ${Math.round(kb)} KB`);
+  }
   if (confirmedModel) console.log('[API] Confirmed model:', confirmedModel);
 
   try {
@@ -217,7 +224,7 @@ export const submitQuery = async (query, options = {}) => {
 
           // Only send when manually selected
           ...(docGroup ? { docGroup } : {}),
-          ...(imageBase64 ? { imageBase64 } : {}),
+          ...(imageBase64 ? { images } : {}),
           ...(confirmedModel ? { confirmedModel } : {}),
           ...(voice ? { voice: true } : {}),
         }),
@@ -277,7 +284,8 @@ export const submitQuery = async (query, options = {}) => {
           userEmail,
           role: userRole,
           sources: data.sources || [],
-          imageAttached: Boolean(imageBase64),
+          imageAttached: imageBase64,
+          imageCount: images.length,
           createdAt: serverTimestamp(),
         }
       );

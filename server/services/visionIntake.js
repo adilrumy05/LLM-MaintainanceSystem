@@ -28,7 +28,7 @@ const EXTRACTION_SCHEMA = {
     schema: {
       type: 'object',
       additionalProperties: false,
-      required: ['legible', 'confidence', 'modelNumber', 'serialNumber', 'faultCode', 'visibleText', 'observation'],
+      required: ['legible', 'confidence', 'modelNumber', 'otherModelNumbers', 'serialNumber', 'faultCode', 'visibleText', 'observation'],
       properties: {
         legible: {
           type: 'boolean',
@@ -41,6 +41,11 @@ const EXTRACTION_SCHEMA = {
         modelNumber: {
           type: ['string', 'null'],
           description: 'Model/type code exactly as printed, or null if none is visible.',
+        },
+        otherModelNumbers: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Any DIFFERENT model codes visible in other photos, exactly as printed. Empty if all photos show the same model or none.',
         },
         serialNumber: {
           type: ['string', 'null'],
@@ -73,7 +78,12 @@ anything useful. A confident wrong reading sends a technician to the wrong
 machine, which is worse than saying you cannot read it.
 
 Copy codes character by character, including hyphens and suffixes.
-Do not diagnose. Do not suggest repairs.`;
+Do not diagnose. Do not suggest repairs.
+
+You may receive several photos of the same job - for example a nameplate, a part
+and a display. Combine what they show into one reading. If two photos show
+different model numbers, put one in modelNumber and the others in
+otherModelNumbers; never choose between them silently.`;
 
 /** Fold a code to a comparable form: upper case, alphanumerics only. */
 function normaliseCode(value) {
@@ -110,12 +120,20 @@ function matchModelNumber(extracted, knownModels) {
   return { status: 'none', candidates: [] };
 }
 
+/** Accept one base64 image or a list of them. */
+function toImageList(images) {
+  return (Array.isArray(images) ? images : [images]).filter((i) => typeof i === 'string' && i);
+}
+
 /**
  * Call the vision model and validate the result.
  * Never throws for a bad reading - returns {ok:false, reason} instead, so the
  * caller has one place to decide what to do.
+ *
+ * @param {string|string[]} images  one or more base64 JPEGs of the same job
  */
-async function extractFromImage(imageBase64, apiKey, { fetchImpl = fetch } = {}) {
+async function extractFromImage(images, apiKey, { fetchImpl = fetch } = {}) {
+  const list = toImageList(images);
   let response;
   try {
     response = await fetchImpl('https://api.openai.com/v1/chat/completions', {
@@ -131,11 +149,11 @@ async function extractFromImage(imageBase64, apiKey, { fetchImpl = fetch } = {})
           {
             role: 'user',
             content: [
-              { type: 'text', text: 'Read this photograph.' },
-              {
+              { type: 'text', text: list.length > 1 ? `Read these ${list.length} photographs of one job.` : 'Read this photograph.' },
+              ...list.map((b64) => ({
                 type: 'image_url',
-                image_url: { url: `data:image/jpeg;base64,${imageBase64}`, detail: 'auto' },
-              },
+                image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'auto' },
+              })),
             ],
           },
         ],
@@ -212,6 +230,7 @@ const MIN_CONFIDENCE = 0.5;
  *                  with `code` = reason, never a 200 needsInput reply.
  */
 async function resolveVisualIntake({
+  images,
   imageBase64,
   query,
   docGroup = null,
@@ -229,7 +248,7 @@ async function resolveVisualIntake({
       message: 'Cannot reach the manual catalogue right now. Try again in a moment.' };
   }
 
-  const extraction = await extractFromImage(imageBase64, apiKey, { fetchImpl });
+  const extraction = await extractFromImage(images || imageBase64, apiKey, { fetchImpl });
 
   if (!extraction.ok) {
     if (extraction.reason === 'vision_unavailable') {
@@ -265,7 +284,22 @@ async function resolveVisualIntake({
       message: 'I can see the part, but not which unit it belongs to. Photograph the nameplate, or pick the model.' };
   }
 
-  const match = matchModelNumber(reading.modelNumber, known?.model_numbers || []);
+  const knownModels = known?.model_numbers || [];
+
+  // Several photos showing different machines: ask, never pick one.
+  const otherCodes = (reading.otherModelNumbers || [])
+    .filter((code) => normaliseCode(code) && normaliseCode(code) !== normaliseCode(reading.modelNumber));
+  if (otherCodes.length) {
+    const seen = [reading.modelNumber, ...otherCodes];
+    const candidates = [...new Set(seen.flatMap((code) => {
+      const m = matchModelNumber(code, knownModels);
+      return m.model ? [m.model] : m.candidates || [];
+    }))];
+    return { action: 'ask_model', reason: 'multiple_models', reading, retrievalQuery, candidates,
+      message: `These photos show different models (${seen.join(', ')}). Which one are you working on?` };
+  }
+
+  const match = matchModelNumber(reading.modelNumber, knownModels);
 
   if (match.status === 'none') {
     return { action: 'no_manual', reading, readModel: reading.modelNumber,
@@ -273,6 +307,16 @@ async function resolveVisualIntake({
   }
 
   if (match.status === 'confirm' || match.status === 'ambiguous') {
+    // The technician already picked one of exactly these candidates - for
+    // example the label reads CS-S10TKH-1 and they confirmed CS-S10TKH. Their
+    // confirmation settles the partial match; asking again would loop forever.
+    // A confirmation OUTSIDE the candidates settles nothing: it may be left over
+    // from a different machine earlier in the chat.
+    const confirmed = confirmedModel &&
+      match.candidates.find((c) => normaliseCode(c) === normaliseCode(confirmedModel));
+    if (confirmed) {
+      return { action: 'proceed', model: confirmed, reading, retrievalQuery };
+    }
     return { action: 'ask_model', reason: match.status, reading, retrievalQuery,
       candidates: match.candidates,
       message: `I read this as ${reading.modelNumber}. Which model is it?` };

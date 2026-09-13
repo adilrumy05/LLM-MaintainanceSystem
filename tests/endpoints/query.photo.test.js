@@ -334,6 +334,49 @@ describe('photo-and-ask — middleware no longer rejects images', () => {
   });
 });
 
+describe('photo-and-ask — several photos in one question', () => {
+  test('every photo reaches both the extraction and the answer call', async () => {
+    const m = mockPipeline({ vision: reading({ modelNumber: 'CS-C18DKV' }) });
+    const res = await post({ images: [BIG_IMAGE, 'B'.repeat(4000), 'C'.repeat(4000)] });
+
+    expect(res.status).toBe(200);
+    const imageParts = (call) => call.messages.at(-1).content.filter((p) => p.type === 'image_url');
+    expect(imageParts(m.extractionCalls[0])).toHaveLength(3);
+    expect(imageParts(m.answerCalls[0])).toHaveLength(3);
+    expect(res.body.identifiedModel).toBe('CS-C18DKV');
+  });
+
+  test('more than 4 photos is rejected', async () => {
+    mockPipeline();
+    const res = await post({ images: Array(5).fill(BIG_IMAGE) });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('too_many_images');
+  });
+
+  test('photos that are too large together are rejected on decoded size', async () => {
+    mockPipeline();
+    // 3 x 2.8 MB = 8.4 MB decoded: over the 8 MB combined cap, but each photo
+    // and the whole body stay under their own limits, so this tests the cap.
+    const threeMb = 'A'.repeat(Math.ceil((2.8 * 1024 * 1024 * 4) / 3));
+    const res = await post({ images: [threeMb, threeMb, threeMb] });
+    expect(res.status).toBe(413);
+    expect(res.body.code).toBe('image_too_large');
+  });
+
+  test('a data URL inside the list is rejected', async () => {
+    mockPipeline();
+    const res = await post({ images: [BIG_IMAGE, 'data:image/jpeg;base64,AAAA'] });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_image');
+  });
+
+  test('an empty list is rejected rather than treated as no photo', async () => {
+    mockPipeline();
+    const res = await post({ images: [] });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('photo-and-ask — text-only behaviour is unchanged', () => {
   test('no image: one openai call, unenriched question, answer returned', async () => {
     const m = mockPipeline();

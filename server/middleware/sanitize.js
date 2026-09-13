@@ -34,7 +34,7 @@ function stripTags(str) {
 //
 // Size and charset for these fields are enforced in validate.js, which checks
 // the DECODED byte count rather than string length.
-const BINARY_FIELDS = new Set(['imageBase64']);
+const BINARY_FIELDS = new Set(['imageBase64', 'images']);
 
 const sanitize = (req, res, next) => {
   for (let key in req.body) {

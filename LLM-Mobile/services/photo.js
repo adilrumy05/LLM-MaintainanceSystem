@@ -12,6 +12,7 @@ import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
+export const MAX_PHOTOS = 4;
 const MAX_EDGE = 1280;
 const MAX_DECODED_BYTES = 4 * 1024 * 1024;
 
@@ -26,13 +27,27 @@ async function encode(uri, width, height, compress) {
   return image.saveAsync({ compress, format: SaveFormat.JPEG, base64: true });
 }
 
+async function prepare(asset) {
+  let saved = await encode(asset.uri, asset.width, asset.height, 0.8);
+  if (decodedBytes(saved.base64) > MAX_DECODED_BYTES) {
+    saved = await encode(asset.uri, asset.width, asset.height, 0.5);
+  }
+  if (decodedBytes(saved.base64) > MAX_DECODED_BYTES) {
+    throw new Error('That photo is too large to send. Try again from a little further away.');
+  }
+  return { uri: saved.uri, base64: saved.base64, width: saved.width, height: saved.height };
+}
+
 /**
  * @param {'camera'|'library'} source
- * @returns {Promise<null | { uri: string, base64: string, width: number, height: number }>}
- *   null when the user cancels.
+ * @param {object} [options]
+ * @param {number} [options.limit]  how many more photos may be added (library only)
+ * @returns {Promise<Array<{ uri: string, base64: string, width: number, height: number }>>}
+ *   empty when the user cancels. The camera returns one photo; the library
+ *   allows picking several at once.
  * @throws Error with a message the app can show, e.g. permission denied.
  */
-export async function capturePhoto(source) {
+export async function capturePhotos(source, { limit = MAX_PHOTOS } = {}) {
   const useCamera = source === 'camera' && Platform.OS !== 'web';
 
   const permission = useCamera
@@ -49,17 +64,18 @@ export async function capturePhoto(source) {
   const options = { mediaTypes: ['images'], quality: 1, allowsEditing: false, exif: false };
   const result = useCamera
     ? await ImagePicker.launchCameraAsync(options)
-    : await ImagePicker.launchImageLibraryAsync(options);
-  if (result.canceled || !result.assets?.[0]) return null;
+    : await ImagePicker.launchImageLibraryAsync({
+        ...options,
+        allowsMultipleSelection: limit > 1,
+        selectionLimit: Math.max(1, limit),
+        orderedSelection: true,
+      });
+  if (result.canceled || !result.assets?.length) return [];
 
-  const asset = result.assets[0];
-  let saved = await encode(asset.uri, asset.width, asset.height, 0.8);
-  if (decodedBytes(saved.base64) > MAX_DECODED_BYTES) {
-    saved = await encode(asset.uri, asset.width, asset.height, 0.5);
+  // One at a time: each re-encode holds a full-resolution image in memory.
+  const photos = [];
+  for (const asset of result.assets.slice(0, Math.max(1, limit))) {
+    photos.push(await prepare(asset));
   }
-  if (decodedBytes(saved.base64) > MAX_DECODED_BYTES) {
-    throw new Error('That photo is too large to send. Try again from a little further away.');
-  }
-
-  return { uri: saved.uri, base64: saved.base64, width: saved.width, height: saved.height };
+  return photos;
 }

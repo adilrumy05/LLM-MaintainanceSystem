@@ -100,10 +100,16 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       category1,
       category2,
       topK = 5,
-      imageBase64,
+      imageBase64: singleImage,
+      images,
       confirmedModel,
       voice,
     } = req.body;
+
+    // One photo or several. Everything below works on the list; `imageBase64`
+    // stays truthy whenever at least one photo was attached.
+    const photos = Array.isArray(images) && images.length ? images : singleImage ? [singleImage] : [];
+    const imageBase64 = photos.length > 0;
 
     console.log('📥 Query received:', query);
 
@@ -165,8 +171,9 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     let retrievalQuery  = query;
 
     if (imageBase64) {
+      console.log(`[VISION] ${photos.length} photo(s) attached`);
       const intake = await resolveVisualIntake({
-        imageBase64,
+        images: photos,
         query,
         docGroup: docGroup || null,
         confirmedModel: confirmedModel || null,
@@ -279,7 +286,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     // context; it is not a second source of truth.
     const visionRules = `
 
-The user attached a photograph. It has already been read as: ${JSON.stringify({
+The user attached ${photos.length > 1 ? `${photos.length} photographs of one job` : 'a photograph'}. It has already been read as: ${JSON.stringify({
       model: visualModel,
       faultCode: visualReading?.faultCode || null,
       observation: visualReading?.observation || null,
@@ -291,10 +298,10 @@ specification, torque figure, tolerance or procedure that is not in the extracts
     const userContent = imageBase64
       ? [
           { type: 'text', text: finalPrompt },
-          {
+          ...photos.map((b64) => ({
             type: 'image_url',
-            image_url: { url: `data:image/jpeg;base64,${imageBase64}`, detail: 'auto' },
-          },
+            image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'auto' },
+          })),
         ]
       : finalPrompt;
 

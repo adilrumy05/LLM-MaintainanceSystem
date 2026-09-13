@@ -8,7 +8,7 @@ import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { useUser } from './_layout';
 import { submitQuery, decodeEntities, getFilters } from '../services/api';
-import { capturePhoto } from '../services/photo';
+import { capturePhotos, MAX_PHOTOS } from '../services/photo';
 import Markdown from 'react-native-markdown-display';
 import MicButton from '../components/MicButton';
 import HandsFreeBar from '../components/HandsFreeBar';
@@ -19,9 +19,12 @@ const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
 // Server outcomes that need the technician, turned into tappable replies.
 const actionsForOutcome = (result, hadPhoto) => {
   const retake = hadPhoto ? [{ type: 'retake' }] : [];
+  // Adding a photo keeps the ones already sent - e.g. a close-up of the
+  // nameplate alongside the part - where retaking replaces an unreadable set.
+  const addPhoto = hadPhoto ? [{ type: 'add_photo' }] : [];
   switch (result.needsInput) {
     case 'ask_model':
-      return [...(result.candidates || []).map((m) => ({ type: 'confirm_model', model: decodeEntities(m) })), ...retake];
+      return [...(result.candidates || []).map((m) => ({ type: 'confirm_model', model: decodeEntities(m) })), ...addPhoto];
     case 'conflict':
       return [...(result.readModel ? [{ type: 'use_photo_model', model: decodeEntities(result.readModel) }] : []), ...retake];
     case 'ask_photo':
@@ -37,6 +40,7 @@ const actionLabel = (a) => {
     case 'confirm_model':   return a.model;
     case 'use_photo_model': return `Use ${a.model}`;
     case 'retake':          return 'Retake photo';
+    case 'add_photo':       return 'Add a photo';
     case 'retry':           return 'Retry';
     default:                return 'OK';
   }
@@ -44,11 +48,14 @@ const actionLabel = (a) => {
 
 // A chat photo lives in the app cache and can be cleared by the OS; hide it
 // rather than show a broken image.
-function PhotoThumb({ uri }) {
+function PhotoThumb({ uri, small }) {
   const [failed, setFailed] = useState(false);
   if (!uri || failed) return null;
-  return <Image source={{ uri }} style={s.msgPhoto} resizeMode="cover" onError={() => setFailed(true)} />;
+  return <Image source={{ uri }} style={small ? s.msgPhotoSmall : s.msgPhoto} resizeMode="cover" onError={() => setFailed(true)} />;
 }
+
+// Older messages stored a single imageUri.
+const messagePhotos = (item) => item.imageUris || (item.imageUri ? [item.imageUri] : []);
 
 export default function Dashboard() {
   const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
@@ -66,7 +73,7 @@ export default function Dashboard() {
   const [allFilters, setAllFilters]         = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [filterSearchText, setFilterSearchText] = useState('');
-  const [pendingPhoto, setPendingPhoto]     = useState(null);
+  const [pendingPhotos, setPendingPhotos]   = useState([]);
   const [isPhotoBusy, setIsPhotoBusy]       = useState(false);
   const [handsFreeNotice, setHandsFreeNotice] = useState(null);
 
@@ -134,32 +141,41 @@ export default function Dashboard() {
   const updateChat = (chatId, patch) =>
     setChats(prev => prev.map(c => (c.id === chatId ? { ...c, ...patch } : c)));
 
-  const markActionsUsed = (chatId, messageId) =>
+  const setActionsUsed = (chatId, messageId, used) =>
     setChats(prev => prev.map(c => (c.id !== chatId ? c : {
       ...c,
-      messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: true } : m)),
+      messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
     })));
+  const markActionsUsed   = (chatId, messageId) => setActionsUsed(chatId, messageId, true);
+  // Cancelling the photo picker should leave the reply buttons available.
+  const markActionsUnused = (chatId, messageId) => setActionsUsed(chatId, messageId, false);
 
   /**
    * Send one request and put the outcome in the chat.
    * `confirmedModel` / `docGroup` override the chat's own values when a reply
    * action has just changed them and state has not re-rendered yet.
    */
-  const runQuery = async ({ text, photo = null, confirmedModel, docGroup, voice = false }) => {
+  const runQuery = async ({ text, photos = [], confirmedModel, docGroup, voice = false }) => {
     const chatId = activeChatIdRef.current;
     const chat = chatsRef.current.find(c => c.id === chatId);
     const model = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
     const group = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
-    lastRequestRef.current[chatId] = { text, photo, confirmedModel: model, docGroup: group };
+    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group };
+    const hasPhotos = photos.length > 0;
 
     cancelRef.current = false;
     setIsProcessing(true);
     try {
-      const result = await submitQuery(text, { docGroup: group, imageBase64: photo?.base64 || null, confirmedModel: model, voice });
+      const result = await submitQuery(text, {
+        docGroup: group,
+        images: photos.map(p => p.base64),
+        confirmedModel: model,
+        voice,
+      });
       if (cancelRef.current) return { cancelled: true };
 
       if (result.needsInput) {
-        addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, Boolean(photo)) }, chatId);
+        addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, hasPhotos) }, chatId);
       } else {
         addMessage('bot', result.text, result.sources || [], {}, chatId);
         // A photo that identified the machine makes it this chat's machine.
@@ -169,7 +185,7 @@ export default function Dashboard() {
     } catch (err) {
       if (cancelRef.current) return { cancelled: true };
       const photoProblem = err.code === 'invalid_image' || err.code === 'image_too_large';
-      const actions = photo && photoProblem ? [{ type: 'retake' }]
+      const actions = hasPhotos && photoProblem ? [{ type: 'retake' }]
         : err.retryable || !err.status ? [{ type: 'retry' }]
         : [];
       addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`, [], { actions }, chatId);
@@ -181,18 +197,18 @@ export default function Dashboard() {
 
   const handleSend = async (overrideText) => {
     const typed = (overrideText || inputValue).trim();
-    const photo = pendingPhoto;
-    if ((!typed && !photo) || isProcessing) return;
+    const photos = pendingPhotos;
+    if ((!typed && !photos.length) || isProcessing) return;
     const queryText = typed || DEFAULT_PHOTO_QUESTION;
     setInputValue('');
-    setPendingPhoto(null);
+    setPendingPhotos([]);
     const raw = await AsyncStorage.getItem('queryHistory');
     const existing = JSON.parse(raw || '[]');
     await AsyncStorage.setItem('queryHistory', JSON.stringify(
       [{ id: Date.now(), text: queryText, timestamp: new Date().toISOString() }, ...existing].slice(0, 50)
     ));
-    addMessage('user', queryText, [], photo ? { imageUri: photo.uri } : {});
-    await runQuery({ text: queryText, photo });
+    addMessage('user', queryText, [], photos.length ? { imageUris: photos.map(p => p.uri) } : {});
+    await runQuery({ text: queryText, photos });
   };
 
   // ─── Photos ───────────────────────────────────────────────────────────────
@@ -205,24 +221,31 @@ export default function Dashboard() {
     ], { cancelable: true, onDismiss: () => resolve(null) });
   });
 
-  const getPhoto = async () => {
+  const getPhotos = async (limit) => {
+    if (limit < 1) {
+      Alert.alert('Photos', `You can attach up to ${MAX_PHOTOS} photos to one question.`);
+      return [];
+    }
     const source = await choosePhotoSource();
-    if (!source) return null;
+    if (!source) return [];
     setIsPhotoBusy(true);
     try {
-      return await capturePhoto(source);
+      return await capturePhotos(source, { limit });
     } catch (e) {
       Alert.alert('Photo', e.message || 'Could not get the photo.');
-      return null;
+      return [];
     } finally {
       setIsPhotoBusy(false);
     }
   };
 
   const handleAttachPhoto = async () => {
-    const photo = await getPhoto();
-    if (photo) setPendingPhoto(photo);
+    const added = await getPhotos(MAX_PHOTOS - pendingPhotos.length);
+    if (added.length) setPendingPhotos(prev => [...prev, ...added].slice(0, MAX_PHOTOS));
   };
+
+  const removePendingPhoto = (index) =>
+    setPendingPhotos(prev => prev.filter((_, i) => i !== index));
 
   // ─── Replies to "which model?", "retake", "retry" ────────────────────────
   const handleAction = async (message, action) => {
@@ -247,12 +270,16 @@ export default function Dashboard() {
         await runQuery({ ...req, confirmedModel: action.model, docGroup: null });
         return;
       }
-      case 'retake': {
-        const photo = await getPhoto();
-        if (!photo) return;
+      case 'retake':
+      case 'add_photo': {
+        // Retake replaces the set; add keeps what was already sent.
+        const kept = action.type === 'add_photo' ? req?.photos || [] : [];
+        const added = await getPhotos(MAX_PHOTOS - kept.length);
+        if (!added.length) { markActionsUnused(chatId, message.id); return; }
+        const photos = [...kept, ...added].slice(0, MAX_PHOTOS);
         const text = req?.text || DEFAULT_PHOTO_QUESTION;
-        addMessage('user', text, [], { imageUri: photo.uri });
-        await runQuery({ text, photo, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup });
+        addMessage('user', text, [], { imageUris: photos.map(p => p.uri) });
+        await runQuery({ text, photos, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup });
         return;
       }
       case 'retry': {
@@ -366,7 +393,7 @@ export default function Dashboard() {
   const handleNewChat = () => {
     const newId = Date.now().toString();
     handsFree.stop();
-    setPendingPhoto(null);
+    setPendingPhotos([]);
 
     setChats(prev => [
       ...prev,
@@ -384,7 +411,7 @@ export default function Dashboard() {
   };
 
   const handleSwitchChat = (id) => {
-    if (id !== activeChatId) { handsFree.stop(); setPendingPhoto(null); }
+    if (id !== activeChatId) { handsFree.stop(); setPendingPhotos([]); }
     setActiveChatId(id);
     setShowSidebar(false);
   };
@@ -515,7 +542,12 @@ export default function Dashboard() {
     return (
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
         <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBot]}>
-          {isUser && item.imageUri ? <PhotoThumb uri={item.imageUri} /> : null}
+          {isUser && messagePhotos(item).length === 1 ? <PhotoThumb uri={messagePhotos(item)[0]} /> : null}
+          {isUser && messagePhotos(item).length > 1 ? (
+            <View style={s.msgPhotoGrid}>
+              {messagePhotos(item).map((uri, i) => <PhotoThumb key={i} uri={uri} small />)}
+            </View>
+          ) : null}
           {isUser
             ? <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
             : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
@@ -534,11 +566,12 @@ export default function Dashboard() {
               {item.actions.map((a, i) => (
                 <TouchableOpacity
                   key={i}
-                  style={[s.actionChip, a.type === 'retake' || a.type === 'retry' ? s.actionChipAlt : null]}
+                  style={[s.actionChip, a.type === 'confirm_model' || a.type === 'use_photo_model' ? null : s.actionChipAlt]}
                   onPress={() => handleAction(item, a)}
                   disabled={isProcessing || isPhotoBusy || handsFree.active}
                 >
                   {a.type === 'retake' && <Ionicons name="camera-outline" size={13} color={C.primary} />}
+                  {a.type === 'add_photo' && <Ionicons name="add-circle-outline" size={13} color={C.primary} />}
                   {a.type === 'retry' && <Ionicons name="refresh-outline" size={13} color={C.primary} />}
                   <Text style={s.actionChipText}>{actionLabel(a)}</Text>
                 </TouchableOpacity>
@@ -819,15 +852,37 @@ export default function Dashboard() {
             <Text style={s.handsFreeNotice}>{handsFreeNotice}</Text>
           )}
 
-          {pendingPhoto && (
-            <View style={s.pendingPhoto}>
-              <Image source={{ uri: pendingPhoto.uri }} style={s.pendingPhotoImg} />
-              <Text style={s.pendingPhotoText} numberOfLines={2}>
-                Photo attached. Ask about it, or just send.
+          {pendingPhotos.length > 0 && (
+            <View style={s.pendingPhotos}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.pendingPhotoStrip}>
+                {pendingPhotos.map((p, i) => (
+                  <View key={p.uri + i} style={s.pendingPhotoTile}>
+                    <Image source={{ uri: p.uri }} style={s.pendingPhotoImg} />
+                    <TouchableOpacity
+                      style={s.pendingPhotoRemove}
+                      onPress={() => removePendingPhoto(i)}
+                      accessibilityLabel={`Remove photo ${i + 1}`}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                {pendingPhotos.length < MAX_PHOTOS && (
+                  <TouchableOpacity
+                    style={s.pendingPhotoAdd}
+                    onPress={handleAttachPhoto}
+                    disabled={isPhotoBusy || isProcessing}
+                    accessibilityLabel="Add another photo"
+                  >
+                    {isPhotoBusy
+                      ? <ActivityIndicator size="small" color={C.primary} />
+                      : <Ionicons name="add" size={24} color={C.primary} />}
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+              <Text style={s.pendingPhotoText}>
+                {pendingPhotos.length} of {MAX_PHOTOS} photos. Ask about them, or just send.
               </Text>
-              <TouchableOpacity onPress={() => setPendingPhoto(null)} accessibilityLabel="Remove photo">
-                <Ionicons name="close-circle" size={20} color={C.textMuted} />
-              </TouchableOpacity>
             </View>
           )}
 
@@ -900,7 +955,7 @@ export default function Dashboard() {
           <TouchableOpacity
             style={s.iconBtn}
             onPress={handleAttachPhoto}
-            disabled={isProcessing || isPhotoBusy || handsFree.active}
+            disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}
             accessibilityLabel="Attach a photo"
           >
             {isPhotoBusy
@@ -916,7 +971,7 @@ export default function Dashboard() {
 
             <TextInput
               style={s.input}
-              placeholder={pendingPhoto ? 'Ask about this photo...' : 'Ask a maintenance question...'}
+              placeholder={pendingPhotos.length ? 'Ask about these photos...' : 'Ask a maintenance question...'}
               placeholderTextColor={C.textMuted}
               value={inputValue}
               onChangeText={setInputValue}
@@ -924,9 +979,9 @@ export default function Dashboard() {
               editable={!isProcessing && !handsFree.active}
             />
             <TouchableOpacity
-              style={[s.sendBtn, ((!inputValue.trim() && !pendingPhoto) || isProcessing || handsFree.active) && s.sendBtnDisabled]}
+              style={[s.sendBtn, ((!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active) && s.sendBtnDisabled]}
               onPress={() => handleSend()}
-              disabled={(!inputValue.trim() && !pendingPhoto) || isProcessing || handsFree.active}
+              disabled={(!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active}
             >
               <Ionicons name="send-outline" size={16} color="#fff" />
             </TouchableOpacity>
@@ -1016,13 +1071,19 @@ const s = StyleSheet.create({
   filterOptionSub:    { color: C.textMuted, fontSize: 11, marginTop: 2 },
   filterEmptyText:    { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 24 },
   msgPhoto:           { width: 200, height: 150, borderRadius: 10, marginBottom: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
+  msgPhotoSmall:      { width: 96, height: 96, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.2)' },
+  msgPhotoGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6, maxWidth: 196 },
   actionsRow:         { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   actionChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, backgroundColor: C.primaryLight, borderWidth: 1, borderColor: '#ddd6fe' },
   actionChipAlt:      { backgroundColor: C.card },
   actionChipText:     { color: C.primary, fontSize: 12, fontWeight: '700' },
-  pendingPhoto:       { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight },
-  pendingPhotoImg:    { width: 44, height: 44, borderRadius: 8 },
-  pendingPhotoText:   { flex: 1, color: C.primary, fontSize: 12, fontWeight: '600' },
+  pendingPhotos:      { marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight, gap: 6 },
+  pendingPhotoStrip:  { gap: 8, alignItems: 'center' },
+  pendingPhotoTile:   { width: 64, height: 64 },
+  pendingPhotoImg:    { width: 64, height: 64, borderRadius: 8 },
+  pendingPhotoRemove: { position: 'absolute', top: -2, right: -2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12 },
+  pendingPhotoAdd:    { width: 64, height: 64, borderRadius: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  pendingPhotoText:   { color: C.primary, fontSize: 12, fontWeight: '600' },
   machineChip:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6, flexShrink: 1 },
   machineChipText:    { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
   handsFreeChip:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: C.primary },

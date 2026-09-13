@@ -114,6 +114,15 @@ describe('extractFromImage', () => {
     expect(r.data.modelNumber).toBe('CS-C18DKV');
   });
 
+  test('sends every photo in one extraction call', async () => {
+    const fetchImpl = visionReply(legible());
+    await extractFromImage(['AAAA', 'BBBB', 'CCCC'], 'k', { fetchImpl });
+    const sent = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    const parts = sent.messages[1].content;
+    expect(parts.filter((p) => p.type === 'image_url')).toHaveLength(3);
+    expect(parts[0].text).toMatch(/3 photographs/);
+  });
+
   test('handles a model refusal without throwing', async () => {
     const r = await extractFromImage('AAAA', 'k',
       { fetchImpl: visionReply(null, { refusal: 'I cannot help with that.' }) });
@@ -238,6 +247,63 @@ describe('resolveVisualIntake', () => {
       fetchImpl: visionReply(legible({ modelNumber: 'CS-C18DKV' })),
     });
     expect(r.action).toBe('conflict');
+  });
+
+  test('REAL-DEVICE BUG: confirming a suffixed nameplate proceeds instead of asking again', async () => {
+    // Found on an iPhone: the plate read CS-S10TKH-1, the catalogue lists
+    // CS-S10TKH. The technician confirmed it, the app resent the photo, and the
+    // server asked "Which model is it?" again, forever.
+    const r = await resolveVisualIntake({
+      ...base,
+      confirmedModel: 'CS-S10TKH',
+      known: known({ model_numbers: [...KNOWN_MODELS, 'CS-S10TKH', 'CS-S13TKH'] }),
+      fetchImpl: visionReply(legible({ modelNumber: 'CS-S10TKH-1' })),
+    });
+    expect(r.action).toBe('proceed');
+    expect(r.model).toBe('CS-S10TKH');
+  });
+
+  test('the same suffixed nameplate WITHOUT a confirmation still asks', async () => {
+    const r = await resolveVisualIntake({
+      ...base,
+      known: known({ model_numbers: [...KNOWN_MODELS, 'CS-S10TKH'] }),
+      fetchImpl: visionReply(legible({ modelNumber: 'CS-S10TKH-1' })),
+    });
+    expect(r.action).toBe('ask_model');
+    expect(r.candidates).toEqual(['CS-S10TKH']);
+  });
+
+  test('a confirmation that is NOT one of the candidates does not settle a partial match', async () => {
+    // Left over from a different machine earlier in the chat.
+    const r = await resolveVisualIntake({
+      ...base,
+      confirmedModel: 'CS-E7JKEW',
+      known: known({ model_numbers: [...KNOWN_MODELS, 'CS-S10TKH'] }),
+      fetchImpl: visionReply(legible({ modelNumber: 'CS-S10TKH-1' })),
+    });
+    expect(r.action).toBe('ask_model');
+  });
+
+  test('photos showing two different models ask which one, never pick', async () => {
+    const r = await resolveVisualIntake({
+      ...base,
+      images: ['AAAA', 'BBBB'],
+      known: known(),
+      fetchImpl: visionReply(legible({ modelNumber: 'CS-C18DKV', otherModelNumbers: ['RAS-30-BKVS-A'] })),
+    });
+    expect(r.action).toBe('ask_model');
+    expect(r.reason).toBe('multiple_models');
+    expect(r.candidates).toEqual(expect.arrayContaining(['CS-C18DKV', 'RAS-30-BKVS-A']));
+  });
+
+  test('the same model repeated across photos is not a conflict', async () => {
+    const r = await resolveVisualIntake({
+      ...base,
+      images: ['AAAA', 'BBBB'],
+      known: known(),
+      fetchImpl: visionReply(legible({ modelNumber: 'CS-C18DKV', otherModelNumbers: ['cs-c18dkv'] })),
+    });
+    expect(r.action).toBe('proceed');
   });
 
   test('a catalogue outage is NOT reported as "no manual"', async () => {
