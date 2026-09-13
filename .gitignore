@@ -90,3 +90,14 @@ uploads/audio/
 
 # Expo local state (machine-specific device history, dev server settings)
 .expo/
+
+# Personal contribution log — never commit
+DEVLOG.txt
+
+# Qdrant snapshots — large binaries, transferred out of band
+*.snapshot
+
+# macOS/Linux launcher. Team is on Windows and uses start.bat; this exists
+# only for the one Mac dev, so it is kept local rather than adding a second
+# script everyone has to keep in sync.
+start.sh

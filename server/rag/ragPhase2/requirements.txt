@@ -56,7 +56,7 @@ pydantic_core==2.46.4
 Pygments==2.21.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.3
-pywin32==312
+pywin32==312 ; sys_platform == "win32"
 PyYAML==6.0.3
 qdrant-client==1.19.0
 regex==2026.7.19
@@ -74,7 +74,7 @@ sympy==1.14.0
 threadpoolctl==3.6.0
 tokenizers==0.19.1
 torch==2.4.1
-torch-directml==0.2.5.dev240914
+torch-directml==0.2.5.dev240914 ; sys_platform == "win32"
 torchvision==0.19.1
 tqdm==4.70.0
 transformers==4.44.2
