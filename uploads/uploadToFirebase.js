@@ -1,18 +1,26 @@
-const admin = require('firebase-admin');
+// firebase-admin v13+ dropped the namespaced API (admin.credential / admin.firestore).
+// See server/config/firebaseAdmin.js for the full explanation.
+const { initializeApp, cert, getApps } = require('firebase-admin/app');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { getStorage } = require('firebase-admin/storage');
 const fs = require('fs').promises;
 const path = require('path');
 
 // ==========================================
 // ⚙️ CONFIGURATION
 // ==========================================
-const serviceAccount = require('./serviceAccountKey.json');
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+// Single canonical location: the repository root. This used to read
+// ./serviceAccountKey.json, which meant keeping a second copy of a private key
+// inside uploads/ — more copies of a secret means more chances one is committed
+// by accident, and two copies drift when the key is rotated.
+const serviceAccount = require('../serviceAccountKey.json');
+const app = getApps().length ? getApps()[0] : initializeApp({
+  credential: cert(serviceAccount),
   storageBucket: "rbacfyp.firebasestorage.app" // ✅ Updated to your exact bucket
 });
 
-const bucket = admin.storage().bucket();
-const db = admin.firestore();
+const bucket = getStorage(app).bucket();
+const db = getFirestore(app);
 const OUTPUT_ROOT = path.join(__dirname, 'output');
 const CHECKPOINT_FILE = path.join(__dirname, 'upload_checkpoint.json'); 
 // ==========================================
@@ -96,7 +104,7 @@ async function uploadAndIndex() {
                 imageName: actualFileName,
                 storagePath: firebasePath,
                 imageUrl: publicUrl,
-                uploadedAt: admin.firestore.FieldValue.serverTimestamp()
+                uploadedAt: FieldValue.serverTimestamp()
             });
 
             // 📌 Save progress ONLY after both Storage and Firestore succeed

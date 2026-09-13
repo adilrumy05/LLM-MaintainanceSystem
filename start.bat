@@ -1,6 +1,13 @@
 @echo off
 set ROOT=%~dp0
 
+:: Quoted, space-safe working directories.
+:: %~dp0 ends in a backslash, and "C:\path\" lets the trailing backslash escape
+:: the closing quote — appending "." gives a valid directory that quotes cleanly.
+:: Needed because the repo path may contain spaces (e.g. "...\SEM 6\...").
+set "ROOTDIR=%~dp0."
+set "MOBILEDIR=%~dp0LLM-Mobile"
+
 echo ============================================
 echo  Maintenance Copilot - Pre-flight Checks
 echo ============================================
@@ -80,15 +87,26 @@ echo ============================================
 :: ─────────────────────────────────────────────────────────────────
 
 :: Step 1: FastAPI
-start "FastAPI" cmd /k "cd /d %ROOT% && python -m uvicorn server.rag.retrieval.retrieval_service:app --reload --port 8001 --host 0.0.0.0"
+:: Uses the project virtualenv interpreter directly rather than bare "python".
+:: A shell without .venv activated would otherwise fall back to system Python
+:: and fail on missing packages (torch, FlagEmbedding, qdrant-client).
+:: Falls back to bare "python" only if .venv has not been created yet.
+if exist "%ROOT%.venv\Scripts\python.exe" (
+    set "PYEXE=%ROOT%.venv\Scripts\python.exe"
+) else (
+    echo  [WARNING] .venv not found - falling back to system Python.
+    echo  Create it with:  python -m venv .venv
+    set "PYEXE=python"
+)
+start "FastAPI" /D "%ROOTDIR%" cmd /k ""%PYEXE%" -m uvicorn server.rag.retrieval.retrieval_service:app --reload --port 8001 --host 0.0.0.0"
 timeout /t 8 /nobreak > nul
 
 :: Step 2: Node backend
-start "Backend" cmd /k "cd /d %ROOT% && node server.js"
+start "Backend" /D "%ROOTDIR%" cmd /k "node server.js"
 timeout /t 3 /nobreak > nul
 
 :: Step 3: Expo
-start "Expo" cmd /k "cd /d %ROOT%LLM-Mobile && npx expo start --lan --clear"
+start "Expo" /D "%MOBILEDIR%" cmd /k "npx expo start --lan --clear"
 
 echo.
 echo ============================================

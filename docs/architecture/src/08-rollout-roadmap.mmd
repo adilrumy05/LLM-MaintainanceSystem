@@ -1,0 +1,91 @@
+---
+config:
+  layout: elk
+---
+%% D8 Dependency and Rollout Roadmap. Owner Adil. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+flowchart TB
+
+    subgraph P1["Phase 1 — Foundation (not features)"]
+        F1["Authentication enforcement<br/>verify the token already being sent"]
+        F2["Firestore security rules<br/>move RBAC off the client"]
+        F3["Private media storage<br/>signed access"]
+        F4["Reproducible ingestion<br/>recover the 4 missing helper scripts<br/>commit data_information.csv"]
+    end
+
+    subgraph P2["Phase 2 — Shared domain model"]
+        D1M["Asset registry"]
+        D2M["ServiceVisit<br/>extends maintenance_tasks"]
+        D3M["ProcedureRun + StepEvent<br/>structured procedure steps"]
+    end
+
+    subgraph P3["Phase 3 — First features, parallel"]
+        T1["Asset tags<br/>QR lifecycle + history"]
+        T2["Procedure timers<br/>deadline-based"]
+    end
+
+    subgraph P4["Phase 4"]
+        R1["Readings in context<br/>Measurement + AmbientContext<br/>+ spec evaluator"]
+    end
+
+    subgraph P5["Phase 5"]
+        C1["Camera / vision subsystem<br/>identify · ask · scan"]
+    end
+
+    subgraph P6["Phase 6"]
+        H1["Hands-free mode"]
+    end
+
+    subgraph P7["Parallel track — gated"]
+        B1["Build benchmark set<br/>measure current baseline"]
+        B2["Evaluate BGE-M3<br/>dense, then dense+sparse"]
+        B3{"Clears all quality gates<br/>AND no operational gate fails?"}
+        B4["Blue-green migrate<br/>new collection, alias switch,<br/>keep old for rollback"]
+        B5["Stay on bge-base-en-v1.5<br/>revisit later"]
+    end
+
+    F1 --> F2
+    F2 --> D1M
+    F3 --> C1
+    F4 --> B1
+
+    D1M --> D2M
+    D2M --> D3M
+
+    D1M --> T1
+    D3M --> T2
+
+    D2M --> R1
+    T1 --> R1
+
+    T1 --> C1
+    F3 --> C1
+
+    D3M --> H1
+
+    B1 --> B2
+    B2 --> B3
+    B3 -->|"pass"| B4
+    B3 -->|"fail"| B5
+
+    classDef foundation fill:#E8F0FB,stroke:#0B63CE,stroke-width:2px,color:#0F1620
+    classDef model fill:#FFFFFF,stroke:#0B63CE,stroke-width:2px,color:#0F1620
+    classDef feature fill:#FCEDE4,stroke:#E8621D,stroke-width:2px,color:#0F1620
+    classDef gate fill:#FFFFFF,stroke:#E8621D,stroke-width:2.5px,color:#0F1620
+    classDef reject fill:#F7F8F7,stroke:#8A98A4,stroke-width:1px,color:#33414F
+
+    class F1,F2,F3,F4 foundation
+    class D1M,D2M,D3M model
+    class T1,T2,R1,C1,H1,B4 feature
+    class B3 gate
+    class B5 reject
+    class B1,B2 model
+
+    style P1 fill:#FFFFFF,stroke:#0B63CE,stroke-width:2px
+    style P7 fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style P2 fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style P3 fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style P4 fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style P5 fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style P6 fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px

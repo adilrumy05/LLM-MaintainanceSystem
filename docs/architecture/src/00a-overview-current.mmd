@@ -1,0 +1,49 @@
+---
+config:
+  layout: elk
+---
+%% D0a Overview - Current System. Owner Adil. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+flowchart LR
+
+    TECH["👷 Technician"]
+
+    subgraph DEVICE["📱 Phone"]
+        APP["The app"]
+    end
+
+    subgraph LAPTOP["💻 One developer laptop"]
+        NODE["Our server<br/>answers questions"]
+        RET["Manual search<br/>finds the right page"]
+    end
+
+    subgraph CLOUD["☁️ Firebase — Google's cloud service"]
+        FB["Logins<br/>App data<br/>Manual files"]
+    end
+
+    subgraph EXT["🌐 Outside services"]
+        OAI["🤖 OpenAI<br/>writes the answer"]
+        MAN["📚 9 manuals<br/>PDF"]
+    end
+
+    TECH --> APP
+    APP -->|"asks a question"| NODE
+    APP ==>|"logins, tasks, records, files<br/>no server in between"| FB
+    NODE --> RET
+    NODE --> OAI
+    MAN -.->|"loaded by hand<br/>7 manual steps"| RET
+
+    classDef actor fill:#FFFFFF,stroke:#5A6B7A,stroke-width:2px,color:#0F1620
+    classDef existing fill:#E8F0FB,stroke:#0B63CE,stroke-width:2px,color:#0F1620
+    classDef external fill:#F2F3F2,stroke:#8A98A4,stroke-width:1px,color:#33414F
+
+    class TECH actor
+    class APP,NODE,RET,FB existing
+    class OAI,MAN external
+
+    style DEVICE fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style LAPTOP fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style CLOUD fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style EXT fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px
+    linkStyle 2 stroke:#1F2A33,stroke-width:4.5px

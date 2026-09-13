@@ -1,0 +1,57 @@
+---
+config:
+  layout: elk
+---
+%% D6 Trust Boundaries (current, REPORT ONLY). Owner Aichner. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+flowchart TB
+
+    ATTACKER["🌐 Anyone on the same WiFi"]
+    PHONE["📱 App — untrusted by definition"]
+
+    subgraph NOGUARD["❌ Reachable with no credential"]
+        NQ["POST /api/query<br/>role and userId taken from the body"]
+        NA["POST /api/approve · /api/reject<br/>no token sent, no middleware at all"]
+        FAPI["FastAPI :8001<br/>bound 0.0.0.0, no auth, no CORS<br/>tracebacks returned verbatim"]
+        QDR["Qdrant :6333<br/>QDRANT_API_KEY unset<br/>exposure depends on docker run — UNVERIFIED"]
+    end
+
+    subgraph CLIENTONLY["⚠️ Enforced only in client JavaScript"]
+        ROLE["Role checks — hooks/useRole.js"]
+        WRITES["Direct Firestore writes<br/>role_id assignment · user deletion<br/>task status · alert creation"]
+        RULES["No firestore.rules file exists in the repo"]
+    end
+
+    subgraph PUBLIC["⚠️ Public by URL"]
+        FILES["Manual PDFs and page images<br/>?alt=media, never signed"]
+    end
+
+    subgraph GUARDED["✅ Actually protected"]
+        OAIKEY["OPENAI_API_KEY<br/>server-side only, never sent to the phone"]
+        SVC["serviceAccountKey.json<br/>gitignored, single canonical path"]
+    end
+
+    ATTACKER --> NQ
+    ATTACKER --> NA
+    ATTACKER --> FAPI
+    ATTACKER -.->|"if -p 6333:6333"| QDR
+    ATTACKER --> FILES
+
+    PHONE --> WRITES
+    PHONE --> ROLE
+    WRITES --> RULES
+
+    classDef bad fill:#FDECEC,stroke:#C0392B,stroke-width:2px,stroke-dasharray: 5 3,color:#0F1620
+    classDef warn fill:#FCEDE4,stroke:#E8621D,stroke-width:2px,color:#0F1620
+    classDef good fill:#E4F1EA,stroke:#1E8A5A,stroke-width:2px,color:#0F1620
+    classDef actor fill:#FFFFFF,stroke:#5A6B7A,stroke-width:2px,color:#0F1620
+
+    class NQ,NA,FAPI,QDR bad
+    class ROLE,WRITES,RULES,FILES warn
+    class OAIKEY,SVC good
+    class ATTACKER,PHONE actor
+    style NOGUARD fill:#FDF3F0,stroke:#C0341A,stroke-width:2px,stroke-dasharray: 5 3
+    style CLIENTONLY fill:#FFFFFF,stroke:#E8621D,stroke-width:2px,stroke-dasharray: 5 3
+    style PUBLIC fill:#FFFFFF,stroke:#E8621D,stroke-width:2px,stroke-dasharray: 5 3
+    style GUARDED fill:#FFFFFF,stroke:#1E8A5A,stroke-width:2px
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px

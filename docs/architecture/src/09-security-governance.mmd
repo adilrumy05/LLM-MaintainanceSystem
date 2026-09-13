@@ -1,0 +1,59 @@
+---
+config:
+  layout: elk
+---
+%% D9 Security and Governance Model (target). Owner Aichner. Verified 2026-08-24. Commit 7670417. Reading notes in README.md
+flowchart TB
+
+    subgraph IDENTITY["① Identity"]
+        I1["Firebase token verified in Node<br/>on every request"]
+        I2["Role read server-side from Users<br/>never taken from the request body"]
+    end
+
+    subgraph ACCESS["② Access control"]
+        A1["Firestore security rules<br/>authoritative, not client JS"]
+        A2["Authority-carrying writes<br/>routed through the backend"]
+        A3["Reads direct, governed by rules"]
+    end
+
+    subgraph NETWORK["③ Network"]
+        N1["FastAPI on an internal network only"]
+        N2["Qdrant reachable from FastAPI only<br/>API key set"]
+        N3["CORS allowlist, not wildcard"]
+    end
+
+    subgraph MEDIA["④ Media and retention"]
+        M1["Private Storage<br/>signed or authenticated access"]
+        M2["Retention and deletion rules<br/>MediaCapture.retainUntil"]
+        M3["No faces, no bystanders<br/>capture guidance in the app"]
+    end
+
+    subgraph AUDIT["⑤ Audit and monitoring"]
+        AU1["Every AI interaction logged<br/>with citations — already exists"]
+        AU2["HITL approval before action<br/>already exists"]
+        AU3["Structured logs and alerting"]
+    end
+
+    NEWDATA["🆕 New data the future features introduce<br/>photographs · voice · location · ambient · asset history"]
+
+    NEWDATA --> IDENTITY
+    IDENTITY --> ACCESS
+    ACCESS --> NETWORK
+    NEWDATA --> MEDIA
+    ACCESS --> AUDIT
+    MEDIA --> AUDIT
+
+    classDef target fill:#FCEDE4,stroke:#E8621D,stroke-width:2px,color:#0F1620
+    classDef kept fill:#E4F1EA,stroke:#1E8A5A,stroke-width:2px,color:#0F1620
+    classDef trigger fill:#E8F0FB,stroke:#0B63CE,stroke-width:2.5px,color:#0F1620
+
+    class I1,I2,A1,A2,A3,N1,N2,N3,M1,M2,M3,AU3 target
+    class AU1,AU2 kept
+    class NEWDATA trigger
+    style IDENTITY fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style ACCESS fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style NETWORK fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style MEDIA fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style AUDIT fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px

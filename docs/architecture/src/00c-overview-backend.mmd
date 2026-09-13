@@ -1,0 +1,77 @@
+---
+config:
+  layout: elk
+---
+%% D0c Overview - Proposed Backend. Owner Adil. Verified 2026-08-26. Commit 7670417. Reading notes in README.md
+flowchart TB
+
+    IN["📱 What arrives from the app<br/><br/>a question · a photo · a reading<br/>a scanned tag · work done<br/>a supervisor approving or rejecting"]
+
+    CLEAN["<b>🔐 Front door — every request, no exceptions</b><br/><br/>1 · Who are you? — check the login token<br/>2 · What may you do? — role looked up here, not taken from the app<br/>3 · Input checks — sanitise · validate"]
+
+    subgraph WORK["⚙️ The work — one handler per job"]
+        direction LR
+        QH["Question<br/>handler"]
+        PHH["Photo handler<br/>identify unit<br/>read fault code"]
+        RDH["Reading checker<br/>in range or<br/>out of range"]
+        ASH["Asset service<br/>tag → unit<br/>→ its history"]
+        JOBH["Job recorder<br/>saves what was<br/>actually done"]
+    end
+
+    subgraph SHARED["🔎 Shared services — used by several handlers"]
+        direction LR
+        SEARCH["Manual search<br/>finds the right pages"]
+        AGENTS["Alert + priority agents<br/>raise it when it matters"]
+        AUDIT["Audit log<br/>every request recorded"]
+    end
+
+    subgraph OUTSIDE["🌐 Outside and storage"]
+        direction LR
+        OAI["OpenAI<br/>text + vision"]
+        WX["Weather"]
+        FS["Firebase<br/>app data + job history"]
+        ST["Firebase Storage<br/>manual files + photos<br/>private, signed links"]
+    end
+
+    IN --> CLEAN
+
+    CLEAN --> QH
+    CLEAN --> PHH
+    CLEAN --> RDH
+    CLEAN --> ASH
+    CLEAN --> JOBH
+    CLEAN -.->|"every request logged,<br/>whatever it is"| AUDIT
+
+    QH --> SEARCH
+    RDH --> AGENTS
+    QH --> AGENTS
+
+    QH --> OAI
+    PHH --> OAI
+    RDH --> WX
+    PHH --> ST
+    SEARCH --> ST
+    ASH --> FS
+    JOBH --> FS
+    AGENTS --> FS
+    AUDIT --> FS
+
+    classDef existing fill:#E8F0FB,stroke:#0B63CE,stroke-width:2px,color:#0F1620
+    classDef extended fill:#FFFFFF,stroke:#E8621D,stroke-width:2.5px,color:#0F1620
+    classDef new fill:#FCEDE4,stroke:#E8621D,stroke-width:2px,stroke-dasharray: 5 3,color:#0F1620
+    classDef external fill:#F2F3F2,stroke:#8A98A4,stroke-width:1px,color:#33414F
+    classDef inbox fill:#FFFFFF,stroke:#5A6B7A,stroke-width:2px,color:#0F1620
+    classDef door fill:#E8F0FB,stroke:#0B63CE,stroke-width:3px,color:#0F1620
+
+    class IN inbox
+    class QH,SEARCH,AGENTS,AUDIT existing
+    class FS,ST extended
+    class CLEAN door
+    class PHH,RDH,ASH,JOBH,WX new
+    class OAI external
+
+    style WORK fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style SHARED fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+    style OUTSIDE fill:#FFFFFF,stroke:#8A98A4,stroke-dasharray: 4 3
+
+    linkStyle default stroke:#1F2A33,stroke-width:2px

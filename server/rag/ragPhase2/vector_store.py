@@ -48,7 +48,19 @@ SPARSE_VECTOR_NAME = "sparse"
 
 logger = logging.getLogger(__name__)
 
-COLLECTION_NAME = "text_chunks_general"
+# Overridable so a new embedding model can be ingested into its own collection
+# (e.g. QDRANT_COLLECTION=text_chunks_bgem3) while the current one keeps serving,
+# making rollback a config change and a restart rather than a re-ingest.
+#
+# This matters more than it looks: ensure_collection() below DELETES and recreates
+# the collection whenever the dense dim or sparse config does not match. Pointing
+# the BGE-M3 pipeline at the old 768-dim collection destroys it with no prompt.
+#
+# NOTE: when you point at a new collection, give the ingest a new CHECKPOINT_DIR
+# too. The checkpoint key is (document_group_id, filename_stem) with no model or
+# collection in it, so a stale checkpoint makes every file "SKIP" and the new
+# collection silently comes out empty. See ingest_to_qdrant.py.
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "text_chunks_general")
 
 # Payload fields we want indexed for fast filtering
 _KEYWORD_INDEXES = [
