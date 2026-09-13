@@ -45,7 +45,8 @@
           "backgroundColor": "#ffffff",
           "imageWidth": 200
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "extra": {
       "router": {},

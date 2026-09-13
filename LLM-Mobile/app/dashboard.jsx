@@ -7,7 +7,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { useUser } from './_layout';
-import { submitQuery } from '../services/api';
+import { submitQuery, resetSession, setSession, getSession, generateReport } from '../services/api';
+import { shareReportPdf } from '../services/reportPdf';
 import * as ImagePicker from 'expo-image-picker';
 import Markdown from 'react-native-markdown-display';
 import MicButton from '../components/MicButton';
@@ -15,7 +16,9 @@ import { transcribeAudio } from '../services/api';
 import { getFilters } from '../services/api';
 
 export default function Dashboard() {
-  const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
+  // Seed chat '1' with the session api.js generated at module load, so the
+  // first conversation is bound to a session without burning an extra id.
+  const [chats, setChats]               = useState([{ id: '1', messages: [], sessionId: getSession() }]);
   const [activeChatId, setActiveChatId] = useState('1');
   const [inputValue, setInputValue]     = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -29,6 +32,12 @@ export default function Dashboard() {
   const { setUser } = useUser();
   const [allFilters, setAllFilters]         = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
+
+  // Repair report
+  const [reportBusy, setReportBusy]     = useState(false);
+  const [reportData, setReportData]     = useState(null);
+  const [reportError, setReportError]   = useState(null);
+  const [sharingPdf, setSharingPdf]     = useState(false);
   const [filterSearchText, setFilterSearchText] = useState('');
 
 
@@ -44,13 +53,17 @@ export default function Dashboard() {
         if (raw) {
           const saved = JSON.parse(raw);
           if (saved.length > 0) {
-            setChats(
-              saved.map(c => ({
-                ...c,
-                filter: c.filter || null,
-              }))
-            );
-            setActiveChatId(saved[0].id);
+            // Chats persisted before sessionId tracking have no session of
+            // their own. Give each one a fresh id rather than letting them all
+            // keep sharing the module-level session.
+            const migrated = saved.map(c => ({
+              ...c,
+              filter: c.filter || null,
+              sessionId: c.sessionId || resetSession(),
+            }));
+            setChats(migrated);
+            setActiveChatId(migrated[0].id);
+            setSession(migrated[0].sessionId);
             setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
           }
         }
@@ -167,8 +180,53 @@ export default function Dashboard() {
   //   }
   // };
 
+  // ── Repair report ─────────────────────────────────────────────
+  // Summarises THIS chat's session. Each chat owns its own sessionId, so the
+  // report covers one job rather than everything since app launch.
+  const handleGenerateReport = async () => {
+    if (reportBusy || isEmpty) return;
+    const sessionId = activeChat?.sessionId;
+    if (!sessionId) {
+      setReportError('This chat has no session yet. Send a message first.');
+      return;
+    }
+    setReportBusy(true);
+    setReportError(null);
+    setReportData(null);
+    try {
+      const record = await generateReport(sessionId);
+      setReportData(record);
+    } catch (e) {
+      setReportError(e.message || 'Could not generate the report.');
+    }
+    setReportBusy(false);
+  };
+
+  const handleSharePdf = async () => {
+    if (!reportData || sharingPdf) return;
+    setSharingPdf(true);
+    try {
+      const { shared } = await shareReportPdf(reportData);
+      if (!shared) {
+        // Sharing is unavailable on web; the preview stays open so the
+        // technician can still read and copy the summary.
+        const msg = 'Sharing is not available on this platform. The report is saved and viewable here.';
+        Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Export', msg);
+      }
+    } catch (e) {
+      const msg = e.message || 'Could not create the PDF.';
+      Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Export failed', msg);
+    }
+    setSharingPdf(false);
+  };
+
+  const closeReport = () => { setReportData(null); setReportError(null); };
+
   const handleNewChat = () => {
     const newId = Date.now().toString();
+    // A new conversation is a new audit session — otherwise this chat's
+    // messages append to the previous chat's audit_logs document.
+    const sessionId = resetSession();
 
     setChats(prev => [
       ...prev,
@@ -176,6 +234,7 @@ export default function Dashboard() {
         id: newId,
         messages: [],
         filter: null,
+        sessionId,
       },
     ]);
 
@@ -184,13 +243,30 @@ export default function Dashboard() {
     setInputValue('');
   };
 
-  const handleSwitchChat = (id) => { setActiveChatId(id); setShowSidebar(false); };
+  const handleSwitchChat = (id) => {
+    // Re-point the API at this chat's session so new messages land in its own
+    // audit_logs document rather than whichever chat was open last.
+    const target = chats.find(c => c.id === id);
+    if (target?.sessionId) setSession(target.sessionId);
+    setActiveChatId(id);
+    setShowSidebar(false);
+  };
 
   const handleDeleteChat = (id) => {
-    if (chats.length === 1) { setChats([{ id: '1', messages: [], filter: null }]); setActiveChatId('1'); setShowSidebar(false); return; }
+    if (chats.length === 1) {
+      // Deleting the only chat leaves a blank one — it needs its own session,
+      // not the deleted chat's.
+      setChats([{ id: '1', messages: [], filter: null, sessionId: resetSession() }]);
+      setActiveChatId('1');
+      setShowSidebar(false);
+      return;
+    }
     const remaining = chats.filter(c => c.id !== id);
     setChats(remaining);
-    if (activeChatId === id) setActiveChatId(remaining[0].id);
+    if (activeChatId === id) {
+      setActiveChatId(remaining[0].id);
+      if (remaining[0].sessionId) setSession(remaining[0].sessionId);
+    }
     setShowSidebar(false);
   };
 
@@ -493,6 +569,87 @@ export default function Dashboard() {
           </SafeAreaView>
         </Modal>
 
+        {/* ─── Repair report preview ───────────────────────────────── */}
+        <Modal
+          visible={!!reportData || !!reportError}
+          animationType="slide"
+          onRequestClose={closeReport}
+        >
+          <SafeAreaView style={s.reportSheet} edges={['top', 'bottom']}>
+            <View style={s.reportHead}>
+              <Text style={s.reportHeadTitle}>Repair Report</Text>
+              <TouchableOpacity onPress={closeReport} accessibilityLabel="Close report">
+                <Ionicons name="close" size={24} color={C.text} />
+              </TouchableOpacity>
+            </View>
+
+            {reportError ? (
+              <View style={s.reportErrBox}>
+                <Ionicons name="alert-circle-outline" size={20} color={C.red} />
+                <Text style={s.reportErrText}>{reportError}</Text>
+              </View>
+            ) : reportData ? (
+              <>
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={s.reportBody}>
+                  <Text style={s.reportTitle}>{reportData.report?.title}</Text>
+                  <View style={s.reportMetaRow}>
+                    <Text style={s.reportMeta}>{reportData.report?.equipment}</Text>
+                    <Text style={s.reportMetaDim}>{reportData.generated_at}</Text>
+                  </View>
+
+                  <ReportSection label="Problem Reported" text={reportData.report?.problem_reported} />
+                  <ReportSection label="Diagnosis" text={reportData.report?.diagnosis} />
+                  <ReportSection label="Actions Taken" items={reportData.report?.actions_taken} empty="No actions recorded" />
+                  <ReportSection label="Parts Replaced" items={reportData.report?.parts_replaced} empty="No parts recorded" />
+                  {!!reportData.report?.safety_notes?.length && (
+                    <View style={s.reportSafety}>
+                      <Text style={s.reportSectionLabel}>Safety Notes</Text>
+                      {reportData.report.safety_notes.map((n, i) => (
+                        <Text key={i} style={s.reportSafetyItem}>• {n}</Text>
+                      ))}
+                    </View>
+                  )}
+                  <ReportSection label="Outcome" text={reportData.report?.outcome} />
+                  <ReportSection label="Follow-up" text={reportData.report?.follow_up} />
+
+                  <Text style={s.reportSectionLabel}>Manual Sources Cited</Text>
+                  {(reportData.sources || []).length === 0
+                    ? <Text style={s.reportEmpty}>No manual sources cited</Text>
+                    : Object.entries(
+                        (reportData.sources || []).reduce((acc, src) => {
+                          const k = src.filename || 'Unknown';
+                          (acc[k] = acc[k] || []).push(src.page);
+                          return acc;
+                        }, {})
+                      ).map(([file, pages]) => (
+                        <Text key={file} style={s.reportSource}>
+                          {file} <Text style={s.reportMetaDim}>p. {pages.filter(x => x != null).join(', ') || '—'}</Text>
+                        </Text>
+                      ))}
+
+                  <Text style={s.reportFoot}>
+                    Summarised from {reportData.exchange_count} logged exchange(s). Saved to Firestore as
+                    repair_reports/{reportData.session_id}. Verify against the cited pages before acting.
+                  </Text>
+                </ScrollView>
+
+                <View style={s.reportActions}>
+                  <TouchableOpacity
+                    style={[s.reportShareBtn, sharingPdf && s.reportBtnDisabled]}
+                    onPress={handleSharePdf}
+                    disabled={sharingPdf}
+                  >
+                    {sharingPdf
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <><Ionicons name="share-outline" size={18} color="#fff" />
+                          <Text style={s.reportShareText}>  Export PDF</Text></>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+          </SafeAreaView>
+        </Modal>
+
         {/* ─── Header ──────────────────────────────────────────────── */}
         <View style={s.header}>
           <TouchableOpacity style={s.menuBtn} onPress={() => setShowSidebar(true)}>
@@ -502,6 +659,16 @@ export default function Dashboard() {
             <Text style={s.headerTitle}>Maintenance Copilot</Text>
             <Text style={s.headerRole}>{role?.toUpperCase()} ACCESS</Text>
           </View>
+          <TouchableOpacity
+            style={s.newChatIconBtn}
+            onPress={handleGenerateReport}
+            disabled={isEmpty || reportBusy}
+            accessibilityLabel="Generate repair report"
+          >
+            {reportBusy
+              ? <ActivityIndicator size="small" color={C.primary} />
+              : <Ionicons name="document-text-outline" size={21} color={isEmpty ? C.textMuted : C.text} />}
+          </TouchableOpacity>
           <TouchableOpacity style={s.newChatIconBtn} onPress={handleNewChat}>
             <Ionicons name="create-outline" size={22} color={C.text} />
           </TouchableOpacity>
@@ -667,7 +834,46 @@ export default function Dashboard() {
   );
 }
 
+// Renders one report section as either a paragraph or a bullet list, so the
+// preview mirrors the PDF's structure without repeating layout code.
+function ReportSection({ label, text, items, empty }) {
+  return (
+    <>
+      <Text style={s.reportSectionLabel}>{label}</Text>
+      {items
+        ? (items.length
+            ? items.map((it, i) => <Text key={i} style={s.reportItem}>• {it}</Text>)
+            : <Text style={s.reportEmpty}>{empty}</Text>)
+        : <Text style={s.reportText}>{text}</Text>}
+    </>
+  );
+}
+
 const s = StyleSheet.create({
+  // ── Repair report ──
+  reportSheet:        { flex: 1, backgroundColor: C.bg },
+  reportHead:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.cardBorder },
+  reportHeadTitle:    { fontSize: 16, fontWeight: '700', color: C.text },
+  reportBody:         { padding: 16, paddingBottom: 28 },
+  reportTitle:        { fontSize: 18, fontWeight: '700', color: C.text, lineHeight: 24 },
+  reportMetaRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4, marginBottom: 6 },
+  reportMeta:         { fontSize: 12, color: C.textSub, fontWeight: '600' },
+  reportMetaDim:      { fontSize: 12, color: C.textMuted },
+  reportSectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', color: C.primary, marginTop: 16, marginBottom: 5 },
+  reportText:         { fontSize: 14, color: C.text, lineHeight: 20 },
+  reportItem:         { fontSize: 14, color: C.text, lineHeight: 20, marginBottom: 2 },
+  reportEmpty:        { fontSize: 13, color: C.textMuted, fontStyle: 'italic' },
+  reportSafety:       { backgroundColor: C.orangeBg, borderLeftWidth: 3, borderLeftColor: C.orange, borderRadius: 8, padding: 10, marginTop: 6 },
+  reportSafetyItem:   { fontSize: 13, color: C.orange, lineHeight: 19, marginBottom: 2 },
+  reportSource:       { fontSize: 13, color: C.text, marginBottom: 3 },
+  reportFoot:         { fontSize: 11, color: C.textMuted, lineHeight: 16, marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.cardBorder },
+  reportActions:      { padding: 16, borderTopWidth: 1, borderTopColor: C.cardBorder, backgroundColor: C.card },
+  reportShareBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14 },
+  reportShareText:    { color: '#fff', fontWeight: '700', fontSize: 14 },
+  reportBtnDisabled:  { opacity: 0.6 },
+  reportErrBox:       { flexDirection: 'row', alignItems: 'flex-start', gap: 8, margin: 16, padding: 14, backgroundColor: C.redBg, borderRadius: 12 },
+  reportErrText:      { flex: 1, fontSize: 13, color: C.red, lineHeight: 19 },
+
   safe:             { flex: 1, backgroundColor: C.bg },
   overlay:          { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: 'row' },
   overlayBg:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },

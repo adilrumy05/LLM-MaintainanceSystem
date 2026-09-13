@@ -5,6 +5,7 @@ const dotenv = require('dotenv');
 const { logAuditRecord } = require('./server/services/auditLogger');
 const firebaseAdmin = require('./server/config/firebaseAdmin');
 const { runPriorityAdjustmentAgent } = require('./server/agents/priorityAdjustmentAgent');
+const { generateRepairReport } = require('./server/services/reportGenerator');
 const fs = require('fs');
 const path = require('path');
 const sanitize = require('./server/middleware/sanitize');
@@ -239,6 +240,51 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       error:   'Internal server error',
       details: error.message,
     });
+  }
+});
+
+// ── Repair report ─────────────────────────────────────────────────────────────
+// Summarises one completed job from its audit_logs session into a structured
+// report, and stores it in repair_reports. The client renders the PDF; keeping
+// generation server-side means the OpenAI key never leaves the backend and the
+// stored record is the single traceable source behind every exported PDF.
+// Middleware note: `sanitize` yes (input hygiene), but NOT `validate` — that
+// one requires a non-empty `query` field, which a report request has no reason
+// to carry — and NOT `outputSanitize`, which HTML-escapes every response
+// string, so "don't" would reach the preview as "don&#39;t". The PDF template
+// on the client escapes its own interpolations, which is where escaping
+// actually belongs for this route.
+app.post('/api/report', sanitize, async (req, res) => {
+  const { sessionId, userId, userEmail, role } = req.body;
+  try {
+    const result = await generateRepairReport({
+      sessionId,
+      requestedBy: userId,
+      requestedByEmail: userEmail,
+      role,
+    });
+    console.log(`[REPORT] Generated for session ${sessionId}`);
+    res.json(result);
+  } catch (err) {
+    console.error('[REPORT] Failed:', err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Fetch a previously generated report without paying for a second LLM call.
+app.get('/api/report/:sessionId', async (req, res) => {
+  if (!firebaseAdmin.db) {
+    return res.status(503).json({ error: 'Firebase Admin not configured' });
+  }
+  try {
+    const snap = await firebaseAdmin.db
+      .collection('repair_reports')
+      .doc(req.params.sessionId)
+      .get();
+    if (!snap.exists) return res.status(404).json({ error: 'No report for this session' });
+    res.json(snap.data());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

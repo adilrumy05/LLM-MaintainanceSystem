@@ -65,10 +65,33 @@ const generateSessionId = () =>
 
 let currentSessionId = generateSessionId();
 
+// One audit_logs document is keyed by one sessionId, so a session must map to
+// a single conversation. Previously this id was generated once at module load
+// and never changed — resetSession() was exported but never called — so every
+// chat in the sidebar appended into the SAME audit_logs doc. That merged
+// unrelated jobs into one record, which breaks both the per-session HITL
+// approve/reject flow and any per-repair summary built from the session.
+//
+// The dashboard now owns the mapping: each chat carries its own sessionId,
+// created here on a new chat and re-selected here when switching chats.
+
+// Start a new session and return its id so the caller can store it on a chat.
 export const resetSession = () => {
   currentSessionId = generateSessionId();
   console.log('[API] New session:', currentSessionId);
+  return currentSessionId;
 };
+
+// Point the API at an existing chat's session (used when switching chats).
+// Falls back to the current session if the chat predates sessionId tracking.
+export const setSession = (sessionId) => {
+  if (!sessionId) return currentSessionId;
+  currentSessionId = sessionId;
+  console.log('[API] Session set:', currentSessionId);
+  return currentSessionId;
+};
+
+export const getSession = () => currentSessionId;
 
 // ─────────────────────────────────────────────
 // FETCH WITH TIMEOUT
@@ -355,5 +378,68 @@ export const transcribeAudio = async (localUri) => {
     );
 
     throw error;
+  }
+};
+
+
+// ─────────────────────────────────────────────
+// REPAIR REPORT
+// ─────────────────────────────────────────────
+
+// Ask the backend to summarise one chat session into a structured repair
+// report. Generation is server-side so the OpenAI key stays on the backend and
+// the stored repair_reports document remains the single traceable source
+// behind whatever PDF the technician shares.
+export const generateReport = async (sessionId) => {
+  if (!sessionId) throw new Error('No session to report on yet.');
+
+  let loggedInUserId = 'anonymous_user';
+  let userRole = 'beginner';
+  let userEmail = 'unknown';
+  let authHeader = {};
+
+  try {
+    const userJson = await AsyncStorage.getItem('user');
+    const user = userJson ? JSON.parse(userJson) : null;
+    if (user?.token) authHeader = { Authorization: `Bearer ${user.token}` };
+    if (user) {
+      loggedInUserId = user.uid || user.id || user.email || 'anonymous_user';
+      userRole = user.role || 'beginner';
+      userEmail = user.email || 'unknown';
+    }
+  } catch (e) {
+    console.warn('[API] Could not load user for report:', e);
+  }
+
+  // Generation runs an LLM pass over the whole transcript, so it is slower than
+  // a chat turn — measured around 6s for an 8-exchange session.
+  const response = await fetchWithTimeout(
+    `${API_URL}/report`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader },
+      body: JSON.stringify({ sessionId, userId: loggedInUserId, userEmail, role: userRole }),
+    },
+    120000
+  );
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error || `Report failed (HTTP ${response.status})`);
+  }
+  return response.json();
+};
+
+// Fetch a previously generated report, so reopening a job does not pay for a
+// second LLM call. Returns null when none exists yet.
+export const fetchExistingReport = async (sessionId) => {
+  if (!sessionId) return null;
+  try {
+    const response = await fetchWithTimeout(`${API_URL}/report/${encodeURIComponent(sessionId)}`, {}, 15000);
+    if (response.status === 404) return null;
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
   }
 };
