@@ -2,6 +2,7 @@
   "expo": {
     "name": "LLM-Mobile",
     "slug": "LLM-Mobile",
+    "owner": "princechikukwa",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -21,7 +22,9 @@
       },
       "package": "com.anonymous.LLMMobile",
       "permissions": [
-        "RECORD_AUDIO"
+        "RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },
     "web": {
@@ -43,6 +46,12 @@
           "imageWidth": 200
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "df13c427-51bd-4347-add7-59cdb9a9be06"
+      }
+    }
   }
 }
