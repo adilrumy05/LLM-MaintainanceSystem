@@ -1,18 +1,54 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Dimensions, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { useUser } from './_layout';
-import { submitQuery } from '../services/api';
-import * as ImagePicker from 'expo-image-picker';
+import { submitQuery, decodeEntities, getFilters } from '../services/api';
+import { capturePhoto } from '../services/photo';
 import Markdown from 'react-native-markdown-display';
 import MicButton from '../components/MicButton';
-import { transcribeAudio } from '../services/api';
-import { getFilters } from '../services/api';
+import HandsFreeBar from '../components/HandsFreeBar';
+import { useHandsFree } from '../hooks/useHandsFree';
+
+const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
+
+// Server outcomes that need the technician, turned into tappable replies.
+const actionsForOutcome = (result, hadPhoto) => {
+  const retake = hadPhoto ? [{ type: 'retake' }] : [];
+  switch (result.needsInput) {
+    case 'ask_model':
+      return [...(result.candidates || []).map((m) => ({ type: 'confirm_model', model: decodeEntities(m) })), ...retake];
+    case 'conflict':
+      return [...(result.readModel ? [{ type: 'use_photo_model', model: decodeEntities(result.readModel) }] : []), ...retake];
+    case 'ask_photo':
+    case 'no_manual':
+      return retake;
+    default:
+      return [];
+  }
+};
+
+const actionLabel = (a) => {
+  switch (a.type) {
+    case 'confirm_model':   return a.model;
+    case 'use_photo_model': return `Use ${a.model}`;
+    case 'retake':          return 'Retake photo';
+    case 'retry':           return 'Retry';
+    default:                return 'OK';
+  }
+};
+
+// A chat photo lives in the app cache and can be cleared by the OS; hide it
+// rather than show a broken image.
+function PhotoThumb({ uri }) {
+  const [failed, setFailed] = useState(false);
+  if (!uri || failed) return null;
+  return <Image source={{ uri }} style={s.msgPhoto} resizeMode="cover" onError={() => setFailed(true)} />;
+}
 
 export default function Dashboard() {
   const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
@@ -30,6 +66,20 @@ export default function Dashboard() {
   const [allFilters, setAllFilters]         = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [filterSearchText, setFilterSearchText] = useState('');
+  const [pendingPhoto, setPendingPhoto]     = useState(null);
+  const [isPhotoBusy, setIsPhotoBusy]       = useState(false);
+  const [handsFreeNotice, setHandsFreeNotice] = useState(null);
+
+  // Callbacks from hands-free audio fire long after the render that created
+  // them, so they read the current chat through refs.
+  const chatsRef        = useRef(chats);
+  const activeChatIdRef = useRef(activeChatId);
+  chatsRef.current        = chats;
+  activeChatIdRef.current = activeChatId;
+
+  // Last request per chat, kept in memory only - photos are never persisted -
+  // so Retry, Retake and model confirmation can resend it.
+  const lastRequestRef = useRef({});
 
 
   const activeChat = chats.find(c => c.id === activeChatId);
@@ -73,33 +123,177 @@ export default function Dashboard() {
 
 
 
-  const addMessage = (from, text, sources = []) => {
-    const msg = { id: Date.now().toString() + Math.random(), from, text, sources };
-    setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, messages: [...c.messages, msg] } : c));
+  const addMessage = (from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
+    const msg = { id: Date.now().toString() + Math.random(), from, text, sources, ...extra };
+    setChats(prev => prev.map(c => c.id === chatId ? { ...c, messages: [...c.messages, msg] } : c));
     requestAnimationFrame(() => {
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
     });
   };
 
-  const handleSend = async (overrideText) => {
-    const queryText = (overrideText || inputValue).trim();
-    if (!queryText || isProcessing) return;
-    setInputValue('');
+  const updateChat = (chatId, patch) =>
+    setChats(prev => prev.map(c => (c.id === chatId ? { ...c, ...patch } : c)));
+
+  const markActionsUsed = (chatId, messageId) =>
+    setChats(prev => prev.map(c => (c.id !== chatId ? c : {
+      ...c,
+      messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: true } : m)),
+    })));
+
+  /**
+   * Send one request and put the outcome in the chat.
+   * `confirmedModel` / `docGroup` override the chat's own values when a reply
+   * action has just changed them and state has not re-rendered yet.
+   */
+  const runQuery = async ({ text, photo = null, confirmedModel, docGroup, voice = false }) => {
+    const chatId = activeChatIdRef.current;
+    const chat = chatsRef.current.find(c => c.id === chatId);
+    const model = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
+    const group = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
+    lastRequestRef.current[chatId] = { text, photo, confirmedModel: model, docGroup: group };
+
     cancelRef.current = false;
+    setIsProcessing(true);
+    try {
+      const result = await submitQuery(text, { docGroup: group, imageBase64: photo?.base64 || null, confirmedModel: model, voice });
+      if (cancelRef.current) return { cancelled: true };
+
+      if (result.needsInput) {
+        addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, Boolean(photo)) }, chatId);
+      } else {
+        addMessage('bot', result.text, result.sources || [], {}, chatId);
+        // A photo that identified the machine makes it this chat's machine.
+        if (result.identifiedModel) updateChat(chatId, { confirmedModel: decodeEntities(result.identifiedModel) });
+      }
+      return { result };
+    } catch (err) {
+      if (cancelRef.current) return { cancelled: true };
+      const photoProblem = err.code === 'invalid_image' || err.code === 'image_too_large';
+      const actions = photo && photoProblem ? [{ type: 'retake' }]
+        : err.retryable || !err.status ? [{ type: 'retry' }]
+        : [];
+      addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`, [], { actions }, chatId);
+      return { error: err };
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleSend = async (overrideText) => {
+    const typed = (overrideText || inputValue).trim();
+    const photo = pendingPhoto;
+    if ((!typed && !photo) || isProcessing) return;
+    const queryText = typed || DEFAULT_PHOTO_QUESTION;
+    setInputValue('');
+    setPendingPhoto(null);
     const raw = await AsyncStorage.getItem('queryHistory');
     const existing = JSON.parse(raw || '[]');
     await AsyncStorage.setItem('queryHistory', JSON.stringify(
       [{ id: Date.now(), text: queryText, timestamp: new Date().toISOString() }, ...existing].slice(0, 50)
     ));
-    addMessage('user', queryText);
-    setIsProcessing(true);
+    addMessage('user', queryText, [], photo ? { imageUri: photo.uri } : {});
+    await runQuery({ text: queryText, photo });
+  };
+
+  // ─── Photos ───────────────────────────────────────────────────────────────
+  const choosePhotoSource = () => new Promise((resolve) => {
+    if (Platform.OS === 'web') { resolve('library'); return; }
+    Alert.alert('Add a photo', 'Photograph a nameplate, a fault display, or a part.', [
+      { text: 'Take photo', onPress: () => resolve('camera') },
+      { text: 'Choose from library', onPress: () => resolve('library') },
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+    ], { cancelable: true, onDismiss: () => resolve(null) });
+  });
+
+  const getPhoto = async () => {
+    const source = await choosePhotoSource();
+    if (!source) return null;
+    setIsPhotoBusy(true);
     try {
-      const result = await submitQuery(queryText, activeChat?.filter?.id || null);
-      if (!cancelRef.current) addMessage('bot', result.text, result.sources || []);
-    } catch (err) {
-      if (!cancelRef.current) addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`);
+      return await capturePhoto(source);
+    } catch (e) {
+      Alert.alert('Photo', e.message || 'Could not get the photo.');
+      return null;
+    } finally {
+      setIsPhotoBusy(false);
     }
-    setIsProcessing(false);
+  };
+
+  const handleAttachPhoto = async () => {
+    const photo = await getPhoto();
+    if (photo) setPendingPhoto(photo);
+  };
+
+  // ─── Replies to "which model?", "retake", "retry" ────────────────────────
+  const handleAction = async (message, action) => {
+    const chatId = activeChatIdRef.current;
+    const req = lastRequestRef.current[chatId];
+    markActionsUsed(chatId, message.id);
+
+    switch (action.type) {
+      case 'confirm_model': {
+        updateChat(chatId, { confirmedModel: action.model });
+        addMessage('user', `It's the ${action.model}`);
+        if (!req) { addMessage('bot', `Saved ${action.model} for this chat. Ask your question again.`); return; }
+        await runQuery({ ...req, confirmedModel: action.model });
+        return;
+      }
+      case 'use_photo_model': {
+        // The photo disagreed with the chat's machine or manual. Switching to it
+        // clears both, so the old manual cannot silently filter the new machine.
+        updateChat(chatId, { confirmedModel: action.model, filter: null });
+        addMessage('user', `Use ${action.model}`);
+        if (!req) { addMessage('bot', `Switched this chat to ${action.model}. Ask your question again.`); return; }
+        await runQuery({ ...req, confirmedModel: action.model, docGroup: null });
+        return;
+      }
+      case 'retake': {
+        const photo = await getPhoto();
+        if (!photo) return;
+        const text = req?.text || DEFAULT_PHOTO_QUESTION;
+        addMessage('user', text, [], { imageUri: photo.uri });
+        await runQuery({ text, photo, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup });
+        return;
+      }
+      case 'retry': {
+        if (!req) { addMessage('bot', 'That request is no longer available. Please ask again.'); return; }
+        await runQuery(req);
+        return;
+      }
+      default:
+    }
+  };
+
+  // ─── Hands-free ───────────────────────────────────────────────────────────
+  const askHandsFree = async (text) => {
+    addMessage('user', text);
+    const { result, error, cancelled } = await runQuery({ text, voice: true });
+    if (cancelled) return { speak: 'Cancelled.', stopAfter: true };
+    if (error) return { speak: `Sorry, that failed. ${error.message || ''}`.trim(), stopAfter: true };
+    if (result.needsInput) return { speak: decodeEntities(result.text) };
+    if (result.spokenText) return { speak: decodeEntities(result.spokenText) };
+    // The spoken form was withheld because it could not be shown to keep every
+    // warning. Never read a partial procedure aloud.
+    return { speak: 'Audio guidance is not available for this answer. The full answer is on your screen.' };
+  };
+
+  const noticeTimer = useRef(null);
+  const showHandsFreeNotice = (msg) => {
+    setHandsFreeNotice(msg);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setHandsFreeNotice(null), 5000);
+  };
+
+  const handsFree = useHandsFree({ ask: askHandsFree, onNotice: showHandsFreeNotice });
+  const handsFreeStopRef = useRef(handsFree.stop);
+  handsFreeStopRef.current = handsFree.stop;
+
+  // Leaving this screen stops listening and speaking.
+  useFocusEffect(useCallback(() => () => { handsFreeStopRef.current(); }, []));
+
+  const toggleHandsFree = () => {
+    if (handsFree.active) handsFree.stop('Hands-free stopped.');
+    else handsFree.start();
   };
 
   const prettifyFilterLabel = (id) => {
@@ -139,7 +333,9 @@ export default function Dashboard() {
     setChats(prev =>
       prev.map(c =>
         c.id === activeChatId
-          ? { ...c, filter: opt || null }
+          // A different manual means a possibly different machine: the
+          // confirmed model is dropped rather than carried into the new scope.
+          ? { ...c, filter: opt || null, confirmedModel: (c.filter?.id === opt?.id) ? c.confirmedModel : null }
           : c
       )
     );
@@ -169,6 +365,8 @@ export default function Dashboard() {
 
   const handleNewChat = () => {
     const newId = Date.now().toString();
+    handsFree.stop();
+    setPendingPhoto(null);
 
     setChats(prev => [
       ...prev,
@@ -176,6 +374,7 @@ export default function Dashboard() {
         id: newId,
         messages: [],
         filter: null,
+        confirmedModel: null,
       },
     ]);
 
@@ -184,7 +383,11 @@ export default function Dashboard() {
     setInputValue('');
   };
 
-  const handleSwitchChat = (id) => { setActiveChatId(id); setShowSidebar(false); };
+  const handleSwitchChat = (id) => {
+    if (id !== activeChatId) { handsFree.stop(); setPendingPhoto(null); }
+    setActiveChatId(id);
+    setShowSidebar(false);
+  };
 
   const handleDeleteChat = (id) => {
     if (chats.length === 1) { setChats([{ id: '1', messages: [], filter: null }]); setActiveChatId('1'); setShowSidebar(false); return; }
@@ -312,6 +515,7 @@ export default function Dashboard() {
     return (
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
         <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBot]}>
+          {isUser && item.imageUri ? <PhotoThumb uri={item.imageUri} /> : null}
           {isUser
             ? <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
             : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
@@ -323,6 +527,22 @@ export default function Dashboard() {
                 <Text style={s.sourcesLabel}> SOURCES</Text>
               </View>
               {item.sources.map((src, i) => <SourceItem key={i} source={src} />)}
+            </View>
+          )}
+          {!isUser && item.actions?.length > 0 && !item.actionsUsed && (
+            <View style={s.actionsRow}>
+              {item.actions.map((a, i) => (
+                <TouchableOpacity
+                  key={i}
+                  style={[s.actionChip, a.type === 'retake' || a.type === 'retry' ? s.actionChipAlt : null]}
+                  onPress={() => handleAction(item, a)}
+                  disabled={isProcessing || isPhotoBusy || handsFree.active}
+                >
+                  {a.type === 'retake' && <Ionicons name="camera-outline" size={13} color={C.primary} />}
+                  {a.type === 'retry' && <Ionicons name="refresh-outline" size={13} color={C.primary} />}
+                  <Text style={s.actionChipText}>{actionLabel(a)}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
           )}
         </View>
@@ -588,10 +808,28 @@ export default function Dashboard() {
 
         <View style={s.inputWrapper}>
 
-          {/* Upload disabled — not yet connected to RAG */}
-          {/* {uploadedFile && (
-            ...
-          )} */}
+          <HandsFreeBar
+            phase={handsFree.phase}
+            level={handsFree.level}
+            floor={handsFree.floor}
+            onStop={() => handsFree.stop('Hands-free stopped.')}
+            onFinishNow={handsFree.finishNow}
+          />
+          {handsFreeNotice && !handsFree.active && (
+            <Text style={s.handsFreeNotice}>{handsFreeNotice}</Text>
+          )}
+
+          {pendingPhoto && (
+            <View style={s.pendingPhoto}>
+              <Image source={{ uri: pendingPhoto.uri }} style={s.pendingPhotoImg} />
+              <Text style={s.pendingPhotoText} numberOfLines={2}>
+                Photo attached. Ask about it, or just send.
+              </Text>
+              <TouchableOpacity onPress={() => setPendingPhoto(null)} accessibilityLabel="Remove photo">
+                <Ionicons name="close-circle" size={20} color={C.textMuted} />
+              </TouchableOpacity>
+            </View>
+          )}
 
           <View style={s.filterBar}>
             <TouchableOpacity
@@ -632,29 +870,63 @@ export default function Dashboard() {
                 />
               </TouchableOpacity>
             )}
+
+            {activeChat?.confirmedModel && (
+              <View style={s.machineChip}>
+                <Ionicons name="hardware-chip-outline" size={13} color={C.primary} />
+                <Text style={s.machineChipText} numberOfLines={1}>{activeChat.confirmedModel}</Text>
+                <TouchableOpacity
+                  onPress={() => updateChat(activeChatId, { confirmedModel: null })}
+                  accessibilityLabel="Clear confirmed machine"
+                >
+                  <Ionicons name="close-circle" size={15} color={C.textMuted} />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[s.handsFreeChip, handsFree.active && s.handsFreeChipOn]}
+              onPress={toggleHandsFree}
+              disabled={!handsFree.active && (isProcessing || isPhotoBusy)}
+              accessibilityLabel={handsFree.active ? 'Stop hands-free' : 'Start hands-free'}
+            >
+              <Ionicons name="headset-outline" size={13} color={handsFree.active ? '#fff' : C.primary} />
+              <Text style={[s.handsFreeChipText, handsFree.active && { color: '#fff' }]}>Hands-free</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={s.inputBar}>
 
+          <TouchableOpacity
+            style={s.iconBtn}
+            onPress={handleAttachPhoto}
+            disabled={isProcessing || isPhotoBusy || handsFree.active}
+            accessibilityLabel="Attach a photo"
+          >
+            {isPhotoBusy
+              ? <ActivityIndicator size="small" color={C.primary} />
+              : <Ionicons name="camera-outline" size={20} color={C.primary} />}
+          </TouchableOpacity>
+
           <MicButton
             style={s.iconBtn}
-            disabled={isProcessing}
+            disabled={isProcessing || handsFree.active}
             onTranscript={(text) => setInputValue(text)}
           />
 
             <TextInput
               style={s.input}
-              placeholder="Ask a maintenance question..."
+              placeholder={pendingPhoto ? 'Ask about this photo...' : 'Ask a maintenance question...'}
               placeholderTextColor={C.textMuted}
               value={inputValue}
               onChangeText={setInputValue}
               multiline
-              editable={!isProcessing}
+              editable={!isProcessing && !handsFree.active}
             />
             <TouchableOpacity
-              style={[s.sendBtn, (!inputValue.trim() || isProcessing) && s.sendBtnDisabled]}
+              style={[s.sendBtn, ((!inputValue.trim() && !pendingPhoto) || isProcessing || handsFree.active) && s.sendBtnDisabled]}
               onPress={() => handleSend()}
-              disabled={!inputValue.trim() || isProcessing}
+              disabled={(!inputValue.trim() && !pendingPhoto) || isProcessing || handsFree.active}
             >
               <Ionicons name="send-outline" size={16} color="#fff" />
             </TouchableOpacity>
@@ -743,6 +1015,20 @@ const s = StyleSheet.create({
   filterOptionLabel:  { color: C.text, fontSize: 14, fontWeight: '600' },
   filterOptionSub:    { color: C.textMuted, fontSize: 11, marginTop: 2 },
   filterEmptyText:    { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 24 },
+  msgPhoto:           { width: 200, height: 150, borderRadius: 10, marginBottom: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
+  actionsRow:         { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  actionChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, backgroundColor: C.primaryLight, borderWidth: 1, borderColor: '#ddd6fe' },
+  actionChipAlt:      { backgroundColor: C.card },
+  actionChipText:     { color: C.primary, fontSize: 12, fontWeight: '700' },
+  pendingPhoto:       { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight },
+  pendingPhotoImg:    { width: 44, height: 44, borderRadius: 8 },
+  pendingPhotoText:   { flex: 1, color: C.primary, fontSize: 12, fontWeight: '600' },
+  machineChip:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6, flexShrink: 1 },
+  machineChipText:    { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
+  handsFreeChip:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: C.primary },
+  handsFreeChipOn:    { backgroundColor: C.primary },
+  handsFreeChipText:  { fontSize: 12, color: C.primary, fontWeight: '700' },
+  handsFreeNotice:    { marginHorizontal: 12, marginTop: 6, color: C.textMuted, fontSize: 12 },
 });
 
 const markdownStyles = {

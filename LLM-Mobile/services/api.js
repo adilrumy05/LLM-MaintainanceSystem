@@ -117,10 +117,49 @@ export const getFilters = async () => {
 };
 
 // ─────────────────────────────────────────────
+// RESPONSE TEXT
+// ─────────────────────────────────────────────
+
+// The backend HTML-escapes every string it returns. Markdown rendering decodes
+// these on screen, but plain Text and text-to-speech do not - a spoken answer
+// would otherwise read "ampersand hash 39" aloud.
+export const decodeEntities = (text) =>
+  typeof text === 'string'
+    ? text
+        .replace(/&#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+    : text;
+
+// ─────────────────────────────────────────────
 // MAIN COPILOT QUERY
 // ─────────────────────────────────────────────
 
-export const submitQuery = async (query, docGroup = null) => {
+/**
+ * @param {string} query
+ * @param {object} [options]
+ * @param {string} [options.docGroup]       manual selected in the filter
+ * @param {string} [options.imageBase64]    JPEG as raw base64, no data-URL prefix
+ * @param {string} [options.confirmedModel] machine confirmed in this chat
+ * @param {boolean} [options.voice]         ask for a spoken form of the answer
+ *
+ * Also accepts a document group string as the second argument, the original
+ * signature.
+ *
+ * Failed requests throw an Error carrying `code`, `retryable`, `imageAttached`
+ * and `status` from the server, so the app can offer Retry or Retake.
+ */
+export const submitQuery = async (query, options = {}) => {
+  const opts = options === null || typeof options === 'string' ? { docGroup: options } : options;
+  const {
+    docGroup = null,
+    imageBase64 = null,
+    confirmedModel = null,
+    voice = false,
+  } = opts;
+
   const fullUrl = `${API_URL}/query`;
 
   let authHeader = {};
@@ -157,6 +196,8 @@ export const submitQuery = async (query, docGroup = null) => {
   console.log('[API] Role:', userRole);
   console.log('[API] Session:', currentSessionId);
   console.log('[API] Document group:', docGroup || 'ALL');
+  if (imageBase64) console.log('[API] Photo attached:', Math.round((imageBase64.length * 3) / 4 / 1024), 'KB');
+  if (confirmedModel) console.log('[API] Confirmed model:', confirmedModel);
 
   try {
     const response = await fetchWithTimeout(
@@ -176,6 +217,9 @@ export const submitQuery = async (query, docGroup = null) => {
 
           // Only send when manually selected
           ...(docGroup ? { docGroup } : {}),
+          ...(imageBase64 ? { imageBase64 } : {}),
+          ...(confirmedModel ? { confirmedModel } : {}),
+          ...(voice ? { voice: true } : {}),
         }),
       },
       120000
@@ -195,7 +239,12 @@ export const submitQuery = async (query, docGroup = null) => {
         (details ? JSON.stringify(details) : null) ||
         `HTTP ${response.status}`;
 
-      throw new Error(message);
+      const err = new Error(decodeEntities(message));
+      err.status = response.status;
+      err.code = errBody?.code || null;
+      err.retryable = Boolean(errBody?.retryable);
+      err.imageAttached = Boolean(errBody?.imageAttached || imageBase64);
+      throw err;
     }
 
     const data = await response.json();
@@ -228,6 +277,7 @@ export const submitQuery = async (query, docGroup = null) => {
           userEmail,
           role: userRole,
           sources: data.sources || [],
+          imageAttached: Boolean(imageBase64),
           createdAt: serverTimestamp(),
         }
       );
@@ -284,9 +334,13 @@ export const submitQuery = async (query, docGroup = null) => {
     if (error?.name === 'AbortError') {
       console.error('[API] Request timed out:', fullUrl);
 
-      throw new Error(
+      const err = new Error(
         'Request timed out. Please check that the backend and retrieval service are running.'
       );
+      err.code = 'timeout';
+      err.retryable = true;
+      err.imageAttached = Boolean(imageBase64);
+      throw err;
     }
 
     console.error('[API] Query failed:', error);
