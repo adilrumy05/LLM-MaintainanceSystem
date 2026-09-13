@@ -11,6 +11,7 @@ const sanitize = require('./server/middleware/sanitize');
 const validate = require('./server/middleware/validate');
 const outputSanitize = require('./server/middleware/outputSanitize');
 const { resolveVisualIntake } = require('./server/services/visionIntake');
+const { generateSpokenAnswer } = require('./server/services/spokenAnswer');
 
 dotenv.config();
 
@@ -101,6 +102,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       topK = 5,
       imageBase64,
       confirmedModel,
+      voice,
     } = req.body;
 
     console.log('📥 Query received:', query);
@@ -140,6 +142,13 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
 
     // Auto-detect date from query
     const matchedDate = extractDateFromQuery(query);
+
+    // A model the technician already confirmed in this chat (from a nameplate
+    // photo or the model picker) scopes typed follow-ups too. It is only trusted
+    // if it exactly names a model in the catalogue, and a model typed in the
+    // question itself still wins - the technician may have moved on.
+    const trustedConfirmedModel =
+      confirmedModel && (known.model_numbers || []).includes(confirmedModel) ? confirmedModel : null;
 
     // ── Photo intake ──────────────────────────────────────────────────────────
     // When a photo is attached we read it FIRST and only continue once we know
@@ -207,7 +216,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
         category_level_2: matchedCategory2 || category2 || null,
         // A model read off the nameplate is stronger evidence than a substring
         // match against the typed text, so it wins.
-        model_number: visualModel || matchedModel || null,
+        model_number: visualModel || matchedModel || (imageBase64 ? null : trustedConfirmedModel) || null,
         date_added: matchedDate || null,
         top_k: topK,
       }),
@@ -240,16 +249,18 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     // nothing at all. Answering anyway would mean the LLM inventing maintenance
     // guidance with no manual behind it - ungrounded and uncitable, which is the
     // one thing this system exists to avoid.
-    if (imageBase64 && (retrievalData.context_blocks?.length || 0) === 0) {
+    const modelScopedByConfirmation = !imageBase64 && !matchedModel && Boolean(trustedConfirmedModel);
+    if ((imageBase64 || modelScopedByConfirmation) && (retrievalData.context_blocks?.length || 0) === 0) {
+      const scopedModel = visualModel || (modelScopedByConfirmation ? trustedConfirmedModel : null);
       console.log('[VISION] no context retrieved — refusing to answer unsupported');
       return res.status(200).json({
-        text: visualModel
-          ? `I identified this as ${visualModel}, but found nothing in that manual for this question. Try rephrasing, or check the selected manual is the right one.`
+        text: scopedModel
+          ? `I found nothing in the ${scopedModel} manual for this question. Try rephrasing, or check this is the right machine.`
           : 'I could not find anything in the manuals for this. Try rephrasing, or photograph the nameplate.',
         sources: [],
         needsInput: 'no_context',
-        readModel: visualModel || null,
-        imageAttached: true,
+        readModel: scopedModel || null,
+        ...(imageBase64 ? { imageAttached: true } : {}),
       });
     }
 
@@ -352,7 +363,20 @@ specification, torque figure, tolerance or procedure that is not in the extracts
       retrievalData.sources
     );
 
-    // ── Step 5: Return answer + sources + alert metadata ──────────────────────
+    // ── Step 5: Spoken form for hands-free mode ───────────────────────────────
+    // Only when asked for, and only if it passes validation against the full
+    // answer. `text` is untouched either way, so rendering, audit logging and
+    // alert detection above see exactly what they always did.
+    let spoken = null;
+    if (voice === true) {
+      spoken = await generateSpokenAnswer({ text, apiKey });
+      if (!spoken.spokenText) {
+        console.log(`[VOICE] no spoken form: ${spoken.reason}` +
+          (spoken.rejected ? ` | rejected: "${spoken.rejected.slice(0, 300)}"` : ''));
+      }
+    }
+
+    // ── Step 6: Return answer + sources + alert metadata ──────────────────────
     res.json({
       text,
       sources:        retrievalData.sources,
@@ -360,6 +384,10 @@ specification, torque figure, tolerance or procedure that is not in the extracts
       reasoning:      'Generated via OpenAI gpt-4o-mini with RAG context',
       alert,
       priorityTask: priorityResult,
+      // The model this answer is grounded in, so the app can hold it as the
+      // chat's confirmed machine. Only a photo establishes one here.
+      ...(imageBase64 ? { identifiedModel: visualModel, imageAttached: true } : {}),
+      ...(voice === true ? { spokenText: spoken.spokenText, spokenUnavailable: spoken.reason } : {}),
     });
 
   } catch (error) {

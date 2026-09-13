@@ -187,7 +187,12 @@ function buildRetrievalQuery(query, reading) {
   const parts = [String(query || '').trim()];
   if (reading?.faultCode) parts.push(`fault code ${reading.faultCode}`);
   if (reading?.observation) parts.push(reading.observation);
-  if (reading?.visibleText) parts.push(reading.visibleText);
+  // Visible text only helps when it is the subject - a display message or a
+  // warning label. On a nameplate the model already filters retrieval, and the
+  // rest of the plate (serial, voltage, refrigerant) drags the embedding toward
+  // specification tables: "clean the air filter" plus nameplate text retrieved
+  // spec and circuit-diagram pages instead of anything about the filter.
+  if (reading?.visibleText && !reading?.modelNumber) parts.push(reading.visibleText);
   return parts.filter(Boolean).join(' — ').slice(0, 900);
 }
 

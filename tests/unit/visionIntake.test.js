@@ -87,6 +87,19 @@ describe('buildRetrievalQuery', () => {
     expect(q).toContain('corroded fan bearing');
   });
 
+  test('keeps a display message when no model was read', () => {
+    const q = buildRetrievalQuery('what now?', legible({ visibleText: 'FILTER CLEAN REQUIRED' }));
+    expect(q).toContain('FILTER CLEAN REQUIRED');
+  });
+
+  test('drops nameplate text once a model is read, so it cannot swamp the question', () => {
+    const q = buildRetrievalQuery('how do I clean the air filter?', legible({
+      modelNumber: 'CS-S10TKH',
+      visibleText: 'SERIAL No. 4A1234567 220-240V 50Hz R32',
+    }));
+    expect(q).toBe('how do I clean the air filter?');
+  });
+
   test('leaves a photo-free query untouched', () => {
     expect(buildRetrievalQuery('how do I clean the filter?', legible()))
       .toBe('how do I clean the filter?');

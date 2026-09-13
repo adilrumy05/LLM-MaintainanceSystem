@@ -42,6 +42,17 @@ const validate = (req, res, next) => {
     return res.status(400).json({ error: "topK must be a positive number." });
   }
 
+  const { confirmedModel, voice } = req.body;
+
+  if (confirmedModel !== undefined && confirmedModel !== null &&
+      (typeof confirmedModel !== 'string' || confirmedModel.length > 100)) {
+    return res.status(400).json({ error: "confirmedModel must be a model number string.", code: "invalid_request" });
+  }
+
+  if (voice !== undefined && typeof voice !== 'boolean') {
+    return res.status(400).json({ error: "voice must be true or false.", code: "invalid_request" });
+  }
+
   // ── Optional photo attachment ──────────────────────────────────────────────
   // sanitize.js deliberately skips this field, so it is validated here instead.
   // The limit is on DECODED bytes, not string length: base64 inflates by ~4/3,
