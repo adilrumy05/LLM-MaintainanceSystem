@@ -88,13 +88,24 @@ export default function Dashboard() {
 
 
 
-  const addMessage = (from, text, sources = [], timers = []) => {
-    const msg = { id: Date.now().toString() + Math.random(), from, text, sources, timers };
+  const addMessage = (from, text, sources = [], timers = [], isProcedural = false, steps = []) => {
+    const msg = { id: Date.now().toString() + Math.random(), from, text, sources, timers, isProcedural, steps };
     setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, messages: [...c.messages, msg] } : c));
     requestAnimationFrame(() => {
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
     });
   };
+
+  const decodeEntities = (str) => {
+    if (typeof str !== 'string') return str;
+    return str
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+  };
+  
 
   const handleSend = async (overrideText) => {
     const queryText = (overrideText || inputValue).trim();
@@ -111,10 +122,23 @@ export default function Dashboard() {
     try {
       const result = await submitQuery(queryText, activeChat?.filter?.id || null);
       if (!cancelRef.current) {
-        // Strip [[TIMER:...]] markers before the text is stored, so they never
-        // reach the renderer, AsyncStorage, or a later repair report.
-        const { cleanText, timers } = extractTimers(result.text);
-        addMessage('bot', cleanText, result.sources || [], timers);
+        // Decode first, then strip [[TIMER:...]] markers, so markers never
+        // reach the renderer, AsyncStorage, or a later repair report. Order
+        // matters: entity decoding must happen before marker matching.
+        const { cleanText, timers } = extractTimers(decodeEntities(result.text));
+        addMessage(
+          'bot',
+          cleanText,
+          result.sources || [],
+          timers,
+          result.isProcedural || false,
+          (result.steps || []).map(st => ({
+            title: decodeEntities(st.title),
+            description: decodeEntities(st.description),
+            warningLevel: st.warning_level,
+            toolsRequired: st.tools_required || [],
+          }))
+        );
       }
     } catch (err) {
       if (!cancelRef.current) addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`);
@@ -243,6 +267,70 @@ export default function Dashboard() {
   };
 
   const closeReport = () => { setReportData(null); setReportError(null); };
+
+  const WARNING_COLORS = {
+    none:     { border: C.cardBorder, bg: 'transparent', text: C.textMuted, icon: null },
+    caution:  { border: '#fcd34d', bg: '#fef9c3', text: '#d97706', icon: 'warning-outline' },
+    critical: { border: '#fecaca', bg: '#fef2f2', text: '#dc2626', icon: 'alert-circle-outline' },
+  };
+
+  const StepCardViewer = ({ steps }) => {
+    const [current, setCurrent] = useState(0);
+    const step = steps[current];
+    const warn = WARNING_COLORS[step.warningLevel] || WARNING_COLORS.none;
+    const isFirst = current === 0;
+    const isLast = current === steps.length - 1;
+
+    return (
+      <View style={s.stepViewer}>
+        <View style={s.stepProgressRow}>
+          {steps.map((_, i) => (
+            <View key={i} style={[s.stepDot, i === current && s.stepDotActive]} />
+          ))}
+        </View>
+
+        <Text style={s.stepCounter}>Step {current + 1} of {steps.length}</Text>
+
+        <View style={[s.stepCard, { borderColor: warn.border }]}>
+          {warn.icon && (
+            <View style={[s.stepWarningBanner, { backgroundColor: warn.bg }]}>
+              <Ionicons name={warn.icon} size={14} color={warn.text} />
+              <Text style={[s.stepWarningText, { color: warn.text }]}>
+                {step.warningLevel === 'critical' ? ' CRITICAL' : ' CAUTION'}
+              </Text>
+            </View>
+          )}
+          <Text style={s.stepTitle}>{step.title}</Text>
+          <Text style={s.stepDescription}>{step.description}</Text>
+          {step.toolsRequired?.length > 0 && (
+            <View style={s.stepToolsRow}>
+              <Ionicons name="build-outline" size={12} color={C.textMuted} />
+              <Text style={s.stepToolsText}> {step.toolsRequired.join(', ')}</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={s.stepNavRow}>
+          <TouchableOpacity
+            style={[s.stepNavBtn, isFirst && s.stepNavBtnDisabled]}
+            onPress={() => setCurrent(c => Math.max(0, c - 1))}
+            disabled={isFirst}
+          >
+            <Ionicons name="chevron-back-outline" size={16} color={isFirst ? C.textMuted : C.primary} />
+            <Text style={[s.stepNavText, isFirst && { color: C.textMuted }]}>Previous</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.stepNavBtn, isLast && s.stepNavBtnDisabled]}
+            onPress={() => setCurrent(c => Math.min(steps.length - 1, c + 1))}
+            disabled={isLast}
+          >
+            <Text style={[s.stepNavText, isLast && { color: C.textMuted }]}>Next</Text>
+            <Ionicons name="chevron-forward-outline" size={16} color={isLast ? C.textMuted : C.primary} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
 
   const handleNewChat = () => {
     const newId = Date.now().toString();
@@ -404,38 +492,75 @@ export default function Dashboard() {
     );
   };
 
+  // ─── Bot message (own component so toggle state persists per bubble) ─────
+  const BotMessage = ({ item }) => {
+    const hasSteps = item.isProcedural && item.steps?.length > 0;
+    const [viewMode, setViewMode] = useState(hasSteps ? 'cards' : 'text');
+
+    return (
+      <View style={[s.bubble, s.bubbleBot]}>
+        {hasSteps && (
+          <View style={s.viewToggleRow}>
+            <TouchableOpacity
+              style={[s.viewToggleBtn, viewMode === 'cards' && s.viewToggleBtnActive]}
+              onPress={() => setViewMode('cards')}
+            >
+              <Text style={[s.viewToggleText, viewMode === 'cards' && s.viewToggleTextActive]}>Steps</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.viewToggleBtn, viewMode === 'text' && s.viewToggleBtnActive]}
+              onPress={() => setViewMode('text')}
+            >
+              <Text style={[s.viewToggleText, viewMode === 'text' && s.viewToggleTextActive]}>Full Text</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {hasSteps && viewMode === 'cards'
+          ? <StepCardViewer steps={item.steps} />
+          : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
+        }
+
+        {/* Timers sit outside the Steps/Full Text toggle: a mandated wait
+            applies to the job regardless of how the answer is being read. */}
+        {item.timers?.length > 0 && (
+          <View style={s.timersBox}>
+            {item.timers.map((t) => (
+              <ProcedureTimer
+                key={t.id}
+                timer={t}
+                onComplete={(done) => handleTimerComplete(item, done)}
+              />
+            ))}
+          </View>
+        )}
+
+        {item.sources?.length > 0 && (
+          <View style={s.sourcesBox}>
+            <View style={s.sourcesLabelRow}>
+              <Ionicons name="attach-outline" size={10} color="#7c3aed" />
+              <Text style={s.sourcesLabel}> SOURCES</Text>
+            </View>
+            {item.sources.map((src, i) => <SourceItem key={i} source={src} />)}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   // ─── Render message ───────────────────────────────────────────────────────
   const renderMessage = ({ item }) => {
     const isUser = item.from === 'user';
     return (
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
-        <View style={[s.bubble, isUser ? s.bubbleUser : s.bubbleBot]}>
-          {isUser
-            ? <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
-            : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
-          }
-          {!isUser && item.timers?.length > 0 && (
-            <View style={s.timersBox}>
-              {item.timers.map((t) => (
-                <ProcedureTimer
-                  key={t.id}
-                  timer={t}
-                  onComplete={(done) => handleTimerComplete(item, done)}
-                />
-              ))}
+        {isUser
+          ? (
+            <View style={[s.bubble, s.bubbleUser]}>
+              <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
             </View>
-          )}
-
-          {item.sources?.length > 0 && (
-            <View style={s.sourcesBox}>
-              <View style={s.sourcesLabelRow}>
-                <Ionicons name="attach-outline" size={10} color="#7c3aed" />
-                <Text style={s.sourcesLabel}> SOURCES</Text>
-              </View>
-              {item.sources.map((src, i) => <SourceItem key={i} source={src} />)}
-            </View>
-          )}
-        </View>
+          )
+          : <BotMessage item={item} />
+        }
       </View>
     );
   };
@@ -984,6 +1109,31 @@ const s = StyleSheet.create({
   filterOptionLabel:  { color: C.text, fontSize: 14, fontWeight: '600' },
   filterOptionSub:    { color: C.textMuted, fontSize: 11, marginTop: 2 },
   filterEmptyText:    { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 24 },
+
+  // ─── Step card viewer ──────────────────────────────────────────────
+  stepViewer:          { marginTop: 4 },
+  stepProgressRow:     { flexDirection: 'row', gap: 4, marginBottom: 6, flexWrap: 'wrap' },
+  stepDot:             { width: 6, height: 6, borderRadius: 3, backgroundColor: C.cardBorder },
+  stepDotActive:       { backgroundColor: C.primary, width: 16 },
+  stepCounter:         { fontSize: 11, color: C.textMuted, marginBottom: 8, fontWeight: '600' },
+  stepCard:            { borderWidth: 1, borderRadius: 12, padding: 12, backgroundColor: C.bg },
+  stepWarningBanner:   { flexDirection: 'row', alignItems: 'center', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 8, alignSelf: 'flex-start' },
+  stepWarningText:     { fontSize: 10, fontWeight: '700' },
+  stepTitle:           { fontSize: 15, fontWeight: '700', color: C.text, marginBottom: 6 },
+  stepDescription:     { fontSize: 13, color: C.text, lineHeight: 19 },
+  stepToolsRow:        { flexDirection: 'row', alignItems: 'center', marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: C.cardBorder },
+  stepToolsText:       { fontSize: 11, color: C.textMuted },
+  stepNavRow:          { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, gap: 8 },
+  stepNavBtn:          { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderColor: C.primary, borderRadius: 10, paddingVertical: 8 },
+  stepNavBtnDisabled:  { borderColor: C.cardBorder, opacity: 0.5 },
+  stepNavText:         { fontSize: 12, fontWeight: '700', color: C.primary },
+
+  // ─── View mode toggle ──────────────────────────────────────────────
+  viewToggleRow:       { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  viewToggleBtn:       { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: C.bg },
+  viewToggleBtnActive: { backgroundColor: C.primaryLight },
+  viewToggleText:      { fontSize: 11, color: C.textMuted, fontWeight: '600' },
+  viewToggleTextActive:{ color: C.primary },
 });
 
 const markdownStyles = {

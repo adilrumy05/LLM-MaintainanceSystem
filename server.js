@@ -88,6 +88,15 @@ Use whole seconds. Never more than 3 markers in one response.`;
 
 const DEFAULT_SYSTEM_PROMPT = `You are a maintenance assistant. Give a clear, safe, step-by-step response to technical inspection and maintenance tasks. Base all guidance strictly on the retrieved manual content provided.`;
 
+// The step extractor (Call 2 below) must never see timer markers. It rewrites
+// the answer into step titles and descriptions, and any marker it copied
+// through would render as literal "[[TIMER:180|...]]" inside a step card —
+// where the client's marker sweep does not reach, since that only cleans the
+// narrative text. Strip them from what Call 2 reads; the narrative response
+// still carries the markers for the client to turn into timers.
+const stripTimerMarkers = (str) =>
+  typeof str === 'string' ? str.replace(/[ \t]*\[\[\s*TIMER\b[^\]]{0,80}\]\][ \t]*\n?/gi, '') : str;
+
 function extractDateFromQuery(query) {
   // Match YYYY-MM-DD
   let match = query.match(/\b(\d{4}-\d{2}-\d{2})\b/);
@@ -195,20 +204,18 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     // ── Step 2: Send enriched prompt to OpenAI ───────────────────────────────
     const systemPrompt = (ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT) + TIMER_INSTRUCTION;
 
+    // ── Call 1: original narrative answer, UNCHANGED from before ─────────────
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type':  'application/json',
-      },
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model:       'gpt-4o-mini',
+        model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user',   content: finalPrompt  },
+          { role: 'user', content: finalPrompt },
         ],
         temperature: 0.2,
-        max_tokens:  2048,
+        max_tokens: 2048,
       }),
     });
 
@@ -223,8 +230,66 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       });
     }
 
-    const text = data?.choices?.[0]?.message?.content
-      || 'No response text returned.';
+    const text = data?.choices?.[0]?.message?.content || 'No response text returned.';
+
+    // ── Call 2: cheap structured extraction FROM the finished answer ─────────
+    let isProcedural = false;
+    let steps = [];
+
+    try {
+      const stepResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: `You extract structured step breakdowns from maintenance answers. Given the answer text below, determine if it describes a procedure, troubleshooting flow, checklist, or multi-step task. If so, break it into atomic steps without changing the meaning or adding new information. If it is not procedural, return an empty steps array.`,
+            },
+            { role: 'user', content: stripTimerMarkers(text) },
+          ],
+          temperature: 0,
+          max_tokens: 1500,
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'step_extraction',
+              strict: true,
+              schema: {
+                type: 'object',
+                properties: {
+                  is_procedural: { type: 'boolean' },
+                  steps: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        title: { type: 'string' },
+                        description: { type: 'string' },
+                        warning_level: { type: 'string', enum: ['none', 'caution', 'critical'] },
+                        tools_required: { type: 'array', items: { type: 'string' } },
+                      },
+                      required: ['title', 'description', 'warning_level', 'tools_required'],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ['is_procedural', 'steps'],
+                additionalProperties: false,
+              },
+            },
+          },
+        }),
+      });
+
+      const stepData = await stepResponse.json();
+      const parsed = JSON.parse(stepData?.choices?.[0]?.message?.content || '{}');
+      isProcedural = !!parsed.is_procedural;
+      steps = Array.isArray(parsed.steps) ? parsed.steps : [];
+    } catch (stepErr) {
+      console.error('Step extraction failed, continuing with text-only response:', stepErr);
+    }
 
     // ── Step 3: Fire the Audit Logger (Session Based) ────────────────────────
     try {
@@ -254,6 +319,8 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     // ── Step 5: Return answer + sources + alert metadata ──────────────────────
     res.json({
       text,
+      isProcedural,
+      steps,
       sources:        retrievalData.sources,
       context_blocks: retrievalData.context_blocks,
       reasoning:      'Generated via OpenAI gpt-4o-mini with RAG context',
