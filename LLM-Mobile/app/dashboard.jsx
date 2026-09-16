@@ -7,11 +7,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { useUser } from './_layout';
-import { submitQuery, resetSession, setSession, getSession, generateReport } from '../services/api';
+import { submitQuery, resetSession, setSession, getSession, generateReport, logTimerEvent } from '../services/api';
 import { shareReportPdf } from '../services/reportPdf';
 import * as ImagePicker from 'expo-image-picker';
 import Markdown from 'react-native-markdown-display';
 import MicButton from '../components/MicButton';
+import ProcedureTimer from '../components/ProcedureTimer';
+import { extractTimers } from '../services/procedureTimers';
 import { transcribeAudio } from '../services/api';
 import { getFilters } from '../services/api';
 
@@ -86,8 +88,8 @@ export default function Dashboard() {
 
 
 
-  const addMessage = (from, text, sources = []) => {
-    const msg = { id: Date.now().toString() + Math.random(), from, text, sources };
+  const addMessage = (from, text, sources = [], timers = []) => {
+    const msg = { id: Date.now().toString() + Math.random(), from, text, sources, timers };
     setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, messages: [...c.messages, msg] } : c));
     requestAnimationFrame(() => {
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
@@ -108,7 +110,12 @@ export default function Dashboard() {
     setIsProcessing(true);
     try {
       const result = await submitQuery(queryText, activeChat?.filter?.id || null);
-      if (!cancelRef.current) addMessage('bot', result.text, result.sources || []);
+      if (!cancelRef.current) {
+        // Strip [[TIMER:...]] markers before the text is stored, so they never
+        // reach the renderer, AsyncStorage, or a later repair report.
+        const { cleanText, timers } = extractTimers(result.text);
+        addMessage('bot', cleanText, result.sources || [], timers);
+      }
     } catch (err) {
       if (!cancelRef.current) addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`);
     }
@@ -179,6 +186,21 @@ export default function Dashboard() {
   //     addMessage('bot', 'File received! You can now ask questions about it.');
   //   }
   // };
+
+  // A completed wait is evidence the procedure was followed, so it is recorded
+  // against the session rather than being purely a UI convenience.
+  const handleTimerComplete = (message, doneTimer) => {
+    const sessionId = activeChat?.sessionId;
+    if (sessionId) {
+      logTimerEvent(sessionId, {
+        label: doneTimer.label,
+        seconds: doneTimer.seconds,
+        completed_at: doneTimer.completedAt,
+      }).catch(e => console.warn('[timers] could not record:', e.message));
+    }
+    const msg = `${doneTimer.label} — wait complete. You can continue.`;
+    Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Procedure timer', msg);
+  };
 
   // ── Repair report ─────────────────────────────────────────────
   // Summarises THIS chat's session. Each chat owns its own sessionId, so the
@@ -392,6 +414,18 @@ export default function Dashboard() {
             ? <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
             : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
           }
+          {!isUser && item.timers?.length > 0 && (
+            <View style={s.timersBox}>
+              {item.timers.map((t) => (
+                <ProcedureTimer
+                  key={t.id}
+                  timer={t}
+                  onComplete={(done) => handleTimerComplete(item, done)}
+                />
+              ))}
+            </View>
+          )}
+
           {item.sources?.length > 0 && (
             <View style={s.sourcesBox}>
               <View style={s.sourcesLabelRow}>
@@ -850,6 +884,7 @@ function ReportSection({ label, text, items, empty }) {
 }
 
 const s = StyleSheet.create({
+  timersBox:          { marginTop: 4 },
   // ── Repair report ──
   reportSheet:        { flex: 1, backgroundColor: C.bg },
   reportHead:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.cardBorder },

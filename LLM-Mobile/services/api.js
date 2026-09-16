@@ -443,3 +443,34 @@ export const fetchExistingReport = async (sessionId) => {
     return null;
   }
 };
+
+
+// ─────────────────────────────────────────────
+// PROCEDURE TIMERS
+// ─────────────────────────────────────────────
+
+// Records a completed wait against the session's audit document. Fire and
+// forget from the caller's perspective: the timer already did its job for the
+// technician, so a failure here must never surface as an error in their face.
+export const logTimerEvent = async (sessionId, event) => {
+  if (!sessionId) return null;
+  const response = await fetchWithTimeout(
+    `${API_URL}/timer-event`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        label: event.label,
+        seconds: event.seconds,
+        completedAt: event.completed_at,
+      }),
+    },
+    15000
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error || `HTTP ${response.status}`);
+  }
+  return response.json();
+};

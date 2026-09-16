@@ -39,4 +39,32 @@ async function logAuditRecord(query, text, sources, userId = "anonymous_user", s
   }
 }
 
-module.exports = { logAuditRecord };
+
+// Records a completed procedure wait against the session.
+//
+// This is what turns the timer from a convenience into evidence: the audit
+// trail can show that a manual-mandated wait was actually observed, and for
+// how long, rather than relying on the technician's recollection. Stored
+// alongside the messages on the same session document.
+async function logTimerEvent(sessionId, event) {
+  if (!db) {
+    console.warn('[TIMER] Skipped — Firebase not configured');
+    return null;
+  }
+  if (!sessionId) throw new Error('sessionId is required');
+
+  const entry = {
+    label: String(event?.label || 'Procedure wait').slice(0, 120),
+    seconds: Number(event?.seconds) || 0,
+    completed_at: event?.completed_at || new Date().toISOString(),
+  };
+
+  await db.collection('audit_logs').doc(sessionId).set(
+    { timer_events: FieldValue.arrayUnion(entry), last_updated: entry.completed_at },
+    { merge: true }
+  );
+  console.log(`[TIMER] Recorded "${entry.label}" (${entry.seconds}s) on ${sessionId}`);
+  return entry;
+}
+
+module.exports = { logAuditRecord, logTimerEvent };
