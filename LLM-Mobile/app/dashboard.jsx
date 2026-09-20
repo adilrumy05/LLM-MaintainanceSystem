@@ -1,18 +1,61 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Dimensions, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { useUser } from './_layout';
-import { submitQuery } from '../services/api';
-import * as ImagePicker from 'expo-image-picker';
+import { submitQuery, decodeEntities, getFilters } from '../services/api';
+import { capturePhotos, MAX_PHOTOS } from '../services/photo';
 import Markdown from 'react-native-markdown-display';
 import MicButton from '../components/MicButton';
-import { transcribeAudio } from '../services/api';
-import { getFilters } from '../services/api';
+import HandsFreeBar from '../components/HandsFreeBar';
+import { useHandsFree } from '../hooks/useHandsFree';
+
+const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
+
+// Server outcomes that need the technician, turned into tappable replies.
+const actionsForOutcome = (result, hadPhoto) => {
+  const retake = hadPhoto ? [{ type: 'retake' }] : [];
+  // Adding a photo keeps the ones already sent - e.g. a close-up of the
+  // nameplate alongside the part - where retaking replaces an unreadable set.
+  const addPhoto = hadPhoto ? [{ type: 'add_photo' }] : [];
+  switch (result.needsInput) {
+    case 'ask_model':
+      return [...(result.candidates || []).map((m) => ({ type: 'confirm_model', model: decodeEntities(m) })), ...addPhoto];
+    case 'conflict':
+      return [...(result.readModel ? [{ type: 'use_photo_model', model: decodeEntities(result.readModel) }] : []), ...retake];
+    case 'ask_photo':
+    case 'no_manual':
+      return retake;
+    default:
+      return [];
+  }
+};
+
+const actionLabel = (a) => {
+  switch (a.type) {
+    case 'confirm_model':   return a.model;
+    case 'use_photo_model': return `Use ${a.model}`;
+    case 'retake':          return 'Retake photo';
+    case 'add_photo':       return 'Add a photo';
+    case 'retry':           return 'Retry';
+    default:                return 'OK';
+  }
+};
+
+// A chat photo lives in the app cache and can be cleared by the OS; hide it
+// rather than show a broken image.
+function PhotoThumb({ uri, small }) {
+  const [failed, setFailed] = useState(false);
+  if (!uri || failed) return null;
+  return <Image source={{ uri }} style={small ? s.msgPhotoSmall : s.msgPhoto} resizeMode="cover" onError={() => setFailed(true)} />;
+}
+
+// Older messages stored a single imageUri.
+const messagePhotos = (item) => item.imageUris || (item.imageUri ? [item.imageUri] : []);
 
 export default function Dashboard() {
   const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
@@ -30,6 +73,20 @@ export default function Dashboard() {
   const [allFilters, setAllFilters]         = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [filterSearchText, setFilterSearchText] = useState('');
+  const [pendingPhotos, setPendingPhotos]   = useState([]);
+  const [isPhotoBusy, setIsPhotoBusy]       = useState(false);
+  const [handsFreeNotice, setHandsFreeNotice] = useState(null);
+
+  // Callbacks from hands-free audio fire long after the render that created
+  // them, so they read the current chat through refs.
+  const chatsRef        = useRef(chats);
+  const activeChatIdRef = useRef(activeChatId);
+  chatsRef.current        = chats;
+  activeChatIdRef.current = activeChatId;
+
+  // Last request per chat, kept in memory only - photos are never persisted -
+  // so Retry, Retake and model confirmation can resend it.
+  const lastRequestRef = useRef({});
 
 
   const activeChat = chats.find(c => c.id === activeChatId);
@@ -73,57 +130,220 @@ export default function Dashboard() {
 
 
 
-  const addMessage = (from, text, sources = [], isProcedural = false, steps = []) => {
-    const msg = { id: Date.now().toString() + Math.random(), from, text, sources, isProcedural, steps };
-    setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, messages: [...c.messages, msg] } : c));
+  const addMessage = (from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
+    const msg = { id: Date.now().toString() + Math.random(), from, text, sources, ...extra };
+    setChats(prev => prev.map(c => c.id === chatId ? { ...c, messages: [...c.messages, msg] } : c));
     requestAnimationFrame(() => {
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
     });
   };
 
-  const decodeEntities = (str) => {
-    if (typeof str !== 'string') return str;
-    return str
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'");
+  const updateMessage = (messageId, updater, chatId = activeChatIdRef.current) => {
+    setChats(prev => prev.map(c => {
+      if (c.id !== chatId) return c;
+      return {
+        ...c,
+        messages: c.messages.map(m => m.id === messageId ? updater(m) : m),
+      };
+    }));
   };
-  
+
+  const updateChat = (chatId, patch) =>
+    setChats(prev => prev.map(c => (c.id === chatId ? { ...c, ...patch } : c)));
+
+  const setActionsUsed = (chatId, messageId, used) =>
+    setChats(prev => prev.map(c => (c.id !== chatId ? c : {
+      ...c,
+      messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
+    })));
+  const markActionsUsed   = (chatId, messageId) => setActionsUsed(chatId, messageId, true);
+  // Cancelling the photo picker should leave the reply buttons available.
+  const markActionsUnused = (chatId, messageId) => setActionsUsed(chatId, messageId, false);
+
+  /**
+   * Send one request and put the outcome in the chat.
+   * `confirmedModel` / `docGroup` override the chat's own values when a reply
+   * action has just changed them and state has not re-rendered yet.
+   */
+  const runQuery = async ({ text, photos = [], confirmedModel, docGroup, voice = false }) => {
+    const chatId = activeChatIdRef.current;
+    const chat = chatsRef.current.find(c => c.id === chatId);
+    const model = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
+    const group = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
+    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group };
+    const hasPhotos = photos.length > 0;
+
+    cancelRef.current = false;
+    setIsProcessing(true);
+    try {
+      const result = await submitQuery(text, {
+        docGroup: group,
+        images: photos.map(p => p.base64),
+        confirmedModel: model,
+        voice,
+      });
+      if (cancelRef.current) return { cancelled: true };
+
+      if (result.needsInput) {
+        addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, hasPhotos) }, chatId);
+      } else {
+        addMessage('bot', decodeEntities(result.text), result.sources || [], {
+          // Guided response: step cards come from the backend's second call.
+          isProcedural: result.isProcedural || false,
+          steps: (result.steps || []).map((st) => ({
+            title: decodeEntities(st.title),
+            description: decodeEntities(st.description),
+            warningLevel: st.warning_level,
+            toolsRequired: st.tools_required || [],
+          })),
+          procedureView: (result.isProcedural && result.steps?.length > 0) ? 'procedure' : 'text',
+          procedureState: (result.isProcedural && result.steps?.length > 0)
+            ? { currentStep: 0, completedSteps: [], overviewOpen: false }
+            : null,
+        }, chatId);
+        // A photo that identified the machine makes it this chat's machine.
+        if (result.identifiedModel) updateChat(chatId, { confirmedModel: decodeEntities(result.identifiedModel) });
+      }
+      return { result };
+    } catch (err) {
+      if (cancelRef.current) return { cancelled: true };
+      const photoProblem = err.code === 'invalid_image' || err.code === 'image_too_large';
+      const actions = hasPhotos && photoProblem ? [{ type: 'retake' }]
+        : err.retryable || !err.status ? [{ type: 'retry' }]
+        : [];
+      addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`, [], { actions }, chatId);
+      return { error: err };
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleSend = async (overrideText) => {
-    const queryText = (overrideText || inputValue).trim();
-    if (!queryText || isProcessing) return;
+    const typed = (overrideText || inputValue).trim();
+    const photos = pendingPhotos;
+    if ((!typed && !photos.length) || isProcessing) return;
+    const queryText = typed || DEFAULT_PHOTO_QUESTION;
     setInputValue('');
-    cancelRef.current = false;
+    setPendingPhotos([]);
     const raw = await AsyncStorage.getItem('queryHistory');
     const existing = JSON.parse(raw || '[]');
     await AsyncStorage.setItem('queryHistory', JSON.stringify(
       [{ id: Date.now(), text: queryText, timestamp: new Date().toISOString() }, ...existing].slice(0, 50)
     ));
-    addMessage('user', queryText);
-    setIsProcessing(true);
-    try {
-      const result = await submitQuery(queryText, activeChat?.filter?.id || null);
-      if (!cancelRef.current) {
-        addMessage(
-          'bot',
-          decodeEntities(result.text),
-          result.sources || [],
-          result.isProcedural || false,
-          (result.steps || []).map(st => ({
-            title: decodeEntities(st.title),
-            description: decodeEntities(st.description),
-            warningLevel: st.warning_level,
-            toolsRequired: st.tools_required || [],
-          }))
-        );
-      }
-    } catch (err) {
-      if (!cancelRef.current) addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`);
+    addMessage('user', queryText, [], photos.length ? { imageUris: photos.map(p => p.uri) } : {});
+    await runQuery({ text: queryText, photos });
+  };
+
+  // ─── Photos ───────────────────────────────────────────────────────────────
+  const choosePhotoSource = () => new Promise((resolve) => {
+    if (Platform.OS === 'web') { resolve('library'); return; }
+    Alert.alert('Add a photo', 'Photograph a nameplate, a fault display, or a part.', [
+      { text: 'Take photo', onPress: () => resolve('camera') },
+      { text: 'Choose from library', onPress: () => resolve('library') },
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+    ], { cancelable: true, onDismiss: () => resolve(null) });
+  });
+
+  const getPhotos = async (limit) => {
+    if (limit < 1) {
+      Alert.alert('Photos', `You can attach up to ${MAX_PHOTOS} photos to one question.`);
+      return [];
     }
-    setIsProcessing(false);
+    const source = await choosePhotoSource();
+    if (!source) return [];
+    setIsPhotoBusy(true);
+    try {
+      return await capturePhotos(source, { limit });
+    } catch (e) {
+      Alert.alert('Photo', e.message || 'Could not get the photo.');
+      return [];
+    } finally {
+      setIsPhotoBusy(false);
+    }
+  };
+
+  const handleAttachPhoto = async () => {
+    const added = await getPhotos(MAX_PHOTOS - pendingPhotos.length);
+    if (added.length) setPendingPhotos(prev => [...prev, ...added].slice(0, MAX_PHOTOS));
+  };
+
+  const removePendingPhoto = (index) =>
+    setPendingPhotos(prev => prev.filter((_, i) => i !== index));
+
+  // ─── Replies to "which model?", "retake", "retry" ────────────────────────
+  const handleAction = async (message, action) => {
+    const chatId = activeChatIdRef.current;
+    const req = lastRequestRef.current[chatId];
+    markActionsUsed(chatId, message.id);
+
+    switch (action.type) {
+      case 'confirm_model': {
+        updateChat(chatId, { confirmedModel: action.model });
+        addMessage('user', `It's the ${action.model}`);
+        if (!req) { addMessage('bot', `Saved ${action.model} for this chat. Ask your question again.`); return; }
+        await runQuery({ ...req, confirmedModel: action.model });
+        return;
+      }
+      case 'use_photo_model': {
+        // The photo disagreed with the chat's machine or manual. Switching to it
+        // clears both, so the old manual cannot silently filter the new machine.
+        updateChat(chatId, { confirmedModel: action.model, filter: null });
+        addMessage('user', `Use ${action.model}`);
+        if (!req) { addMessage('bot', `Switched this chat to ${action.model}. Ask your question again.`); return; }
+        await runQuery({ ...req, confirmedModel: action.model, docGroup: null });
+        return;
+      }
+      case 'retake':
+      case 'add_photo': {
+        // Retake replaces the set; add keeps what was already sent.
+        const kept = action.type === 'add_photo' ? req?.photos || [] : [];
+        const added = await getPhotos(MAX_PHOTOS - kept.length);
+        if (!added.length) { markActionsUnused(chatId, message.id); return; }
+        const photos = [...kept, ...added].slice(0, MAX_PHOTOS);
+        const text = req?.text || DEFAULT_PHOTO_QUESTION;
+        addMessage('user', text, [], { imageUris: photos.map(p => p.uri) });
+        await runQuery({ text, photos, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup });
+        return;
+      }
+      case 'retry': {
+        if (!req) { addMessage('bot', 'That request is no longer available. Please ask again.'); return; }
+        await runQuery(req);
+        return;
+      }
+      default:
+    }
+  };
+
+  // ─── Hands-free ───────────────────────────────────────────────────────────
+  const askHandsFree = async (text) => {
+    addMessage('user', text);
+    const { result, error, cancelled } = await runQuery({ text, voice: true });
+    if (cancelled) return { speak: 'Cancelled.', stopAfter: true };
+    if (error) return { speak: `Sorry, that failed. ${error.message || ''}`.trim(), stopAfter: true };
+    if (result.needsInput) return { speak: decodeEntities(result.text) };
+    if (result.spokenText) return { speak: decodeEntities(result.spokenText) };
+    // The spoken form was withheld because it could not be shown to keep every
+    // warning. Never read a partial procedure aloud.
+    return { speak: 'Audio guidance is not available for this answer. The full answer is on your screen.' };
+  };
+
+  const noticeTimer = useRef(null);
+  const showHandsFreeNotice = (msg) => {
+    setHandsFreeNotice(msg);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setHandsFreeNotice(null), 5000);
+  };
+
+  const handsFree = useHandsFree({ ask: askHandsFree, onNotice: showHandsFreeNotice });
+  const handsFreeStopRef = useRef(handsFree.stop);
+  handsFreeStopRef.current = handsFree.stop;
+
+  // Leaving this screen stops listening and speaking.
+  useFocusEffect(useCallback(() => () => { handsFreeStopRef.current(); }, []));
+
+  const toggleHandsFree = () => {
+    if (handsFree.active) handsFree.stop('Hands-free stopped.');
+    else handsFree.start();
   };
 
   const prettifyFilterLabel = (id) => {
@@ -163,7 +383,9 @@ export default function Dashboard() {
     setChats(prev =>
       prev.map(c =>
         c.id === activeChatId
-          ? { ...c, filter: opt || null }
+          // A different manual means a possibly different machine: the
+          // confirmed model is dropped rather than carried into the new scope.
+          ? { ...c, filter: opt || null, confirmedModel: (c.filter?.id === opt?.id) ? c.confirmedModel : null }
           : c
       )
     );
@@ -197,22 +419,101 @@ export default function Dashboard() {
     critical: { border: '#fecaca', bg: '#fef2f2', text: '#dc2626', icon: 'alert-circle-outline' },
   };
 
-  const StepCardViewer = ({ steps }) => {
-    const [current, setCurrent] = useState(0);
+  const ProcedureViewer = ({ steps, state, onChange }) => {
+    const safeState = state || {
+      currentStep: 0,
+      completedSteps: [],
+      overviewOpen: false,
+    };
+
+    const current = Math.min(
+      Math.max(safeState.currentStep || 0, 0),
+      Math.max(steps.length - 1, 0)
+    );
+
+    const completedSteps = Array.isArray(safeState.completedSteps)
+      ? safeState.completedSteps
+      : [];
+
     const step = steps[current];
     const warn = WARNING_COLORS[step.warningLevel] || WARNING_COLORS.none;
     const isFirst = current === 0;
     const isLast = current === steps.length - 1;
+    const currentCompleted = completedSteps.includes(current);
+    const completedCount = completedSteps.length;
+    const progressPercent = steps.length > 0
+      ? Math.round((completedCount / steps.length) * 100)
+      : 0;
+    const allCompleted = steps.length > 0 && completedCount === steps.length;
+
+    const patchState = (patch) => {
+      onChange({
+        ...safeState,
+        ...patch,
+      });
+    };
+
+    const toggleCurrentStep = () => {
+      const nextCompleted = currentCompleted
+        ? completedSteps.filter(i => i !== current)
+        : [...completedSteps, current].sort((a, b) => a - b);
+
+      patchState({ completedSteps: nextCompleted });
+    };
+
+    const goToStep = (index) => {
+      patchState({
+        currentStep: index,
+        overviewOpen: false,
+      });
+    };
 
     return (
       <View style={s.stepViewer}>
-        <View style={s.stepProgressRow}>
-          {steps.map((_, i) => (
-            <View key={i} style={[s.stepDot, i === current && s.stepDotActive]} />
-          ))}
+        <View style={s.procedureTopRow}>
+          <View>
+            <Text style={s.procedureEyebrow}>GUIDED PROCEDURE</Text>
+            <Text style={s.procedureProgressText}>
+              {completedCount} of {steps.length} completed
+            </Text>
+          </View>
+
+          <View style={s.procedurePercentPill}>
+            <Text style={s.procedurePercentText}>{progressPercent}%</Text>
+          </View>
         </View>
 
-        <Text style={s.stepCounter}>Step {current + 1} of {steps.length}</Text>
+        <View style={s.procedureProgressTrack}>
+          <View
+            style={[
+              s.procedureProgressFill,
+              { width: `${progressPercent}%` },
+            ]}
+          />
+        </View>
+
+        {allCompleted && (
+          <View style={s.procedureCompleteBanner}>
+            <Ionicons name="checkmark-circle" size={18} color="#15803d" />
+            <View style={{ flex: 1 }}>
+              <Text style={s.procedureCompleteTitle}>Procedure completed</Text>
+              <Text style={s.procedureCompleteSub}>
+                All {steps.length} maintenance steps have been marked complete.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        <View style={s.stepHeaderRow}>
+          <Text style={s.stepCounter}>Step {current + 1} of {steps.length}</Text>
+
+          {currentCompleted && (
+            <View style={s.stepCompletedPill}>
+              <Ionicons name="checkmark" size={12} color="#15803d" />
+              <Text style={s.stepCompletedPillText}>Completed</Text>
+            </View>
+          )}
+        </View>
 
         <View style={[s.stepCard, { borderColor: warn.border }]}>
           {warn.icon && (
@@ -223,40 +524,193 @@ export default function Dashboard() {
               </Text>
             </View>
           )}
+
           <Text style={s.stepTitle}>{step.title}</Text>
           <Text style={s.stepDescription}>{step.description}</Text>
+
           {step.toolsRequired?.length > 0 && (
             <View style={s.stepToolsRow}>
-              <Ionicons name="build-outline" size={12} color={C.textMuted} />
-              <Text style={s.stepToolsText}> {step.toolsRequired.join(', ')}</Text>
+              <Ionicons name="build-outline" size={13} color={C.textMuted} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.stepToolsLabel}>Tools required</Text>
+                <Text style={s.stepToolsText}>{step.toolsRequired.join(', ')}</Text>
+              </View>
             </View>
           )}
+
+          <TouchableOpacity
+            style={[
+              s.stepCompleteAction,
+              currentCompleted && s.stepCompleteActionChecked,
+            ]}
+            onPress={toggleCurrentStep}
+            activeOpacity={0.8}
+          >
+            <View
+              style={[
+                s.stepCheckbox,
+                currentCompleted && s.stepCheckboxChecked,
+              ]}
+            >
+              {currentCompleted && (
+                <Ionicons name="checkmark" size={15} color="#fff" />
+              )}
+            </View>
+
+            <View style={{ flex: 1 }}>
+              <Text
+                style={[
+                  s.stepCompleteActionTitle,
+                  currentCompleted && s.stepCompleteActionTitleChecked,
+                ]}
+              >
+                {currentCompleted
+                  ? 'Step completed'
+                  : step.warningLevel === 'critical'
+                    ? 'I confirm this critical step is complete'
+                    : 'Mark this step as complete'}
+              </Text>
+              {!currentCompleted && (
+                <Text style={s.stepCompleteActionSub}>
+                  Confirm after you have performed this instruction.
+                </Text>
+              )}
+            </View>
+          </TouchableOpacity>
         </View>
 
         <View style={s.stepNavRow}>
           <TouchableOpacity
             style={[s.stepNavBtn, isFirst && s.stepNavBtnDisabled]}
-            onPress={() => setCurrent(c => Math.max(0, c - 1))}
+            onPress={() => patchState({ currentStep: Math.max(0, current - 1) })}
             disabled={isFirst}
           >
-            <Ionicons name="chevron-back-outline" size={16} color={isFirst ? C.textMuted : C.primary} />
-            <Text style={[s.stepNavText, isFirst && { color: C.textMuted }]}>Previous</Text>
+            <Ionicons
+              name="chevron-back-outline"
+              size={16}
+              color={isFirst ? C.textMuted : C.primary}
+            />
+            <Text style={[s.stepNavText, isFirst && { color: C.textMuted }]}>
+              Previous
+            </Text>
           </TouchableOpacity>
+
           <TouchableOpacity
-            style={[s.stepNavBtn, isLast && s.stepNavBtnDisabled]}
-            onPress={() => setCurrent(c => Math.min(steps.length - 1, c + 1))}
-            disabled={isLast}
+            style={[
+              s.stepNavBtn,
+              (!currentCompleted || isLast) && s.stepNavBtnDisabled,
+            ]}
+            onPress={() =>
+              patchState({ currentStep: Math.min(steps.length - 1, current + 1) })
+            }
+            disabled={!currentCompleted || isLast}
           >
-            <Text style={[s.stepNavText, isLast && { color: C.textMuted }]}>Next</Text>
-            <Ionicons name="chevron-forward-outline" size={16} color={isLast ? C.textMuted : C.primary} />
+            <Text
+              style={[
+                s.stepNavText,
+                (!currentCompleted || isLast) && { color: C.textMuted },
+              ]}
+            >
+              {isLast ? 'Final Step' : 'Next'}
+            </Text>
+            {!isLast && (
+              <Ionicons
+                name="chevron-forward-outline"
+                size={16}
+                color={!currentCompleted ? C.textMuted : C.primary}
+              />
+            )}
           </TouchableOpacity>
         </View>
+
+        {!currentCompleted && !isLast && (
+          <View style={s.nextHintRow}>
+            <Ionicons name="information-circle-outline" size={13} color={C.textMuted} />
+            <Text style={s.nextHintText}>
+              Complete the current step to continue.
+            </Text>
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={s.overviewToggle}
+          onPress={() => patchState({ overviewOpen: !safeState.overviewOpen })}
+          activeOpacity={0.8}
+        >
+          <View style={s.overviewToggleLeft}>
+            <Ionicons name="list-outline" size={15} color={C.primary} />
+            <Text style={s.overviewToggleText}>View all steps</Text>
+          </View>
+
+          <View style={s.overviewToggleRight}>
+            <Text style={s.overviewCountText}>
+              {completedCount}/{steps.length}
+            </Text>
+            <Ionicons
+              name={safeState.overviewOpen ? 'chevron-up-outline' : 'chevron-down-outline'}
+              size={15}
+              color={C.textMuted}
+            />
+          </View>
+        </TouchableOpacity>
+
+        {safeState.overviewOpen && (
+          <View style={s.overviewList}>
+            {steps.map((overviewStep, index) => {
+              const done = completedSteps.includes(index);
+              const active = index === current;
+
+              return (
+                <TouchableOpacity
+                  key={index}
+                  style={[
+                    s.overviewItem,
+                    active && s.overviewItemActive,
+                    index === steps.length - 1 && { borderBottomWidth: 0 },
+                  ]}
+                  onPress={() => goToStep(index)}
+                  activeOpacity={0.75}
+                >
+                  <View
+                    style={[
+                      s.overviewStatusIcon,
+                      done && s.overviewStatusIconDone,
+                    ]}
+                  >
+                    {done ? (
+                      <Ionicons name="checkmark" size={12} color="#fff" />
+                    ) : (
+                      <Text style={s.overviewStatusNumber}>{index + 1}</Text>
+                    )}
+                  </View>
+
+                  <Text
+                    style={[
+                      s.overviewItemTitle,
+                      done && s.overviewItemTitleDone,
+                      active && { color: C.primary },
+                    ]}
+                    numberOfLines={2}
+                  >
+                    {overviewStep.title}
+                  </Text>
+
+                  {active && (
+                    <Text style={s.overviewCurrentLabel}>CURRENT</Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       </View>
     );
   };
 
   const handleNewChat = () => {
     const newId = Date.now().toString();
+    handsFree.stop();
+    setPendingPhotos([]);
 
     setChats(prev => [
       ...prev,
@@ -264,6 +718,7 @@ export default function Dashboard() {
         id: newId,
         messages: [],
         filter: null,
+        confirmedModel: null,
       },
     ]);
 
@@ -272,7 +727,11 @@ export default function Dashboard() {
     setInputValue('');
   };
 
-  const handleSwitchChat = (id) => { setActiveChatId(id); setShowSidebar(false); };
+  const handleSwitchChat = (id) => {
+    if (id !== activeChatId) { handsFree.stop(); setPendingPhotos([]); }
+    setActiveChatId(id);
+    setShowSidebar(false);
+  };
 
   const handleDeleteChat = (id) => {
     if (chats.length === 1) { setChats([{ id: '1', messages: [], filter: null }]); setActiveChatId('1'); setShowSidebar(false); return; }
@@ -397,30 +856,91 @@ export default function Dashboard() {
   // ─── Bot message (own component so toggle state persists per bubble) ─────
   const BotMessage = ({ item }) => {
     const hasSteps = item.isProcedural && item.steps?.length > 0;
-    const [viewMode, setViewMode] = useState(hasSteps ? 'cards' : 'text');
+    const viewMode = hasSteps
+      ? (item.procedureView || 'procedure')
+      : 'text';
+
+    const procedureState = item.procedureState || {
+      currentStep: 0,
+      completedSteps: [],
+      overviewOpen: false,
+    };
+
+    const setViewMode = (nextView) => {
+      updateMessage(item.id, m => ({
+        ...m,
+        procedureView: nextView,
+      }));
+    };
+
+    const setProcedureState = (nextState) => {
+      updateMessage(item.id, m => ({
+        ...m,
+        procedureState: nextState,
+      }));
+    };
 
     return (
       <View style={[s.bubble, s.bubbleBot]}>
         {hasSteps && (
           <View style={s.viewToggleRow}>
             <TouchableOpacity
-              style={[s.viewToggleBtn, viewMode === 'cards' && s.viewToggleBtnActive]}
-              onPress={() => setViewMode('cards')}
+              style={[s.viewToggleBtn, viewMode === 'procedure' && s.viewToggleBtnActive]}
+              onPress={() => setViewMode('procedure')}
             >
-              <Text style={[s.viewToggleText, viewMode === 'cards' && s.viewToggleTextActive]}>Steps</Text>
+              <Ionicons
+                name="navigate-circle-outline"
+                size={14}
+                color={viewMode === 'procedure' ? C.primary : C.textMuted}
+              />
+              <Text
+                style={[
+                  s.viewToggleText,
+                  viewMode === 'procedure' && s.viewToggleTextActive,
+                ]}
+              >
+                Procedure
+              </Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[s.viewToggleBtn, viewMode === 'text' && s.viewToggleBtnActive]}
               onPress={() => setViewMode('text')}
             >
-              <Text style={[s.viewToggleText, viewMode === 'text' && s.viewToggleTextActive]}>Full Text</Text>
+              <Ionicons
+                name="document-text-outline"
+                size={13}
+                color={viewMode === 'text' ? C.primary : C.textMuted}
+              />
+              <Text
+                style={[
+                  s.viewToggleText,
+                  viewMode === 'text' && s.viewToggleTextActive,
+                ]}
+              >
+                Full Text
+              </Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {hasSteps && viewMode === 'cards'
-          ? <StepCardViewer steps={item.steps} />
-          : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
+        {hasSteps && viewMode === 'procedure'
+          ? (
+            <ProcedureViewer
+              steps={item.steps}
+              state={procedureState}
+              onChange={setProcedureState}
+            />
+          )
+          : (
+            <Markdown
+              style={markdownStyles}
+              rules={markdownRules}
+              mergeStyle
+            >
+              {item.text}
+            </Markdown>
+          )
         }
 
         {item.sources?.length > 0 && (
@@ -437,6 +957,7 @@ export default function Dashboard() {
   };
 
   // ─── Render message ───────────────────────────────────────────────────────
+
   const renderMessage = ({ item }) => {
     const isUser = item.from === 'user';
     return (
@@ -444,6 +965,12 @@ export default function Dashboard() {
         {isUser
           ? (
             <View style={[s.bubble, s.bubbleUser]}>
+              {messagePhotos(item).length === 1 ? <PhotoThumb uri={messagePhotos(item)[0]} /> : null}
+              {messagePhotos(item).length > 1 ? (
+                <View style={s.msgPhotoGrid}>
+                  {messagePhotos(item).map((uri, i) => <PhotoThumb key={i} uri={uri} small />)}
+                </View>
+              ) : null}
               <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
             </View>
           )
@@ -711,10 +1238,50 @@ export default function Dashboard() {
 
         <View style={s.inputWrapper}>
 
-          {/* Upload disabled — not yet connected to RAG */}
-          {/* {uploadedFile && (
-            ...
-          )} */}
+          <HandsFreeBar
+            phase={handsFree.phase}
+            level={handsFree.level}
+            floor={handsFree.floor}
+            onStop={() => handsFree.stop('Hands-free stopped.')}
+            onFinishNow={handsFree.finishNow}
+          />
+          {handsFreeNotice && !handsFree.active && (
+            <Text style={s.handsFreeNotice}>{handsFreeNotice}</Text>
+          )}
+
+          {pendingPhotos.length > 0 && (
+            <View style={s.pendingPhotos}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.pendingPhotoStrip}>
+                {pendingPhotos.map((p, i) => (
+                  <View key={p.uri + i} style={s.pendingPhotoTile}>
+                    <Image source={{ uri: p.uri }} style={s.pendingPhotoImg} />
+                    <TouchableOpacity
+                      style={s.pendingPhotoRemove}
+                      onPress={() => removePendingPhoto(i)}
+                      accessibilityLabel={`Remove photo ${i + 1}`}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                {pendingPhotos.length < MAX_PHOTOS && (
+                  <TouchableOpacity
+                    style={s.pendingPhotoAdd}
+                    onPress={handleAttachPhoto}
+                    disabled={isPhotoBusy || isProcessing}
+                    accessibilityLabel="Add another photo"
+                  >
+                    {isPhotoBusy
+                      ? <ActivityIndicator size="small" color={C.primary} />
+                      : <Ionicons name="add" size={24} color={C.primary} />}
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+              <Text style={s.pendingPhotoText}>
+                {pendingPhotos.length} of {MAX_PHOTOS} photos. Ask about them, or just send.
+              </Text>
+            </View>
+          )}
 
           <View style={s.filterBar}>
             <TouchableOpacity
@@ -755,29 +1322,63 @@ export default function Dashboard() {
                 />
               </TouchableOpacity>
             )}
+
+            {activeChat?.confirmedModel && (
+              <View style={s.machineChip}>
+                <Ionicons name="hardware-chip-outline" size={13} color={C.primary} />
+                <Text style={s.machineChipText} numberOfLines={1}>{activeChat.confirmedModel}</Text>
+                <TouchableOpacity
+                  onPress={() => updateChat(activeChatId, { confirmedModel: null })}
+                  accessibilityLabel="Clear confirmed machine"
+                >
+                  <Ionicons name="close-circle" size={15} color={C.textMuted} />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[s.handsFreeChip, handsFree.active && s.handsFreeChipOn]}
+              onPress={toggleHandsFree}
+              disabled={!handsFree.active && (isProcessing || isPhotoBusy)}
+              accessibilityLabel={handsFree.active ? 'Stop hands-free' : 'Start hands-free'}
+            >
+              <Ionicons name="headset-outline" size={13} color={handsFree.active ? '#fff' : C.primary} />
+              <Text style={[s.handsFreeChipText, handsFree.active && { color: '#fff' }]}>Hands-free</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={s.inputBar}>
 
+          <TouchableOpacity
+            style={s.iconBtn}
+            onPress={handleAttachPhoto}
+            disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}
+            accessibilityLabel="Attach a photo"
+          >
+            {isPhotoBusy
+              ? <ActivityIndicator size="small" color={C.primary} />
+              : <Ionicons name="camera-outline" size={20} color={C.primary} />}
+          </TouchableOpacity>
+
           <MicButton
             style={s.iconBtn}
-            disabled={isProcessing}
+            disabled={isProcessing || handsFree.active}
             onTranscript={(text) => setInputValue(text)}
           />
 
             <TextInput
               style={s.input}
-              placeholder="Ask a maintenance question..."
+              placeholder={pendingPhotos.length ? 'Ask about these photos...' : 'Ask a maintenance question...'}
               placeholderTextColor={C.textMuted}
               value={inputValue}
               onChangeText={setInputValue}
               multiline
-              editable={!isProcessing}
+              editable={!isProcessing && !handsFree.active}
             />
             <TouchableOpacity
-              style={[s.sendBtn, (!inputValue.trim() || isProcessing) && s.sendBtnDisabled]}
+              style={[s.sendBtn, ((!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active) && s.sendBtnDisabled]}
               onPress={() => handleSend()}
-              disabled={!inputValue.trim() || isProcessing}
+              disabled={(!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active}
             >
               <Ionicons name="send-outline" size={16} color="#fff" />
             </TouchableOpacity>
@@ -867,30 +1468,92 @@ const s = StyleSheet.create({
   filterOptionSub:    { color: C.textMuted, fontSize: 11, marginTop: 2 },
   filterEmptyText:    { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 24 },
 
-  // ─── Step card viewer ──────────────────────────────────────────────
-  stepViewer:          { marginTop: 4 },
-  stepProgressRow:     { flexDirection: 'row', gap: 4, marginBottom: 6, flexWrap: 'wrap' },
-  stepDot:             { width: 6, height: 6, borderRadius: 3, backgroundColor: C.cardBorder },
-  stepDotActive:       { backgroundColor: C.primary, width: 16 },
-  stepCounter:         { fontSize: 11, color: C.textMuted, marginBottom: 8, fontWeight: '600' },
-  stepCard:            { borderWidth: 1, borderRadius: 12, padding: 12, backgroundColor: C.bg },
-  stepWarningBanner:   { flexDirection: 'row', alignItems: 'center', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 8, alignSelf: 'flex-start' },
-  stepWarningText:     { fontSize: 10, fontWeight: '700' },
-  stepTitle:           { fontSize: 15, fontWeight: '700', color: C.text, marginBottom: 6 },
-  stepDescription:     { fontSize: 13, color: C.text, lineHeight: 19 },
-  stepToolsRow:        { flexDirection: 'row', alignItems: 'center', marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: C.cardBorder },
-  stepToolsText:       { fontSize: 11, color: C.textMuted },
-  stepNavRow:          { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, gap: 8 },
-  stepNavBtn:          { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderColor: C.primary, borderRadius: 10, paddingVertical: 8 },
-  stepNavBtnDisabled:  { borderColor: C.cardBorder, opacity: 0.5 },
-  stepNavText:         { fontSize: 12, fontWeight: '700', color: C.primary },
+  // ─── Integrated guided procedure + completion tracking ────────────
+  stepViewer:          { marginTop: 2 },
+  procedureTopRow:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  procedureEyebrow:    { fontSize: 9, fontWeight: '800', letterSpacing: 0.9, color: C.primary, marginBottom: 2 },
+  procedureProgressText:{ fontSize: 12, fontWeight: '700', color: C.text },
+  procedurePercentPill:{ minWidth: 46, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, backgroundColor: C.primaryLight, alignItems: 'center' },
+  procedurePercentText:{ fontSize: 11, fontWeight: '800', color: C.primary },
+  procedureProgressTrack:{ height: 7, borderRadius: 999, backgroundColor: '#ede9fe', overflow: 'hidden', marginBottom: 14 },
+  procedureProgressFill:{ height: '100%', borderRadius: 999, backgroundColor: C.primary },
+  procedureCompleteBanner:{ flexDirection: 'row', gap: 8, alignItems: 'center', backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#bbf7d0', borderRadius: 10, padding: 10, marginBottom: 12 },
+  procedureCompleteTitle:{ fontSize: 12, fontWeight: '800', color: '#166534' },
+  procedureCompleteSub:{ fontSize: 10, lineHeight: 14, color: '#15803d', marginTop: 1 },
 
-  // ─── View mode toggle ──────────────────────────────────────────────
-  viewToggleRow:       { flexDirection: 'row', gap: 6, marginBottom: 10 },
-  viewToggleBtn:       { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: C.bg },
-  viewToggleBtnActive: { backgroundColor: C.primaryLight },
-  viewToggleText:      { fontSize: 11, color: C.textMuted, fontWeight: '600' },
-  viewToggleTextActive:{ color: C.primary },
+  stepHeaderRow:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  stepCounter:         { fontSize: 11, color: C.textMuted, fontWeight: '700' },
+  stepCompletedPill:   { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999, backgroundColor: '#f0fdf4' },
+  stepCompletedPillText:{ fontSize: 9, fontWeight: '800', color: '#15803d' },
+
+  stepCard:            { borderWidth: 1, borderRadius: 14, padding: 13, backgroundColor: C.bg },
+  stepWarningBanner:   { flexDirection: 'row', alignItems: 'center', borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 9, alignSelf: 'flex-start' },
+  stepWarningText:     { fontSize: 10, fontWeight: '800' },
+  stepTitle:           { fontSize: 15, fontWeight: '800', color: C.text, marginBottom: 7 },
+  stepDescription:     { fontSize: 13, color: C.text, lineHeight: 19 },
+
+  stepToolsRow:        { flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderColor: C.cardBorder },
+  stepToolsLabel:      { fontSize: 9, fontWeight: '800', color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
+  stepToolsText:       { fontSize: 11, color: C.textSub, lineHeight: 16 },
+
+  stepCompleteAction:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 13, padding: 11, borderWidth: 1, borderColor: '#ddd6fe', borderRadius: 11, backgroundColor: '#faf9ff' },
+  stepCompleteActionChecked:{ borderColor: '#bbf7d0', backgroundColor: '#f0fdf4' },
+  stepCheckbox:        { width: 23, height: 23, borderRadius: 7, borderWidth: 2, borderColor: C.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  stepCheckboxChecked: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
+  stepCompleteActionTitle:{ fontSize: 11, fontWeight: '800', color: C.primaryText },
+  stepCompleteActionTitleChecked:{ color: '#166534' },
+  stepCompleteActionSub:{ fontSize: 9, lineHeight: 13, color: C.textMuted, marginTop: 2 },
+
+  stepNavRow:          { flexDirection: 'row', justifyContent: 'space-between', marginTop: 11, gap: 8 },
+  stepNavBtn:          { flex: 1, minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderColor: C.primary, borderRadius: 10, paddingVertical: 8 },
+  stepNavBtnDisabled:  { borderColor: C.cardBorder, backgroundColor: '#fafafa', opacity: 0.65 },
+  stepNavText:         { fontSize: 12, fontWeight: '800', color: C.primary },
+  nextHintRow:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 7 },
+  nextHintText:        { fontSize: 9, color: C.textMuted },
+
+  overviewToggle:      { marginTop: 13, paddingVertical: 10, paddingHorizontal: 2, borderTopWidth: 1, borderColor: C.cardBorder, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  overviewToggleLeft:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  overviewToggleRight: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  overviewToggleText:  { fontSize: 11, fontWeight: '800', color: C.primary },
+  overviewCountText:   { fontSize: 10, fontWeight: '700', color: C.textMuted },
+  overviewList:        { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 11, overflow: 'hidden', backgroundColor: C.bg },
+  overviewItem:        { minHeight: 47, paddingHorizontal: 10, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: 1, borderColor: C.cardBorder },
+  overviewItemActive:  { backgroundColor: C.primaryLight },
+  overviewStatusIcon:  { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: C.cardBorder, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  overviewStatusIconDone:{ backgroundColor: '#16a34a', borderColor: '#16a34a' },
+  overviewStatusNumber:{ fontSize: 9, fontWeight: '800', color: C.textMuted },
+  overviewItemTitle:   { flex: 1, fontSize: 10, fontWeight: '700', color: C.text, lineHeight: 14 },
+  overviewItemTitleDone:{ color: C.textSub },
+  overviewCurrentLabel:{ fontSize: 8, fontWeight: '900', letterSpacing: 0.5, color: C.primary },
+
+  // ─── Procedure / Full Text toggle ─────────────────────────────────
+  viewToggleRow:       { flexDirection: 'row', gap: 6, marginBottom: 12, padding: 3, borderRadius: 10, backgroundColor: C.bg },
+  viewToggleBtn:       { flex: 1, minHeight: 31, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  viewToggleBtnActive: { backgroundColor: C.card, borderWidth: 1, borderColor: '#ddd6fe' },
+  viewToggleText:      { fontSize: 11, color: C.textMuted, fontWeight: '700' },
+  viewToggleTextActive:{ color: C.primary, fontWeight: '800' },
+
+  // ─── Photos, reply buttons and hands-free ──────────────────────────
+  msgPhoto:           { width: 200, height: 150, borderRadius: 10, marginBottom: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
+  msgPhotoSmall:      { width: 96, height: 96, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.2)' },
+  msgPhotoGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6, maxWidth: 196 },
+  actionsRow:         { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  actionChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, backgroundColor: C.primaryLight, borderWidth: 1, borderColor: '#ddd6fe' },
+  actionChipAlt:      { backgroundColor: C.card },
+  actionChipText:     { color: C.primary, fontSize: 12, fontWeight: '700' },
+  pendingPhotos:      { marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight, gap: 6 },
+  pendingPhotoStrip:  { gap: 8, alignItems: 'center' },
+  pendingPhotoTile:   { width: 64, height: 64 },
+  pendingPhotoImg:    { width: 64, height: 64, borderRadius: 8 },
+  pendingPhotoRemove: { position: 'absolute', top: -2, right: -2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12 },
+  pendingPhotoAdd:    { width: 64, height: 64, borderRadius: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  pendingPhotoText:   { color: C.primary, fontSize: 12, fontWeight: '600' },
+  machineChip:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6, flexShrink: 1 },
+  machineChipText:    { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
+  handsFreeChip:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: C.primary },
+  handsFreeChipOn:    { backgroundColor: C.primary },
+  handsFreeChipText:  { fontSize: 12, color: C.primary, fontWeight: '700' },
+  handsFreeNotice:    { marginHorizontal: 12, marginTop: 6, color: C.textMuted, fontSize: 12 },
 });
 
 const markdownStyles = {
