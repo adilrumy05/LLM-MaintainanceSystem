@@ -43,6 +43,8 @@ Submits a maintenance query. Retrieves relevant document chunks via the RAG pipe
 | `category1` | string | No | Filter retrieval by category level 1. |
 | `category2` | string | No | Filter retrieval by category level 2. |
 | `topK` | number | No | Number of document chunks to retrieve. Must be a positive integer. Defaults to `5`. |
+| `imageBase64` | string | No | Photo-and-ask. The photo as **raw base64** (JPEG), without a `data:` URL prefix. Max 4 MB decoded; the whole request body is capped at 12 MB. |
+| `confirmedModel` | string | No | Photo-and-ask. The model the technician confirmed for this chat, sent after an `ask_model` or `conflict` reply. |
 
 **Example request**
 ```json
@@ -89,18 +91,60 @@ Submits a maintenance query. Retrieves relevant document chunks via the RAG pipe
 
 The `alert` field is `null` if no safety keywords are detected. `level` is either `"warning"` or `"critical"`.
 
+**Needs-input response - 200 OK (photo requests only)**
+
+When a photo is attached and the backend cannot safely answer yet, it returns **200** so the app renders a normal
+reply and keeps the photo. These are expected outcomes, not errors.
+
+```json
+{
+  "text": "I read this as RAS-30. Which model is it?",
+  "sources": [],
+  "needsInput": "ask_model",
+  "candidates": ["RAS-30-BKVS-A"],
+  "readModel": null,
+  "imageAttached": true
+}
+```
+
+| `needsInput` | Meaning | What the app should do |
+|---|---|---|
+| `ask_photo` | Photo unreadable (blurred, dark, cropped) | Show `text`; offer a retake |
+| `ask_model` | No model established, or only a partial match | Show `candidates` as choices; resend the same question and photo with `confirmedModel` |
+| `conflict` | Photo disagrees with the chat's confirmed model or selected manual | Ask which one; resend with the chosen `confirmedModel` |
+| `no_manual` | Model read, but no manual for it in the system | Show `text`; do not retry automatically |
+| `no_context` | Model known, but nothing relevant retrieved | Show `text`; suggest rephrasing or checking the selected manual |
+
 **Error responses**
 
-| Status | Condition | Body |
-|---|---|---|
-| 400 | Query missing or empty | `{ "error": "Query is required." }` |
-| 400 | XSS / SQL / prompt injection detected | `{ "error": "Malicious input detected" }` |
-| 400 | Input over 1000 characters | `{ "error": "Input too long" }` |
-| 400 | Invalid field types | `{ "error": "<field> must be a string." }` |
-| 400 | Invalid topK value | `{ "error": "topK must be a positive number." }` |
-| 500 | OPENAI_API_KEY not set | `{ "error": "Missing OPENAI_API_KEY in environment variables." }` |
-| 503 | RAG retrieval service unreachable | `{ "error": "Retrieval service unavailable", "details": "..." }` |
-| 500 | Unhandled server error | `{ "error": "Internal server error", "details": "..." }` |
+Every non-2xx body has `error`, a message the app can show as-is. Photo and service errors also carry a stable
+`code`. Service failures carry `retryable: true`, and `imageAttached: true` when a photo was sent, so the app can
+keep the photo and offer a retry. Raw upstream bodies are logged server-side, never returned.
+
+| Status | Condition | `code` | Body |
+|---|---|---|---|
+| 400 | Query missing or empty | — | `{ "error": "Query is required and must be a non-empty string." }` |
+| 400 | XSS / SQL / prompt injection detected | — | `{ "error": "Malicious input detected" }` |
+| 400 | Input over 1000 characters | — | `{ "error": "Input too long" }` |
+| 400 | Invalid field types | — | `{ "error": "<field> must be a string." }` |
+| 400 | Invalid topK value | — | `{ "error": "topK must be a positive number." }` |
+| 400 | Body is not valid JSON | `invalid_json` | `{ "error": "Request body is not valid JSON.", "code": "invalid_json" }` |
+| 400 | `imageBase64` not base64, not a string, or sent as a `data:` URL | `invalid_image` | `{ "error": "<how to fix it>", "code": "invalid_image" }` |
+| 413 | Image over 4 MB decoded, or body over 12 MB | `image_too_large` | `{ "error": "Image too large ... Retake the photo at a lower resolution and try again.", "code": "image_too_large" }` |
+| 500 | OPENAI_API_KEY not set | `server_misconfigured` | `{ "error": "Missing OPENAI_API_KEY in environment variables.", "code": "server_misconfigured" }` |
+| 500 | Unhandled server error | `internal_error` | `{ "error": "Internal server error. Try again, and report it if it keeps happening.", "code": "internal_error" }` |
+| 502 | Answer model returned an error (provider status is never passed through) | `answer_unavailable` | `{ "error": "The answer service failed. Try again in a moment.", "code": "answer_unavailable", "retryable": true }` |
+| 503 | Answer model unreachable | `answer_unavailable` | `{ "error": "Could not reach the answer service. Try again in a moment.", "code": "answer_unavailable", "retryable": true }` |
+| 503 | Manual catalogue unavailable (photo requests) | `catalogue_unavailable` | `{ "error": "Cannot reach the manual catalogue right now. Try again in a moment.", "code": "catalogue_unavailable", "retryable": true, "imageAttached": true }` |
+| 503 | Vision model unavailable (photo requests) | `vision_unavailable` | `{ "error": "Could not analyse the photo right now. Try again in a moment.", "code": "vision_unavailable", "retryable": true, "imageAttached": true }` |
+| 503 | Retrieval service unreachable or failing | `retrieval_unavailable` | `{ "error": "Retrieval service unavailable. Try again in a moment. ...", "code": "retrieval_unavailable", "retryable": true }` |
+
+**Photo-and-ask status**
+
+- Backend and contract: implemented and covered by `tests/endpoints/query.photo.test.js` and `tests/unit/visionIntake.test.js` (vision calls mocked).
+- **Real-photo testing: pending.** Not yet run against real nameplate and fault-display photos. Not complete.
+- **Hands-free device spike: pending.** Not started on a device. Not complete.
+- Mobile integration: pending (`dashboard.jsx`, `services/api.js`).
 
 ---
 

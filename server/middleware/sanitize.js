@@ -21,8 +21,25 @@ function stripTags(str) {
   return str.replace(/<[^>]*>?/gm, '');
 }
 
+// Fields carrying encoded binary rather than user prose.
+//
+// The 1000-character cap below applies to EVERY string field, not just `query`.
+// A photograph as base64 is 300kB-2MB, so without this exemption every
+// photo-and-ask request is rejected with "Input too long" before it reaches the
+// route. stripTags() is skipped for the same reason: it would corrupt the
+// payload, and base64 cannot contain markup.
+//
+// Injection screening is unaffected - that loop is scoped to key === 'query'
+// below, and still runs in full.
+//
+// Size and charset for these fields are enforced in validate.js, which checks
+// the DECODED byte count rather than string length.
+const BINARY_FIELDS = new Set(['imageBase64', 'images']);
+
 const sanitize = (req, res, next) => {
   for (let key in req.body) {
+    if (BINARY_FIELDS.has(key)) continue;
+
     if (typeof req.body[key] === 'string') {
       let value = stripTags(req.body[key]);
 
