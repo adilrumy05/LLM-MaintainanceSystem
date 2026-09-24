@@ -50,7 +50,7 @@ checkpoint/
 # per-model ingest checkpoints, e.g. checkpoint_bgem3/
 checkpoint_*/
 models/
-latest_prompt.txt
+server/rag/ragPhase2/vlm_review/
 
 # Firebase / Secrets
 # Canonical location is the repo root; both uploads/ scripts read ../ from there.
