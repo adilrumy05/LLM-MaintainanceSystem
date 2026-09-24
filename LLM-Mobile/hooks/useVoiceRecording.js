@@ -40,8 +40,12 @@ async function getActualRecordingUri(createdAt) {
   }
 }
 
-export function useVoiceRecording() {
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+export function useVoiceRecording({ metering = false } = {}) {
+  // Metering exposes the input level, which hands-free uses to hear when the
+  // speaker has stopped. Tap-to-talk does not need it.
+  const recorder = useAudioRecorder(
+    metering ? { ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true } : RecordingPresets.HIGH_QUALITY
+  );
   const recorderState = useAudioRecorderState(recorder, 100);
   const [permissionGranted, setPermissionGranted] = useState(null);
   const [error, setError] = useState(null);
@@ -70,6 +74,18 @@ export function useVoiceRecording() {
     } catch (e) {
       setError(e.message || 'Could not configure audio mode');
     }
+  }, []);
+
+  // While recording is allowed, iOS routes playback to the quiet earpiece
+  // speaker. Anything that speaks an answer aloud must switch this off first,
+  // and the next recording switches it back on.
+  const prepareForPlayback = useCallback(async () => {
+    try {
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+    } catch (_) {
+      // Playback still works, just possibly quieter.
+    }
+    hasPreparedAudioMode.current = false;
   }, []);
 
   const startRecording = useCallback(async () => {
@@ -116,10 +132,12 @@ export function useVoiceRecording() {
   return {
     isRecording: recorderState.isRecording,
     durationMillis: recorderState.durationMillis || 0,
+    metering: recorderState.metering,
     permissionGranted,
     error,
     startRecording,
     stopRecording,
     ensurePermission,
+    prepareForPlayback,
   };
 }

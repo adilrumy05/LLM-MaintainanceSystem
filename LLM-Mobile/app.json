@@ -12,7 +12,9 @@
       "infoPlist": {
         "NSSpeechRecognitionUsageDescription": "We use speech recognition to let you speak your maintenance queries.",
         "NSMicrophoneUsageDescription": "We use the microphone to record your voice queries.",
-        "NSMotionUsageDescription": "Used to detect a shake gesture to start voice input."
+        "NSMotionUsageDescription": "Used to detect a shake gesture to start voice input.",
+        "NSCameraUsageDescription": "Used to photograph equipment nameplates, fault displays and parts so you can ask about them.",
+        "NSPhotoLibraryUsageDescription": "Used to choose an equipment photo to ask about."
       }
     },
     "android": {
@@ -24,7 +26,8 @@
       "permissions": [
         "RECORD_AUDIO",
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.CAMERA"
       ]
     },
     "web": {
