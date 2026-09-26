@@ -1,171 +1,32 @@
 You are a helpful technical assistant. Answer the question using ONLY the context provided below. If the context does not contain enough information, say so. Cite page numbers where relevant.
 
 === CONTEXT ===
-[TOC section matched: 3. Location of Controls and Components]
+[TOC section matched: 10.1 Select The Best Location]
 
-[1] [parent] page 60 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
+[1] [parent] page 53 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
 (context parent)
-Cut and flare the embedded piping  
-
-  
-
-- When determining the dimensions of the piping, slide the unit all the way to the left on the installation plate.  
-
-- Refer to the section "Cutting and flaring the piping". Connect the piping  
-
-  
-
-- Please refer to "Connecting the piping" column in outdoor unit section. (Below steps are done after connecting the outdoor piping and gas-leakage confirmation.)  
-
-Insulate and finish the piping  
-
-  
-
-- Please refer to "Insulation of piping connection" column as mentioned in indoor/outdoor unit installation.  
-
-
-  
-
-(This can be used for left rear piping and bottom piping also.) # 11.2.4 Connect the Cable to the Indoor Unit  
-
-1 The inside and outside connection cable can be connected without removing the front grill.  
-
-2 Connection cable between indoor unit and outdoor unit shall be approved polychloroprene sheathed 4 × 1.5 mm$^{2}$ flexible cord, type designation 245 IEC 57 or heavier cord.  
-
-3 Bind all the power supply cord lead wire with tape and route the power supply cord via the left escapement.  
-
-4 Remove the tapes and connect the connection cable between indoor unit and outdoor unit according to the diagram below.  
+9 Close grille door by tighten with screw and close the front panel.  
 
   
 
 # Note:  
 
-- Secure the connection cable onto the control board with the holder.  
+- Isolating Devices (Disconnecting means) should have minimum 3.0 mm contact gap.  
 
 - Ensure the colour of wires of outdoor unit and the terminal Nos. are the same to the indoor's respectively.  
 
-- Earth wire shall be Yellow/Green (Y/G) in colour and longer than other AC wires for safety reason.
+- Earth wire shall be Yellow/Green (Y/G) in colour and longer than other AC wires as shown in the figure for the electrical safety in case of the slipping out of the cord from the anchorage.  
+
+# 10.2.4.1 Wire Stripping, Connecting Requirement
 ---
 
-[2] [child] page 60 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
-score: 1.000
-and finish the piping - Please refer to "Insulation of piping connection" column as mentioned in indoor/outdoor unit installation. (This can be used for left rear piping and bottom piping also.) # 11.2.4 Connect the Cable to the Indoor Unit 1 The inside and outside connection cable can be connected without removing the front grill. 2 Connection cable between indoor unit and outdoor unit shall be approved polychloroprene sheathed 4 × 1.5 mm$^{2}$ flexible cord, type designation 245 IEC 57 or
+[2] [child] page 53 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
+score: 0.833
+9 Close grille door by tighten with screw and close the front panel. # Note: - Isolating Devices (Disconnecting means) should have minimum 3.0 mm contact gap. - Ensure the colour of wires of outdoor unit and the terminal Nos. are the same to the indoor's respectively. - Earth wire shall be Yellow/Green (Y/G) in colour and longer than other AC wires as shown in the figure for the electrical safety in case of the slipping out of the cord from the anchorage. # 10.2.4.1 Wire Stripping, Connecting
 ---
 
-[3] [table] page 54 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
-score: 0.750
-# 10.3 Outdoor Unit  
-
-# 10.3.1 Install the Outdoor Unit  
-
-- After selecting the best location, start installation to Indoor/Outdoor Unit Installation Diagram.  
-
-1 Fix the unit on concrete or rigid frame firmly and horizontally by bolt nut (ø10 mm).  
-
-2 When installing at roof, please consider strong wind and earthquake.  
-
-3 Please fasten the installation stand firmly with bolt or nails.  
-
-  
-
-[Row 0] Model | A | B | C | D |
-[Row 1] S10*** | 474mm | 87mm | 18.5mm | 261mm |
-[Row 2] S13*** | 570mm | 105mm | 18.5mm | 261mm |
-[Row 3] S18*** | 540mm | 160mm | 18.5mm | 330mm |
-[Row 4] S24*** | 613mm | 130mm | 24mm | 360.5mm |  
-
-# 10.3.2 Connect the Piping  
-
-# 10.3.2.1 Connecting the piping to Indoor  
-
-Please make flare after inserting flare nut (locate at joint portion of tube assembly) onto the copper pipe. (In case of using long piping)  
-
-Connect the piping  
-
-- Align the center of piping and sufficiently tighten the flare nut with fingers.  
-
-- Further tighten the flare nut with torque wrench in specified torque as stated in the table.  
-
-# 10.3.2.2 Connecting the piping to Outdoor  
-
-Decide piping length and then cut by using pipe cutter. Remove burrs from cut edge.  
-
-Make flare after inserting the flare nut (locate at valve) onto the copper pipe.  
-
-Align center of piping to valve and then tighten with torque wrench to the specified torque as stated in the table.  
-
-[Row 0] Do not over tighten, overtightening may cause gas leakage. | Do not over tighten, overtightening may cause gas leakage. |
-[Row 1] Piping size | Torque |
-[Row 2] 6.35mm(1/4”) | [18N·m(1.8kgf·m)] |
-[Row 3] 9.52mm(3/8”) | [42N·m(4.3kgf·m)] |
-[Row 4] 12.7mm(1/2”) | [55N·m(5.6kgf·m)] |
-[Row 5] 15.88mm(5/8”) | [65N·m(6.6kgf·m)] |
-[Row 6] 19.05mm(3/4”) | [100N·m(10.2kgf·m)] |  
-
-Spanner  
-
-or Wrench
-
-Torque
-wrench
----
-
-[4] [table] page 63 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
-score: 0.667
-# 11.3 Outdoor Unit  
-
-# 11.3.1 Install the Outdoor Unit  
-
-- After selecting the best location, start installation to Indoor/Outdoor Unit Installation Diagram.  
-
-1 Fix the unit on concrete or rigid frame firmly and horizontally by bolt nut (ø10 mm).  
-
-2 When installing at roof, please consider strong wind and earthquake.  
-
-3 Please fasten the installation stand firmly with bolt or nails.  
-
-  
-
-11.3.2 Connect the Piping  
-
-# 11.3.2.1 Connecting the piping to Indoor  
-
-Please make flare after inserting flare nut (locate at joint portion of tube assembly) onto the copper pipe. (In case of using long piping)  
-
-Connect the piping  
-
-- Align the center of piping and sufficiently tighten the flare nut with fingers.  
-
-- Further tighten the flare nut with torque wrench in specified torque as stated in the table.  
-
-# 11.3.2.2 Connecting the piping to Outdoor  
-
-Decide piping length and then cut by using pipe cutter. Remove burrs from cut edge.  
-
-Make flare after inserting the flare nut (locate at valve) onto the copper pipe.  
-
-Align center of piping to valve and then tighten with torque wrench to the specified torque as stated in the table.  
-
-[Row 0] Model | A | B | C | D |
-[Row 1] S28*** | 613mm | 130mm | 24mm | 360.5mm |  
-
-[Row 0] Do not over tighten, overtightening may cause gas leakage. | Do not over tighten, overtightening may cause gas leakage. |
-[Row 1] Piping size | Torque |
-[Row 2] 6.35mm(1/4") | [18N·m(1.8kgf·m)] |
-[Row 3] 9.52mm(3/8") | [42N·m(4.3kgf·m)] |
-[Row 4] 12.7mm(1/2") | [55N·m(5.6kgf·m)] |
-[Row 5] 15.88mm(5/8") | [65N·m(6.6kgf·m)] |
-[Row 6] 19.05mm(3/4") | [100N·m(10.2kgf·m)] |  
-
-The image shows a diagram illustrating a mechanical component, likely a part of a machine or a tool. It depicts two hexagonal objects connected by a cylindrical section. The hexagonal objects appear to be adjustable or interchangeable, as indicated by the arrow symbol between them. There is no text content in the image.  
-
-Spanner or Wrench
-
-Torque wrench
----
-
-[5] [table] page 56 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
-score: 0.667
+[3] [table] page 56 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
+score: 0.625
 # 10.3.4 Connect the cable to the Outdoor Unit  
 
 1 Remove the control board cover from the unit by loosening the screw.  
@@ -201,129 +62,64 @@ score: 0.667
 3 Please make flare after inserting the flare nut onto the copper pipes.
 ---
 
-[6] [table] page 48 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
-score: 0.450
-# 10. Installation Instruction  
-
-# 10.1 Select The Best Location  
-
-# 10.1.1 Indoor Unit  
-
-- Do not install the unit in excessive oil fume area such as kitchen, workshop and etc.  
-
-- There should not be any heat source or steam near the unit.  
-
-- There should not be any obstacles blocking the air circulation.  
-
-- A place where air circulation in the room is good.  
-
-- A place where drainage can be easily done.  
-
-- A place where noise prevention is taken into consideration.  
-
-- Do not install the unit near the door way.  
-
-- Ensure the spaces indicated by arrows from the wall, ceiling, fence or other obstacles.  
-
-- Installation height for indoor unit must be at least 2.5 m.  
-
-# 10.1.2 Outdoor Unit  
-
-- If an awning is built over the unit to prevent direct sunlight or rain, be careful that heat radiation from the condenser is not obstructed.  
-
-- There should not be any animal or plant which could be affected by hot air discharged.  
-
-- Keep the spaces indicated by arrows from wall, ceiling, fence or other obstacles.  
-
-- Do not place any obstacles which may cause a short circuit of the discharged air.  
-
-- If piping length is over the [piping length for additional gas], additional refrigerant should be added as shown in the table.  
-
-[Row 0] Model | Horse Power (HP) | Piping size | Piping size | Std. Length (m) | Max. Elevation (m) | Min. Piping Length (m) | Max. Piping Length (m) | Additional Refrigerant (g/m) | Piping Length for add. gas (m) |
-[Row 1] Model | Horse Power (HP) | Gas | Liquid | Std. Length (m) | Max. Elevation (m) | Min. Piping Length (m) | Max. Piping Length (m) | Additional Refrigerant (g/m) | Piping Length for add. gas (m) |
-[Row 2] S10*** | 1.0HP | 9.52mm (3/8") | 6.35mm (1/4") | 5 | 5 | 3 | 15 | 15 | 7.5 |
-[Row 3] S13*** | 1.5HP | 12.7mm (1/2") | 6.35mm (1/4") | 5 | 5 | 3 | 15 | 15 | 7.5 |
-[Row 4] S18*** | 2.0HP | 15.88mm (5/8") | 6.35mm (1/4") | 5 | 20 | 3 | 30 | 15 | 10 |
-[Row 5] S24*** | 2.5HP | 15.88mm (5/8") | 6.35mm (1/4") | 5 | 15 | 3 | 20 | 20 | 10 |
-[Row 6] (empty) x10 |  
-
-Example: For S10***  
-
-If the unit is installed at 10 m distance, the quantity of additional refrigerant should be 38 g .... (10-7.5) m x 15 g/m = 38 g.  
-
-# 10.1.3 Indoor/Outdoor Unit Installation Diagram  
-
-  
-
-- This illustration is for explanation purposes only. The indoor unit will actually face a different way.
----
-
-[7] [parent] page 52 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
+[4] [parent] page 46 — panasonic_aircon_CS-C18DKV / CS-C18DKV
 (context parent)
-In unavoidable case, joining of power supply cord between isolating devices and terminal board of air conditioner shall be done by using approved socket and plug with earth pin rated 15/16A (1.0 \~ 1.5HP) or 16A (2.0HP) or 20A (2.5HP). Wiring work to both socket and plug must follow to national wiring standard.  
+Operate the air conditioner at the cooling cycle and stop it when the gauge indicates 0.1 MPa.  
 
-4 Bind all the power supply cord lead wire with tape and route the power supply cord via the left escapement.  
+- If the unit cannot be operated at the cooling (weather is rather cool), press the Pump Down switch on the Indoor unit.  
 
-5 Connection cable between indoor unit and outdoor unit shall be approved polychloroprene sheathed 4 × 1.5 mm² (1.0 \~ 1.5HP) or 4 × 2.5 mm² (2.0 \~ 2.5HP) flexible cord, type designation 60245 IEC 57 or heavier cord.
+- So that the unit can be operated.  
+
+7.Immediately set the gas side (Low side) 3-way valve to the close position.  
+
+- Do this quickly so that the gauge ends up indicating 0.1 to 0.3 MPa.  
+
+8. Disconnect the manifold gauge, and mount both the 3-way valve's caps and the service port caps.  
+
+- Use torque wrench to tighten the service port nut to a torque of 18 N.m.  
+
+- Be sure to check for gas leakage.
 ---
 
-[8] [child] page 52 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
-score: 0.606
-via the left escapement. 5 Connection cable between indoor unit and outdoor unit shall be approved polychloroprene sheathed 4 × 1.5 mm² (1.0 \~ 1.5HP) or 4 × 2.5 mm² (2.0 \~ 2.5HP) flexible cord, type designation 60245 IEC 57 or heavier cord.
+[5] [child] page 46 — panasonic_aircon_CS-C18DKV / CS-C18DKV
+score: 0.583
+Operate the air conditioner at the cooling cycle and stop it when the gauge indicates 0.1 MPa. - If the unit cannot be operated at the cooling (weather is rather cool), press the Pump Down switch on the Indoor unit. - So that the unit can be operated. 7.Immediately set the gas side (Low side) 3-way valve to the close position. - Do this quickly so that the gauge ends up indicating 0.1 to 0.3 MPa. 8. Disconnect the manifold gauge, and mount both the 3-way valve's caps and the service port caps. -
 ---
 
-[9] [table] page 58 — panasonic_aircon_CS-S10TKH / CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh
-score: 0.647
-# 11. Installation Instruction
-#(For S28TKH only)  
+[6] [table] page 78 — toshiba_aircon_RAS-M22E2KV2G-A / RAS-M22E2KV2G-A RAS-M24E2KV2G-A-1696909076
+score: 0.500
+# Microcomputer  
 
-# 11.1 Select The Best Location  
+[Row 0] No. | Part name | Procedure | Remarks |
+[Row 1] ① | Common procedure | 1) Turn the power supply off to stop the operation of air-conditioner. 2) Remove the front panel. •Remove the 2 fixing screws. 3) Remove the electrical part base. | Replace terminal block, microcomputer ass'y and the P.C. board ass'y. |
+---
 
-# 11.1.1 Indoor Unit  
+[7] [parent] page 26 — toshiba_aircon_RAS-30-BKVS-A / RAS-30,34,36BAVS-A-series
+(context parent)
+8.4.7.8 The AC will quit the timer function when it has malfunction.  
 
-- Do not install the unit in excessive oil fume area such as kitchen, workshop and etc.  
+# 8.4.8 Economy function(optional)  
 
-- There should not be any heat source or steam near the unit.  
+8.4.8.1 The sleep function is available in cooling, heating or auto mode.  
 
-- There should not be any obstacles blocking the air circulation.  
+8.4.8.2. Operation process in sleep mode is as follow:  
 
-- A place where air circulation in the room is good.  
+When cooling, the setting temperature rises $1^{\circ}\mathrm{C}$ (be lower than $30^{\circ}\mathrm{C}$) every one hour, 2 hours later the setting temperature stops rising and the indoor fan is fixed at low speed. When heating, the setting temperature decreases $1^{\circ}\mathrm{C}$ (be higher than $17^{\circ}\mathrm{C}$) every one hour, 2 hours later the setting temperature stops rising and indoor fan is fixed at low speed. (Anti-cold wind function has the priority).  
 
-- A place where drainage can be easily done.  
+8.4.8.3 Operation time in sleep mode is 7 hours. After 7 hours the AC quits this mode and turns off.  
 
-- A place where noise prevention is taken into consideration.  
+8.4.8.4 Timer setting is available  
 
-- Do not install the unit near the door way.  
+# 8.4.9 Auto-Restart function  
 
-- Ensure the spaces indicated by arrows from the wall, ceiling, fence or other obstacles.  
+The indoor unit is equipped with auto-restart function, which is carried out through an auto-restart module.
+---
 
-- Installation height for indoor unit must be at least 2.5 m.  
-
-# 11.1.2 Outdoor Unit  
-
-- If an awning is built over the unit to prevent direct sunlight or rain, be careful that heat radiation from the condenser is not obstructed.  
-
-- There should not be any animal or plant which could be affected by hot air discharged.  
-
-- Keep the spaces indicated by arrows from wall, ceiling, fence or other obstacles.  
-
-- Do not place any obstacles which may cause a short circuit of the discharged air.  
-
-- If piping length is over the [piping length for additional gas], additional refrigerant should be added as shown in the table.  
-
-[Row 0] Model | Horse Power (HP) | Piping size | Piping size | Std. Length (m) | Max. Elevation (m) | Min. Piping Length(m) | Max. Piping Length(m) | Additional Refrigerant(g/m) | Piping Length for add. gas(m) |
-[Row 1] Model | Horse Power (HP) | Gas | Liquid | Std. Length (m) | Max. Elevation (m) | Min. Piping Length(m) | Max. Piping Length(m) | Additional Refrigerant(g/m) | Piping Length for add. gas(m) |
-[Row 2] S28*** | 3.0HP | 15.88mm(5/8") | 6.35mm(1/4") | 5 | 20 | 3 | 30 | 30 | 10 |  
-
-If the unit is installed at 15 m distance, the quantity of additional refrigerant should be 150 g .... (15-10) m × 30 g/m =150 g.  
-
-# 11.1.3 Indoor/Outdoor Unit Installation Diagram  
-
-  
-
-- This illustration is for explanation purposes only. The indoor unit will actually face a different way.
+[8] [child] page 26 — toshiba_aircon_RAS-30-BKVS-A / RAS-30,34,36BAVS-A-series
+score: 0.333
+rising and the indoor fan is fixed at low speed. When heating, the setting temperature decreases $1^{\circ}\mathrm{C}$ (be higher than $17^{\circ}\mathrm{C}$) every one hour, 2 hours later the setting temperature stops rising and indoor fan is fixed at low speed. (Anti-cold wind function has the priority). 8.4.8.3 Operation time in sleep mode is 7 hours. After 7 hours the AC quits this mode and turns off. 8.4.8.4 Timer setting is available # 8.4.9 Auto-Restart function The indoor unit is
 ---
 === QUESTION ===
-Whats the correct length for the pipe and drawbacks of piping length to the outdoor unit?
+How to close the AC unit?
 
 === ANSWER ===
