@@ -2,6 +2,7 @@
   "expo": {
     "name": "LLM-Mobile",
     "slug": "LLM-Mobile",
+    "scheme": "maintenancecopilot",
     "owner": "princechikukwa",
     "version": "1.0.0",
     "orientation": "portrait",

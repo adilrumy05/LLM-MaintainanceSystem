@@ -18,6 +18,8 @@
 //    current turn; a reply that arrives after stop() is discarded, never spoken.
 //  - "repeat" replays the stored spoken text. It never re-asks the model, which
 //    could give a different answer to the same question.
+//  - Audio mode is only switched to playback AFTER the network fetch completes,
+//    preventing Android from cancelling in-flight requests.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
@@ -65,10 +67,16 @@ export function useHandsFree({ ask, onNotice }) {
   const isCurrent = (turn) => activeRef.current && turnRef.current === turn;
 
   // Stops the recorder at most once, whichever path gets there first.
-  const stopRecorder = async () => {
+  // preparePlayback: only switch audio mode to playback when explicitly requested,
+  // AFTER any network fetch has completed, to avoid Android cancelling requests.
+  const stopRecorder = async ({ preparePlayback = false } = {}) => {
     if (!recordingRef.current) return null;
     recordingRef.current = false;
-    return recording.stopRecording().catch(() => null);
+    const uri = await recording.stopRecording().catch(() => null);
+    if (preparePlayback) {
+      await recording.prepareForPlayback().catch(() => {});
+    }
+    return uri;
   };
 
   const clearTick = () => {
@@ -83,8 +91,7 @@ export function useHandsFree({ ask, onNotice }) {
     turnRef.current += 1;
     clearTick();
     Speech.stop().catch(() => {});
-    await stopRecorder();
-    await recording.prepareForPlayback();
+    await stopRecorder({ preparePlayback: true });
     setPhase('off');
     setLevel(null);
     setFloor(null);
@@ -95,6 +102,7 @@ export function useHandsFree({ ask, onNotice }) {
   const speak = useCallback(async (text, turn, { then = 'listen' } = {}) => {
     if (!isCurrent(turn)) return;
     setPhase('speaking');
+    // Switch to playback mode here — only reached after all fetches are done.
     await recording.prepareForPlayback();
     if (!isCurrent(turn)) return;
     Speech.speak(text, {
@@ -114,7 +122,11 @@ export function useHandsFree({ ask, onNotice }) {
     clearTick();
     if (!isCurrent(turn)) return;
     setPhase('transcribing');
-    const uri = await stopRecorder();
+
+    // Stop the recorder but do NOT switch to playback yet — switching audio
+    // mode on Android cancels in-flight network requests. Playback mode is set
+    // inside speak(), only after both fetches (transcribe + query) are done.
+    const uri = await stopRecorder({ preparePlayback: false });
     if (!isCurrent(turn)) return;
 
     let text = '';
@@ -154,6 +166,7 @@ export function useHandsFree({ ask, onNotice }) {
     } catch (e) {
       reply = { speak: 'Something went wrong getting the answer. Hands-free is stopping.', stopAfter: true };
     }
+
     // A late reply after stop, or after a newer turn started, is dropped.
     if (!isCurrent(turn)) return;
     if (!reply?.speak) {
@@ -163,6 +176,7 @@ export function useHandsFree({ ask, onNotice }) {
     }
 
     if (!reply.stopAfter) lastSpokenRef.current = reply.speak;
+    // speak() switches to playback mode — safe now because both fetches are done.
     await speak(reply.speak, turn, { then: reply.stopAfter ? 'stop' : 'listen' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recording.stopRecording, speak, stop]);

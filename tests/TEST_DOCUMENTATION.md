@@ -1,22 +1,30 @@
 # End-to-End Test Suite Documentation — GRP6-15
 
-**Framework:** Jest v30 + Supertest  
-**Total tests:** 50 | **Total test suites:** 6 | **All passing**  
-**Run command:** `npm test`
+**Framework:** Jest v30 + Supertest (backend/app), pytest (RAG service)
+**Total automated tests:** 171 across three layers — see `TEST_REGISTER.md` for run history
+**Run everything at once:** `.\run-all-tests.ps1` (repo root)
 
 ---
 
 ## Test Architecture
 
-The suite is split into two layers:
+The suite now spans three separate services, each tested with the tool that fits it:
 
-**Unit tests** (`tests/middleware/`) — test each Express middleware in isolation using mock `req`, `res`, and `next` objects. No HTTP server is started; no external services are called.
+**Backend (`tests/`, repo root, 166 tests, `npm test`)**
+- **Unit tests** (`tests/middleware/`) — test each Express middleware in isolation using mock `req`, `res`, and `next` objects. No HTTP server is started; no external services are called.
+- **Unit tests** (`tests/unit/`) — pure-logic tests for shared modules with no HTTP layer at all: the hands-free silence detector, the spoken-answer safety validator, and the photo/vision-intake reconciliation logic.
+- **Integration tests** (`tests/endpoints/`) — mount the full Express app via Supertest and send real HTTP requests. All external dependencies (Firebase, FastAPI retrieval service, OpenAI API) are mocked using Jest's module mock system so tests are deterministic and run offline.
+- **Performance tests** (`tests/performance/`) — benchmark response times and concurrent-request handling under the same mocked pipeline.
 
-**Integration tests** (`tests/endpoints/`) — mount the full Express app via Supertest and send real HTTP requests. All external dependencies (Firebase, FastAPI retrieval service, OpenAI API) are mocked using Jest's module mock system so tests are deterministic and run offline.
+**RAG service (`server/rag/tests/`, 4 tests, `python -m pytest server/rag/tests`)**
+- Confirms the FastAPI service boots, exposes routes, and that Qdrant is reachable and actually holds data. Added because previously the only script in this folder (`test_retrieval.py`) was a manual debug tool with no real assertions and could not run under pytest.
+
+**Mobile app (`LLM-Mobile/__tests__/`, 1 test, `npm test` inside `LLM-Mobile`)**
+- Uses `jest-expo`, set up from scratch — no app-level test tooling existed before. Currently covers a theme-constant regression check; the intended home for future component and hook tests.
 
 ---
 
-## Test Files
+## Test Files — Backend
 
 ### `tests/middleware/sanitize.test.js` — 10 tests
 
@@ -34,6 +42,8 @@ Tests the input sanitization middleware (`server/middleware/sanitize.js`) that r
 | 8 | Input exactly 1000 characters | `next()` called (boundary pass) |
 | 9 | Non-query fields (e.g. `userId`) | HTML stripped but not injection-checked |
 | 10 | Non-string fields (e.g. `topK: 5`) | Passed through untouched |
+
+Note: base64 photo fields (`imageBase64`, `images`) are deliberately excluded from this middleware's 1000-character cap and tag-stripping, since a photo is 300 kB–2 MB as base64 text and stripping would corrupt the payload. That exemption is covered separately in `tests/endpoints/query.photo.test.js`.
 
 ---
 
@@ -128,6 +138,58 @@ Tests the main RAG query endpoint (`POST /api/query`). Mocks `global.fetch` to s
 
 ---
 
+### `tests/endpoints/query.photo.test.js` — photo-and-ask flow
+
+Tests the vision-intake pipeline end to end: a photographed nameplate, fault display or part reaches retrieval correctly, and every uncertain outcome (unreadable photo, ambiguous model, model outside the catalogue, conflicting confirmed model) stops and asks rather than guessing. Also covers the sanitize/validate exemption for base64 photo fields, multiple photos in one question, oversized images, and that a catalogue outage, a vision-provider failure and a retrieval failure each return their own distinct status code rather than being collapsed into one generic error.
+
+---
+
+### `tests/endpoints/query.voice.test.js` — hands-free spoken answers
+
+Tests `voice: true` requests: a validated `spokenText` is returned alongside the untouched full answer; a rewrite that drops a safety warning is withheld entirely rather than read aloud; a confirmed machine from an earlier photo carries into a later typed follow-up, and a model typed in the question always overrides a stale confirmed one.
+
+---
+
+## Test Files — Unit (shared logic, no HTTP layer)
+
+### `tests/unit/endpointing.test.js` — 10 tests
+
+Tests `LLM-Mobile/utils/endpointing.js`, the module that decides when a spoken turn has ended from the microphone's metering level. Covers: speech-then-silence ending a turn at the correct delay, a short pause not cutting the speaker off, a raised noise floor still separating a louder voice, sustained noise as loud as the voice never being mistaken for speech, a single bang not registering as speech, giving up after a no-speech timeout, capping continuous speech at the maximum duration, and a documented known limit where continuous sound from the very first instant becomes the floor.
+
+### `tests/unit/spokenAnswer.test.js` — 15 tests
+
+Tests `server/services/spokenAnswer.js`, which rewrites an answer for text-to-speech and validates the rewrite against the original before it is ever spoken. Confirms a rewrite that drops a safety warning or a waiting period is rejected, a rewrite in different-but-equivalent phrasing is accepted, page-number citations are correctly not required in speech, and every model failure mode (refusal, truncation, network failure, malformed JSON) is handled without throwing.
+
+### `tests/unit/visionIntake.test.js` — 34 tests
+
+Tests `server/services/visionIntake.js`, the logic that reconciles a photographed model number against the manual catalogue. Covers exact matches, punctuation-insensitive matching, unique-prefix confirmation, ambiguous multi-candidate matches, a confirmed model overriding a weaker text match, several photos showing different models always asking rather than picking, and separating a genuine service outage (catalogue or vision API down) from a real "no manual for this model" result.
+
+---
+
+## Test Files — Performance
+
+### `tests/performance/endpoints.perf.test.js` and `tests/performance/middleware.perf.test.js`
+
+Benchmark response times under the same mocked pipeline used by the functional tests: `GET /api/health` (100 requests, target under 50ms average), `POST /api/query` with the pipeline mocked and separately when blocked early by sanitize/validate (target under 200ms and under 50ms respectively), `POST /api/approve` and `POST /api/reject` (50 requests each, under 100ms), and 10 simultaneous concurrent requests to confirm no dropped or malformed responses under load.
+
+---
+
+## Test Files — RAG service (pytest)
+
+### `server/rag/tests/test_rag_api.py` — 4 tests
+
+Written to close a real gap: the only existing file in this area, `test_retrieval.py`, is a manual debug script with no assertions and cannot run under pytest at all. This file adds genuine automated coverage: the FastAPI `/docs` page loads, the API's OpenAPI spec actually lists working routes, Qdrant is reachable on port 6333, and the `text_chunks_general` collection actually contains data rather than being empty. That last check matters specifically because the Qdrant volume was found completely wiped partway through this sprint (zero collections) after the source document folder went missing from a team member's machine; this test is what proves a re-ingestion has actually worked, not just that the ingestion script exited without an error.
+
+---
+
+## Test Files — Mobile app (jest-expo)
+
+### `LLM-Mobile/__tests__/theme.test.js` — 1 test
+
+The first app-level test in the project. No `jest-expo` configuration, no `__tests__` folder and no react-native test tooling existed before this was added. Setting it up required installing `jest-expo`, `@testing-library/react-native`, `react-test-renderer` and `@react-native/jest-preset`, and fixing a version mismatch where `@react-native/jest-preset` initially installed as `0.87.1` against a `react-native` version of `0.86.3`, which failed with a missing `react-native/setup-env` module until pinned to the matching `0.86.3` release. The test itself is a simple regression check that the brand primary colour constant (`C.primary`) stays `#7c3aed`.
+
+---
+
 ## Key Design Decisions
 
 ### Why Jest module mocks instead of a running server?
@@ -147,7 +209,7 @@ jest.mock('../../server/config/firebaseAdmin', () => ({
 
 ### `topK: 0` bug discovered during testing
 
-The original `validate.js` used `if (topK && ...)` which is falsy for `0`, silently allowing zero through to the retrieval service. Test 8 in `validate.test.js` caught this. The fix changed the check to:
+The original `validate.js` used `if (topK && ...)` which is falsy for `0`, silently allowing zero through to the retrieval service. A dedicated test in `validate.test.js` caught this. The fix changed the check to:
 
 ```js
 if (topK !== undefined && topK !== null && (typeof topK !== 'number' || topK <= 0)) {
@@ -162,42 +224,48 @@ Two changes were made to `server.js` to support the test suite without side effe
 1. **Conditional server start** — `app.listen()` is wrapped in `if (require.main === module)` so importing the app in tests does not bind a port.
 2. **Lazy Firebase reference** — changed from `const { db } = require('./server/config/firebaseAdmin')` (captures `null` at load time) to `const firebaseAdmin = require('./server/config/firebaseAdmin')` with `firebaseAdmin.db` used inline, so the mock getter is evaluated per-request.
 
----
+### Why the RAG and app suites use different tools
 
-## Test Results Output
-
-```
- PASS  tests/middleware/sanitize.test.js
- PASS  tests/middleware/validate.test.js
- PASS  tests/middleware/outputSanitize.test.js
- PASS  tests/endpoints/health.test.js
- PASS  tests/endpoints/hitl.test.js
- PASS  tests/endpoints/query.test.js
-
-Test Suites: 6 passed, 6 total
-Tests:       50 passed, 50 total
-Snapshots:   0 total
-Time:        3.224 s
-```
+The backend and app both run on Node, so both use Jest — but they need different presets (`jest.config.js` at the root for the backend, `jest-expo` inside `LLM-Mobile` for the app) because the app needs to mock native Expo/React Native modules that the backend has no concept of. The RAG service is Python, so it uses pytest rather than trying to force it into the Jest ecosystem. All three are wired into one command, `run-all-tests.ps1`, so nobody has to remember three separate commands in three separate folders.
 
 ---
 
 ## Running the Tests
 
-From the project root:
+**Everything, all three services, one command (repo root):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run-all-tests.ps1
+```
+
+**Backend only, from the project root:**
 
 ```bash
 npm test
 ```
 
-To run a specific file:
+To run a specific backend file:
 
 ```bash
 npx jest tests/endpoints/query.test.js --config jest.config.js
 ```
 
-To run with verbose output:
+With verbose output:
 
 ```bash
 npm test -- --verbose
 ```
+
+**RAG service only:**
+
+```bash
+python -m pytest server/rag/tests -v
+```
+
+**Mobile app only (from `LLM-Mobile/`):**
+
+```bash
+npm test
+```
+
+See `TEST_REGISTER.md` for the running log of pass/fail results by date.
