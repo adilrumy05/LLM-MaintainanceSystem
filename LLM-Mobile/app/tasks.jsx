@@ -4,7 +4,7 @@ import {
   TextInput, Alert, ActivityIndicator, Modal
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
 import { useRole } from '../hooks/useRole';
@@ -45,6 +45,7 @@ const sortTasksByPriority = (items) =>
 const ROLES = ['all', 'expert', 'intermediate', 'beginner'];
 
 export default function Tasks() {
+  const router = useRouter();
   const { user, role, loading: userLoading } = useRole();
   const [tasks, setTasks]             = useState([]);
   const [loading, setLoading]         = useState(true);
@@ -232,18 +233,21 @@ export default function Tasks() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <View style={s.header}>
-        <View>
-          <Text style={s.pageTitle}>Maintenance Tasks</Text>
-          <Text style={s.pageSub}>{tasks.length} total · tap to update status</Text>
-        </View>
-        {isAdmin && (
-          <TouchableOpacity style={s.createBtn} onPress={() => setShowCreate(true)}>
-            <Ionicons name="add" size={18} color="#fff" style={{ marginRight: 4 }} />
-            <Text style={s.createBtnText}>New Task</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+<View style={s.header}>
+  <TouchableOpacity onPress={() => router.push('/admin')} style={s.backBtn}>
+    <Ionicons name="chevron-back" size={22} color={C.primary} />
+  </TouchableOpacity>
+  <View>
+    <Text style={s.pageTitle}>Maintenance Tasks</Text>
+    <Text style={s.pageSub}>{tasks.length} total · tap to update status</Text>
+  </View>
+  {isAdmin && (
+    <TouchableOpacity style={s.createBtn} onPress={() => setShowCreate(true)}>
+      <Ionicons name="add" size={18} color="#fff" style={{ marginRight: 4 }} />
+      <Text style={s.createBtnText}>New Task</Text>
+    </TouchableOpacity>
+  )}
+</View>
 
       <View style={s.filterWrapper}>
         <FlatList
@@ -438,4 +442,5 @@ const s = StyleSheet.create({
   modalFooter:      { padding: 16, borderTopWidth: 1, borderTopColor: C.cardBorder, backgroundColor: C.card },
   saveBtn:          { backgroundColor: C.primary, borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
   saveBtnText:      { color: '#fff', fontWeight: '700', fontSize: 15 },
+backBtn: { padding: 4 },
 });

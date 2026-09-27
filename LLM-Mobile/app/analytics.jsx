@@ -123,16 +123,20 @@ export default function Analytics() {
   return (
     <SafeAreaView style={s.safe}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <View style={s.header}>
-          <View>
-            <Text style={s.pageTitle}>Analytics</Text>
-            <Text style={s.pageSub}>Live system metrics · Admin only</Text>
-          </View>
+<View style={s.header}>
+  <TouchableOpacity onPress={() => router.push('/admin')} style={s.backBtn}>
+    <Ionicons name="chevron-back" size={22} color={C.primary} />
+  </TouchableOpacity>
+  <View>
+    <Text style={s.pageTitle}>Analytics</Text>
+    <Text style={s.pageSub}>Live system metrics · Admin only</Text>
+  </View>
+  <View style={{ width: 32 }} />
+</View>
           <TouchableOpacity style={s.refreshBtn} onPress={handleRefresh}>
             {refreshing ? <ActivityIndicator size="small" color={C.primary} /> : <Ionicons name="refresh-outline" size={18} color={C.primary} />}
             <Text style={s.refreshText}> {refreshing ? 'Updating…' : 'Refresh'}</Text>
           </TouchableOpacity>
-        </View>
         <View style={s.body}>
           <Text style={s.sectionLabel}>OVERVIEW</Text>
           <View style={s.kpiRow}>
@@ -253,4 +257,5 @@ const s = StyleSheet.create({
   userBarWrap:    { width: 60, height: 6, backgroundColor: C.cardBorder, borderRadius: 3, overflow: 'hidden' },
   userBar:        { height: '100%', borderRadius: 3 },
   userCount:      { width: 24, color: C.primary, fontSize: 12, fontWeight: '700', textAlign: 'right' },
+backBtn: { padding: 4 },
 });

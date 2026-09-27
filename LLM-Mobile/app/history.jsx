@@ -152,13 +152,17 @@ export default function History() {
     );
   };
 
-  const ListHeader = () => (
+const ListHeader = () => (
     <View>
       <View style={s.headerRow}>
+        <TouchableOpacity onPress={() => router.push('/admin')} style={s.backBtn}>
+          <Ionicons name="chevron-back" size={22} color={C.primary} />
+        </TouchableOpacity>
         <View>
           <Text style={s.pageTitle}>Audit History</Text>
           <Text style={s.pageSub}>Live database records · tap to review</Text>
         </View>
+        <View style={{ width: 32 }} />
       </View>
       <View style={s.legendRow}>
         {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
@@ -168,6 +172,7 @@ export default function History() {
           </View>
         ))}
       </View>
+
       <View style={s.searchWrap}>
         <Ionicons name="search-outline" size={16} color={C.textMuted} />
         <TextInput
@@ -315,4 +320,5 @@ const s = StyleSheet.create({
   btnDisabled:        { opacity: 0.5 },
   alreadyReviewed:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 12, padding: 14 },
   alreadyReviewedText:{ fontSize: 13, fontWeight: '700' },
+backBtn: { padding: 4 },
 });

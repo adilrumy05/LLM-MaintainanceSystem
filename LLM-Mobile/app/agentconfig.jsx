@@ -126,7 +126,7 @@ export default function AgentConfig() {
 
         {/* ─── Header ────────────────────────────────────────────── */}
         <View style={s.header}>
-          <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={s.backBtn} onPress={() => router.push('/admin')}>
             <Ionicons name="chevron-back-outline" size={20} color={C.primary} />
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
