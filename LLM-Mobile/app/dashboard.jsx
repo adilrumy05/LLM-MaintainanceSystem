@@ -32,8 +32,9 @@ function PhotoThumb({ uri, small }) {
 const messagePhotos = (item) => item.imageUris || (item.imageUri ? [item.imageUri] : []);
 
 export default function Dashboard() {
-  const [chats, setChats]               = useState([{ id: '1', messages: [] }]);
-  const [activeChatId, setActiveChatId] = useState('1');
+  const newChatId = Date.now().toString();
+  const [chats, setChats]               = useState([{ id: newChatId, messages: [] }]);
+  const [activeChatId, setActiveChatId] = useState(newChatId);
   const [inputValue, setInputValue]     = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSidebar, setShowSidebar]   = useState(false);
@@ -67,20 +68,22 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!role) return;
-    const loadChats = async () => {
-      try {
-        const raw = await AsyncStorage.getItem(`chats_${role}`);
-        if (raw) {
-          const saved = JSON.parse(raw);
-          if (saved.length > 0) {
-            setChats(saved.map(c => ({ ...c, filter: c.filter || null })));
-            setActiveChatId(saved[0].id);
-            setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
-          }
-        }
-      } catch (e) { console.log('Error loading chats:', e); }
-      setLoaded(true);
-    };
+const loadChats = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(`chats_${role}`);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if (saved.length > 0) {
+        const newId = Date.now().toString();
+        const freshChat = { id: newId, messages: [], filter: null, confirmedModel: null };
+        const updatedChats = [freshChat, ...saved.map(c => ({ ...c, filter: c.filter || null }))];
+        setChats(updatedChats);
+        setActiveChatId(newId);
+      }
+    }
+  } catch (e) { console.log('Error loading chats:', e); }
+  setLoaded(true);
+};
     loadChats();
   }, [role]);
 

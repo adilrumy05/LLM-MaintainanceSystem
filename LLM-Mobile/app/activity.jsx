@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, FlatList, ScrollView, TouchableOpacity, ActivityIndicator,
-  StyleSheet, LayoutAnimation, Platform, UIManager, TextInput, RefreshControl,
+  StyleSheet, LayoutAnimation, Platform, TextInput, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { collection, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore';
@@ -11,9 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useUser } from './_layout';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const formatTime = (date) => {
