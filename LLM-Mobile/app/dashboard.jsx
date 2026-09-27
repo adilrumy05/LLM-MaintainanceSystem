@@ -1,5 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Dimensions, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Keyboard, TouchableWithoutFeedback } from 'react-native';
+import {
+  View, Text, TextInput, TouchableOpacity, FlatList, Modal,
+  ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,
+  Platform, Image, ScrollView,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -9,52 +13,22 @@ import { useRole } from '../hooks/useRole';
 import { useUser } from './_layout';
 import { submitQuery, decodeEntities, getFilters } from '../services/api';
 import { capturePhotos, MAX_PHOTOS } from '../services/photo';
-import Markdown from 'react-native-markdown-display';
 import MicButton from '../components/MicButton';
 import HandsFreeBar from '../components/HandsFreeBar';
 import { useHandsFree } from '../hooks/useHandsFree';
+import BotMessage from '../components/BotMessage';
+import { actionsForOutcome } from '../utils/chatActions';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
 
 const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
 
-// Server outcomes that need the technician, turned into tappable replies.
-const actionsForOutcome = (result, hadPhoto) => {
-  const retake = hadPhoto ? [{ type: 'retake' }] : [];
-  // Adding a photo keeps the ones already sent - e.g. a close-up of the
-  // nameplate alongside the part - where retaking replaces an unreadable set.
-  const addPhoto = hadPhoto ? [{ type: 'add_photo' }] : [];
-  switch (result.needsInput) {
-    case 'ask_model':
-      return [...(result.candidates || []).map((m) => ({ type: 'confirm_model', model: decodeEntities(m) })), ...addPhoto];
-    case 'conflict':
-      return [...(result.readModel ? [{ type: 'use_photo_model', model: decodeEntities(result.readModel) }] : []), ...retake];
-    case 'ask_photo':
-    case 'no_manual':
-      return retake;
-    default:
-      return [];
-  }
-};
-
-const actionLabel = (a) => {
-  switch (a.type) {
-    case 'confirm_model':   return a.model;
-    case 'use_photo_model': return `Use ${a.model}`;
-    case 'retake':          return 'Retake photo';
-    case 'add_photo':       return 'Add a photo';
-    case 'retry':           return 'Retry';
-    default:                return 'OK';
-  }
-};
-
-// A chat photo lives in the app cache and can be cleared by the OS; hide it
-// rather than show a broken image.
 function PhotoThumb({ uri, small }) {
   const [failed, setFailed] = useState(false);
   if (!uri || failed) return null;
   return <Image source={{ uri }} style={small ? s.msgPhotoSmall : s.msgPhoto} resizeMode="cover" onError={() => setFailed(true)} />;
 }
 
-// Older messages stored a single imageUri.
 const messagePhotos = (item) => item.imageUris || (item.imageUri ? [item.imageUri] : []);
 
 export default function Dashboard() {
@@ -64,30 +38,28 @@ export default function Dashboard() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSidebar, setShowSidebar]   = useState(false);
   const [loaded, setLoaded]             = useState(false);
-  //const [uploadedFile, setUploadedFile] = useState(null);
-  const cancelRef                       = useRef(false);
-  const flatListRef                     = useRef(null);
-  const router                          = useRouter();
-  const { role, isJunior, isIntermediate } = useRole();
-  const { setUser } = useUser();
-  const [allFilters, setAllFilters]         = useState(null);
+  const [allFilters, setAllFilters]     = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [filterSearchText, setFilterSearchText] = useState('');
   const [pendingPhotos, setPendingPhotos]   = useState([]);
   const [isPhotoBusy, setIsPhotoBusy]       = useState(false);
   const [handsFreeNotice, setHandsFreeNotice] = useState(null);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportText, setReportText]           = useState('');
 
-  // Callbacks from hands-free audio fire long after the render that created
-  // them, so they read the current chat through refs.
+  const cancelRef       = useRef(false);
+  const flatListRef     = useRef(null);
   const chatsRef        = useRef(chats);
   const activeChatIdRef = useRef(activeChatId);
+  const lastRequestRef  = useRef({});
+  const noticeTimer     = useRef(null);
+
   chatsRef.current        = chats;
   activeChatIdRef.current = activeChatId;
 
-  // Last request per chat, kept in memory only - photos are never persisted -
-  // so Retry, Retake and model confirmation can resend it.
-  const lastRequestRef = useRef({});
-
+  const router                             = useRouter();
+  const { role, isJunior, isIntermediate } = useRole();
+  const { user, setUser }                  = useUser();
 
   const activeChat = chats.find(c => c.id === activeChatId);
   const messages   = activeChat?.messages || [];
@@ -101,12 +73,7 @@ export default function Dashboard() {
         if (raw) {
           const saved = JSON.parse(raw);
           if (saved.length > 0) {
-            setChats(
-              saved.map(c => ({
-                ...c,
-                filter: c.filter || null,
-              }))
-            );
+            setChats(saved.map(c => ({ ...c, filter: c.filter || null })));
             setActiveChatId(saved[0].id);
             setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
           }
@@ -123,28 +90,19 @@ export default function Dashboard() {
   }, [chats, role, loaded]);
 
   useEffect(() => {
-  getFilters()
-    .then(setAllFilters)
-    .catch(e => console.log('Error loading filters:', e));
-}, []);
-
-
+    getFilters().then(setAllFilters).catch(e => console.log('Error loading filters:', e));
+  }, []);
 
   const addMessage = (from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
     const msg = { id: Date.now().toString() + Math.random(), from, text, sources, ...extra };
     setChats(prev => prev.map(c => c.id === chatId ? { ...c, messages: [...c.messages, msg] } : c));
-    requestAnimationFrame(() => {
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
-    });
+    requestAnimationFrame(() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80));
   };
 
   const updateMessage = (messageId, updater, chatId = activeChatIdRef.current) => {
     setChats(prev => prev.map(c => {
       if (c.id !== chatId) return c;
-      return {
-        ...c,
-        messages: c.messages.map(m => m.id === messageId ? updater(m) : m),
-      };
+      return { ...c, messages: c.messages.map(m => m.id === messageId ? updater(m) : m) };
     }));
   };
 
@@ -153,23 +111,16 @@ export default function Dashboard() {
 
   const setActionsUsed = (chatId, messageId, used) =>
     setChats(prev => prev.map(c => (c.id !== chatId ? c : {
-      ...c,
-      messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
+      ...c, messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
     })));
   const markActionsUsed   = (chatId, messageId) => setActionsUsed(chatId, messageId, true);
-  // Cancelling the photo picker should leave the reply buttons available.
   const markActionsUnused = (chatId, messageId) => setActionsUsed(chatId, messageId, false);
 
-  /**
-   * Send one request and put the outcome in the chat.
-   * `confirmedModel` / `docGroup` override the chat's own values when a reply
-   * action has just changed them and state has not re-rendered yet.
-   */
   const runQuery = async ({ text, photos = [], confirmedModel, docGroup, voice = false }) => {
     const chatId = activeChatIdRef.current;
-    const chat = chatsRef.current.find(c => c.id === chatId);
-    const model = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
-    const group = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
+    const chat   = chatsRef.current.find(c => c.id === chatId);
+    const model  = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
+    const group  = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
     lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group };
     const hasPhotos = photos.length > 0;
 
@@ -177,10 +128,7 @@ export default function Dashboard() {
     setIsProcessing(true);
     try {
       const result = await submitQuery(text, {
-        docGroup: group,
-        images: photos.map(p => p.base64),
-        confirmedModel: model,
-        voice,
+        docGroup: group, images: photos.map(p => p.base64), confirmedModel: model, voice,
       });
       if (cancelRef.current) return { cancelled: true };
 
@@ -188,9 +136,8 @@ export default function Dashboard() {
         addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, hasPhotos) }, chatId);
       } else {
         addMessage('bot', decodeEntities(result.text), result.sources || [], {
-          // Guided response: step cards come from the backend's second call.
           isProcedural: result.isProcedural || false,
-          steps: (result.steps || []).map((st) => ({
+          steps: (result.steps || []).map(st => ({
             title: decodeEntities(st.title),
             description: decodeEntities(st.description),
             warningLevel: st.warning_level,
@@ -198,10 +145,8 @@ export default function Dashboard() {
           })),
           procedureView: (result.isProcedural && result.steps?.length > 0) ? 'procedure' : 'text',
           procedureState: (result.isProcedural && result.steps?.length > 0)
-            ? { currentStep: 0, completedSteps: [], overviewOpen: false }
-            : null,
+            ? { currentStep: 0, completedSteps: [], overviewOpen: false } : null,
         }, chatId);
-        // A photo that identified the machine makes it this chat's machine.
         if (result.identifiedModel) updateChat(chatId, { confirmedModel: decodeEntities(result.identifiedModel) });
       }
       return { result };
@@ -209,8 +154,7 @@ export default function Dashboard() {
       if (cancelRef.current) return { cancelled: true };
       const photoProblem = err.code === 'invalid_image' || err.code === 'image_too_large';
       const actions = hasPhotos && photoProblem ? [{ type: 'retake' }]
-        : err.retryable || !err.status ? [{ type: 'retry' }]
-        : [];
+        : err.retryable || !err.status ? [{ type: 'retry' }] : [];
       addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`, [], { actions }, chatId);
       return { error: err };
     } finally {
@@ -219,7 +163,7 @@ export default function Dashboard() {
   };
 
   const handleSend = async (overrideText) => {
-    const typed = (overrideText || inputValue).trim();
+    const typed  = (overrideText || inputValue).trim();
     const photos = pendingPhotos;
     if ((!typed && !photos.length) || isProcessing) return;
     const queryText = typed || DEFAULT_PHOTO_QUESTION;
@@ -234,32 +178,23 @@ export default function Dashboard() {
     await runQuery({ text: queryText, photos });
   };
 
-  // ─── Photos ───────────────────────────────────────────────────────────────
   const choosePhotoSource = () => new Promise((resolve) => {
     if (Platform.OS === 'web') { resolve('library'); return; }
     Alert.alert('Add a photo', 'Photograph a nameplate, a fault display, or a part.', [
-      { text: 'Take photo', onPress: () => resolve('camera') },
-      { text: 'Choose from library', onPress: () => resolve('library') },
+      { text: 'Take photo',           onPress: () => resolve('camera') },
+      { text: 'Choose from library',  onPress: () => resolve('library') },
       { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
     ], { cancelable: true, onDismiss: () => resolve(null) });
   });
 
   const getPhotos = async (limit) => {
-    if (limit < 1) {
-      Alert.alert('Photos', `You can attach up to ${MAX_PHOTOS} photos to one question.`);
-      return [];
-    }
+    if (limit < 1) { Alert.alert('Photos', `You can attach up to ${MAX_PHOTOS} photos to one question.`); return []; }
     const source = await choosePhotoSource();
     if (!source) return [];
     setIsPhotoBusy(true);
-    try {
-      return await capturePhotos(source, { limit });
-    } catch (e) {
-      Alert.alert('Photo', e.message || 'Could not get the photo.');
-      return [];
-    } finally {
-      setIsPhotoBusy(false);
-    }
+    try { return await capturePhotos(source, { limit }); }
+    catch (e) { Alert.alert('Photo', e.message || 'Could not get the photo.'); return []; }
+    finally { setIsPhotoBusy(false); }
   };
 
   const handleAttachPhoto = async () => {
@@ -270,10 +205,9 @@ export default function Dashboard() {
   const removePendingPhoto = (index) =>
     setPendingPhotos(prev => prev.filter((_, i) => i !== index));
 
-  // ─── Replies to "which model?", "retake", "retry" ────────────────────────
   const handleAction = async (message, action) => {
     const chatId = activeChatIdRef.current;
-    const req = lastRequestRef.current[chatId];
+    const req    = lastRequestRef.current[chatId];
     markActionsUsed(chatId, message.id);
 
     switch (action.type) {
@@ -285,8 +219,6 @@ export default function Dashboard() {
         return;
       }
       case 'use_photo_model': {
-        // The photo disagreed with the chat's machine or manual. Switching to it
-        // clears both, so the old manual cannot silently filter the new machine.
         updateChat(chatId, { confirmedModel: action.model, filter: null });
         addMessage('user', `Use ${action.model}`);
         if (!req) { addMessage('bot', `Switched this chat to ${action.model}. Ask your question again.`); return; }
@@ -295,12 +227,11 @@ export default function Dashboard() {
       }
       case 'retake':
       case 'add_photo': {
-        // Retake replaces the set; add keeps what was already sent.
-        const kept = action.type === 'add_photo' ? req?.photos || [] : [];
+        const kept  = action.type === 'add_photo' ? req?.photos || [] : [];
         const added = await getPhotos(MAX_PHOTOS - kept.length);
         if (!added.length) { markActionsUnused(chatId, message.id); return; }
         const photos = [...kept, ...added].slice(0, MAX_PHOTOS);
-        const text = req?.text || DEFAULT_PHOTO_QUESTION;
+        const text   = req?.text || DEFAULT_PHOTO_QUESTION;
         addMessage('user', text, [], { imageUris: photos.map(p => p.uri) });
         await runQuery({ text, photos, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup });
         return;
@@ -314,31 +245,26 @@ export default function Dashboard() {
     }
   };
 
-  // ─── Hands-free ───────────────────────────────────────────────────────────
   const askHandsFree = async (text) => {
     addMessage('user', text);
     const { result, error, cancelled } = await runQuery({ text, voice: true });
     if (cancelled) return { speak: 'Cancelled.', stopAfter: true };
-    if (error) return { speak: `Sorry, that failed. ${error.message || ''}`.trim(), stopAfter: true };
-    if (result.needsInput) return { speak: decodeEntities(result.text) };
-    if (result.spokenText) return { speak: decodeEntities(result.spokenText) };
-    // The spoken form was withheld because it could not be shown to keep every
-    // warning. Never read a partial procedure aloud.
+    if (error)     return { speak: `Sorry, that failed. ${error.message || ''}`.trim(), stopAfter: true };
+    if (result.needsInput)  return { speak: decodeEntities(result.text) };
+    if (result.spokenText)  return { speak: decodeEntities(result.spokenText) };
     return { speak: 'Audio guidance is not available for this answer. The full answer is on your screen.' };
   };
 
-  const noticeTimer = useRef(null);
   const showHandsFreeNotice = (msg) => {
     setHandsFreeNotice(msg);
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setHandsFreeNotice(null), 5000);
   };
 
-  const handsFree = useHandsFree({ ask: askHandsFree, onNotice: showHandsFreeNotice });
+  const handsFree        = useHandsFree({ ask: askHandsFree, onNotice: showHandsFreeNotice });
   const handsFreeStopRef = useRef(handsFree.stop);
   handsFreeStopRef.current = handsFree.stop;
 
-  // Leaving this screen stops listening and speaking.
   useFocusEffect(useCallback(() => () => { handsFreeStopRef.current(); }, []));
 
   const toggleHandsFree = () => {
@@ -346,50 +272,20 @@ export default function Dashboard() {
     else handsFree.start();
   };
 
-  const prettifyFilterLabel = (id) => {
-    if (!id) return '';
-
-    const parts = id.split('_');
-    const model = parts.pop();
-
-    const rest = parts
-      .map(p => p.charAt(0).toUpperCase() + p.slice(1))
-      .join(' ');
-
-    return `${rest} ${model}`;
-  };
-
-  const filterOptions = (allFilters?.document_group_ids || []).map(
-    (id, idx) => ({
-      id,
-      label: prettifyFilterLabel(id),
-      filename: allFilters?.filenames?.[idx] || '',
-    })
-  );
+  const filterOptions = (allFilters?.document_group_ids || []).map((id, idx) => ({
+    id, label: id.split('_').map((p, i, a) => i === a.length - 1 ? p : p.charAt(0).toUpperCase() + p.slice(1)).join(' '),
+    filename: allFilters?.filenames?.[idx] || '',
+  }));
 
   const filteredOptions = filterOptions.filter(opt => {
     const q = filterSearchText.trim().toLowerCase();
-
     if (!q) return true;
-
-    return (
-      opt.label.toLowerCase().includes(q) ||
-      opt.id.toLowerCase().includes(q) ||
-      opt.filename.toLowerCase().includes(q)
-    );
+    return opt.label.toLowerCase().includes(q) || opt.id.toLowerCase().includes(q) || opt.filename.toLowerCase().includes(q);
   });
 
   const handleSelectFilter = (opt) => {
-    setChats(prev =>
-      prev.map(c =>
-        c.id === activeChatId
-          // A different manual means a possibly different machine: the
-          // confirmed model is dropped rather than carried into the new scope.
-          ? { ...c, filter: opt || null, confirmedModel: (c.filter?.id === opt?.id) ? c.confirmedModel : null }
-          : c
-      )
-    );
-
+    setChats(prev => prev.map(c => c.id === activeChatId
+      ? { ...c, filter: opt || null, confirmedModel: (c.filter?.id === opt?.id) ? c.confirmedModel : null } : c));
     setShowFilterPicker(false);
     setFilterSearchText('');
   };
@@ -400,328 +296,11 @@ export default function Dashboard() {
     addMessage('bot', 'Response stopped. You can continue the conversation.');
   };
 
-  // Upload disabled — not yet connected to RAG
-  // const handleFilePick = async () => {
-  //   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  //   if (status !== 'granted') { Alert.alert('Permission Denied', 'Please allow access to your files.'); return; }
-  //   const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: false, quality: 1 });
-  //   if (!result.canceled && result.assets?.[0]) {
-  //     const file = result.assets[0];
-  //     setUploadedFile(file);
-  //     addMessage('user', `Attached: ${file.fileName || 'file'}`);
-  //     addMessage('bot', 'File received! You can now ask questions about it.');
-  //   }
-  // };
-
-  const WARNING_COLORS = {
-    none:     { border: C.cardBorder, bg: 'transparent', text: C.textMuted, icon: null },
-    caution:  { border: '#fcd34d', bg: '#fef9c3', text: '#d97706', icon: 'warning-outline' },
-    critical: { border: '#fecaca', bg: '#fef2f2', text: '#dc2626', icon: 'alert-circle-outline' },
-  };
-
-  const ProcedureViewer = ({ steps, state, onChange }) => {
-    const safeState = state || {
-      currentStep: 0,
-      completedSteps: [],
-      overviewOpen: false,
-    };
-
-    const current = Math.min(
-      Math.max(safeState.currentStep || 0, 0),
-      Math.max(steps.length - 1, 0)
-    );
-
-    const completedSteps = Array.isArray(safeState.completedSteps)
-      ? safeState.completedSteps
-      : [];
-
-    const step = steps[current];
-    const warn = WARNING_COLORS[step.warningLevel] || WARNING_COLORS.none;
-    const isFirst = current === 0;
-    const isLast = current === steps.length - 1;
-    const currentCompleted = completedSteps.includes(current);
-    const completedCount = completedSteps.length;
-    const progressPercent = steps.length > 0
-      ? Math.round((completedCount / steps.length) * 100)
-      : 0;
-    const allCompleted = steps.length > 0 && completedCount === steps.length;
-
-    const patchState = (patch) => {
-      onChange({
-        ...safeState,
-        ...patch,
-      });
-    };
-
-    const toggleCurrentStep = () => {
-      const nextCompleted = currentCompleted
-        ? completedSteps.filter(i => i !== current)
-        : [...completedSteps, current].sort((a, b) => a - b);
-
-      patchState({ completedSteps: nextCompleted });
-    };
-
-    const goToStep = (index) => {
-      patchState({
-        currentStep: index,
-        overviewOpen: false,
-      });
-    };
-
-    return (
-      <View style={s.stepViewer}>
-        <View style={s.procedureTopRow}>
-          <View>
-            <Text style={s.procedureEyebrow}>GUIDED PROCEDURE</Text>
-            <Text style={s.procedureProgressText}>
-              {completedCount} of {steps.length} completed
-            </Text>
-          </View>
-
-          <View style={s.procedurePercentPill}>
-            <Text style={s.procedurePercentText}>{progressPercent}%</Text>
-          </View>
-        </View>
-
-        <View style={s.procedureProgressTrack}>
-          <View
-            style={[
-              s.procedureProgressFill,
-              { width: `${progressPercent}%` },
-            ]}
-          />
-        </View>
-
-        {allCompleted && (
-          <View style={s.procedureCompleteBanner}>
-            <Ionicons name="checkmark-circle" size={18} color="#15803d" />
-            <View style={{ flex: 1 }}>
-              <Text style={s.procedureCompleteTitle}>Procedure completed</Text>
-              <Text style={s.procedureCompleteSub}>
-                All {steps.length} maintenance steps have been marked complete.
-              </Text>
-            </View>
-          </View>
-        )}
-
-        <View style={s.stepHeaderRow}>
-          <Text style={s.stepCounter}>Step {current + 1} of {steps.length}</Text>
-
-          {currentCompleted && (
-            <View style={s.stepCompletedPill}>
-              <Ionicons name="checkmark" size={12} color="#15803d" />
-              <Text style={s.stepCompletedPillText}>Completed</Text>
-            </View>
-          )}
-        </View>
-
-        <View style={[s.stepCard, { borderColor: warn.border }]}>
-          {warn.icon && (
-            <View style={[s.stepWarningBanner, { backgroundColor: warn.bg }]}>
-              <Ionicons name={warn.icon} size={14} color={warn.text} />
-              <Text style={[s.stepWarningText, { color: warn.text }]}>
-                {step.warningLevel === 'critical' ? ' CRITICAL' : ' CAUTION'}
-              </Text>
-            </View>
-          )}
-
-          <Text style={s.stepTitle}>{step.title}</Text>
-          <Text style={s.stepDescription}>{step.description}</Text>
-
-          {step.toolsRequired?.length > 0 && (
-            <View style={s.stepToolsRow}>
-              <Ionicons name="build-outline" size={13} color={C.textMuted} />
-              <View style={{ flex: 1 }}>
-                <Text style={s.stepToolsLabel}>Tools required</Text>
-                <Text style={s.stepToolsText}>{step.toolsRequired.join(', ')}</Text>
-              </View>
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={[
-              s.stepCompleteAction,
-              currentCompleted && s.stepCompleteActionChecked,
-            ]}
-            onPress={toggleCurrentStep}
-            activeOpacity={0.8}
-          >
-            <View
-              style={[
-                s.stepCheckbox,
-                currentCompleted && s.stepCheckboxChecked,
-              ]}
-            >
-              {currentCompleted && (
-                <Ionicons name="checkmark" size={15} color="#fff" />
-              )}
-            </View>
-
-            <View style={{ flex: 1 }}>
-              <Text
-                style={[
-                  s.stepCompleteActionTitle,
-                  currentCompleted && s.stepCompleteActionTitleChecked,
-                ]}
-              >
-                {currentCompleted
-                  ? 'Step completed'
-                  : step.warningLevel === 'critical'
-                    ? 'I confirm this critical step is complete'
-                    : 'Mark this step as complete'}
-              </Text>
-              {!currentCompleted && (
-                <Text style={s.stepCompleteActionSub}>
-                  Confirm after you have performed this instruction.
-                </Text>
-              )}
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        <View style={s.stepNavRow}>
-          <TouchableOpacity
-            style={[s.stepNavBtn, isFirst && s.stepNavBtnDisabled]}
-            onPress={() => patchState({ currentStep: Math.max(0, current - 1) })}
-            disabled={isFirst}
-          >
-            <Ionicons
-              name="chevron-back-outline"
-              size={16}
-              color={isFirst ? C.textMuted : C.primary}
-            />
-            <Text style={[s.stepNavText, isFirst && { color: C.textMuted }]}>
-              Previous
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              s.stepNavBtn,
-              (!currentCompleted || isLast) && s.stepNavBtnDisabled,
-            ]}
-            onPress={() =>
-              patchState({ currentStep: Math.min(steps.length - 1, current + 1) })
-            }
-            disabled={!currentCompleted || isLast}
-          >
-            <Text
-              style={[
-                s.stepNavText,
-                (!currentCompleted || isLast) && { color: C.textMuted },
-              ]}
-            >
-              {isLast ? 'Final Step' : 'Next'}
-            </Text>
-            {!isLast && (
-              <Ionicons
-                name="chevron-forward-outline"
-                size={16}
-                color={!currentCompleted ? C.textMuted : C.primary}
-              />
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {!currentCompleted && !isLast && (
-          <View style={s.nextHintRow}>
-            <Ionicons name="information-circle-outline" size={13} color={C.textMuted} />
-            <Text style={s.nextHintText}>
-              Complete the current step to continue.
-            </Text>
-          </View>
-        )}
-
-        <TouchableOpacity
-          style={s.overviewToggle}
-          onPress={() => patchState({ overviewOpen: !safeState.overviewOpen })}
-          activeOpacity={0.8}
-        >
-          <View style={s.overviewToggleLeft}>
-            <Ionicons name="list-outline" size={15} color={C.primary} />
-            <Text style={s.overviewToggleText}>View all steps</Text>
-          </View>
-
-          <View style={s.overviewToggleRight}>
-            <Text style={s.overviewCountText}>
-              {completedCount}/{steps.length}
-            </Text>
-            <Ionicons
-              name={safeState.overviewOpen ? 'chevron-up-outline' : 'chevron-down-outline'}
-              size={15}
-              color={C.textMuted}
-            />
-          </View>
-        </TouchableOpacity>
-
-        {safeState.overviewOpen && (
-          <View style={s.overviewList}>
-            {steps.map((overviewStep, index) => {
-              const done = completedSteps.includes(index);
-              const active = index === current;
-
-              return (
-                <TouchableOpacity
-                  key={index}
-                  style={[
-                    s.overviewItem,
-                    active && s.overviewItemActive,
-                    index === steps.length - 1 && { borderBottomWidth: 0 },
-                  ]}
-                  onPress={() => goToStep(index)}
-                  activeOpacity={0.75}
-                >
-                  <View
-                    style={[
-                      s.overviewStatusIcon,
-                      done && s.overviewStatusIconDone,
-                    ]}
-                  >
-                    {done ? (
-                      <Ionicons name="checkmark" size={12} color="#fff" />
-                    ) : (
-                      <Text style={s.overviewStatusNumber}>{index + 1}</Text>
-                    )}
-                  </View>
-
-                  <Text
-                    style={[
-                      s.overviewItemTitle,
-                      done && s.overviewItemTitleDone,
-                      active && { color: C.primary },
-                    ]}
-                    numberOfLines={2}
-                  >
-                    {overviewStep.title}
-                  </Text>
-
-                  {active && (
-                    <Text style={s.overviewCurrentLabel}>CURRENT</Text>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        )}
-      </View>
-    );
-  };
-
   const handleNewChat = () => {
     const newId = Date.now().toString();
     handsFree.stop();
     setPendingPhotos([]);
-
-    setChats(prev => [
-      ...prev,
-      {
-        id: newId,
-        messages: [],
-        filter: null,
-        confirmedModel: null,
-      },
-    ]);
-
+    setChats(prev => [...prev, { id: newId, messages: [], filter: null, confirmedModel: null }]);
     setActiveChatId(newId);
     setShowSidebar(false);
     setInputValue('');
@@ -743,19 +322,12 @@ export default function Dashboard() {
 
   const handleLogout = () => {
     if (Platform.OS === 'web') {
-      if (window.confirm('Are you sure you want to logout?')) {
-        AsyncStorage.removeItem('user');
-        router.replace('/login');
-      }
+      if (window.confirm('Are you sure you want to logout?')) { AsyncStorage.removeItem('user'); router.replace('/login'); }
       return;
     }
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: async () => {
-        await AsyncStorage.removeItem('user');
-        setUser(null);
-        router.replace('/login');
-      }},
+      { text: 'Logout', style: 'destructive', onPress: async () => { await AsyncStorage.removeItem('user'); setUser(null); router.replace('/login'); } },
     ]);
   };
 
@@ -764,218 +336,44 @@ export default function Dashboard() {
     return first ? first.text.slice(0, 30) + (first.text.length > 30 ? '...' : '') : 'New Chat';
   };
 
-  // ─── Horizontal scroll rule for tables ───────────────────────────────────
-  const markdownRules = {
-    table: (node, children) => (
-      <ScrollView key={node.key} horizontal nestedScrollEnabled directionalLockEnabled showsHorizontalScrollIndicator style={s.tableScroll}>
-        <View>{children}</View>
-      </ScrollView>
-    ),
+  const handleSubmitReport = async () => {
+    try {
+      await addDoc(collection(db, 'Alerts'), {
+        type: 'report',
+        title: 'Issue Reported',
+        message: reportText.trim(),
+        userEmail: user?.email || 'unknown',
+        role: user?.role || 'beginner',
+        status: 'Pending Review',
+        statusColor: '#ea580c',
+        statusBg: '#fff7ed',
+        createdAt: serverTimestamp(),
+      });
+      setShowReportModal(false);
+      setReportText('');
+      Alert.alert('Reported', 'Your issue has been sent to the admin team.');
+    } catch (e) {
+      Alert.alert('Error', 'Could not submit report. Please try again.');
+    }
   };
-
-  const SourceItem = ({ source }) => {
-    const [expanded, setExpanded] = useState(false);
-    const [selectedImage, setSelectedImage] = useState(null);
-    const hasImages = source.images && source.images.length > 0;
-
-    return (
-      <View style={s.sourceContainer}>
-
-        {/* Fullscreen Modal */}
-        <Modal
-          visible={!!selectedImage}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setSelectedImage(null)}
-        >
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }}>
-            {/* Close button */}
-            <TouchableOpacity
-              onPress={() => setSelectedImage(null)}
-              style={{ position: 'absolute', top: 50, right: 20, zIndex: 10 }}
-            >
-              <Ionicons name="close-circle" size={36} color="#fff" />
-            </TouchableOpacity>
-
-            {/* Zoomable ScrollView */}
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
-              maximumZoomScale={5}
-              minimumZoomScale={1}
-              centerContent
-              showsHorizontalScrollIndicator={false}
-              showsVerticalScrollIndicator={false}
-            >
-              <Image
-                source={{ uri: selectedImage }}
-                style={{
-                  width: Dimensions.get('window').width,
-                  height: Dimensions.get('window').height * 0.8,
-                }}
-                resizeMode="contain"
-              />
-            </ScrollView>
-          </View>
-        </Modal>
-
-        {/* Source row toggle */}
-        <TouchableOpacity onPress={() => setExpanded(!expanded)} style={s.sourceRow}>
-          <Text style={s.sourceItem}>
-            • {source.filename || source.document_group_id}{source.page ? ` — p.${source.page}` : ''}
-          </Text>
-        </TouchableOpacity>
-
-        {/* Image dropdown */}
-        {expanded && hasImages && (
-          <View style={s.imageDropdown}>
-            {source.images.map((img, imgIdx) => (
-              <View key={imgIdx} style={s.imageCard}>
-                {img.url ? (
-                  <TouchableOpacity onPress={() => setSelectedImage(img.url)} activeOpacity={0.8}>
-                    <Image source={{ uri: img.url }} style={s.thumbnail} resizeMode="contain" />
-                    {/* Hint icon */}
-                    <View style={{
-                      position: 'absolute', bottom: 6, right: 6,
-                      backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12, padding: 4
-                    }}>
-                      <Ionicons name="expand-outline" size={14} color="#fff" />
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
-                {img.caption ? <Text style={s.imagePlaceholder}>{img.caption}</Text> : null}
-              </View>
-            ))}
-          </View>
-        )}
-
-      </View>
-    );
-  };
-
-  // ─── Bot message (own component so toggle state persists per bubble) ─────
-  const BotMessage = ({ item }) => {
-    const hasSteps = item.isProcedural && item.steps?.length > 0;
-    const viewMode = hasSteps
-      ? (item.procedureView || 'procedure')
-      : 'text';
-
-    const procedureState = item.procedureState || {
-      currentStep: 0,
-      completedSteps: [],
-      overviewOpen: false,
-    };
-
-    const setViewMode = (nextView) => {
-      updateMessage(item.id, m => ({
-        ...m,
-        procedureView: nextView,
-      }));
-    };
-
-    const setProcedureState = (nextState) => {
-      updateMessage(item.id, m => ({
-        ...m,
-        procedureState: nextState,
-      }));
-    };
-
-    return (
-      <View style={[s.bubble, s.bubbleBot]}>
-        {hasSteps && (
-          <View style={s.viewToggleRow}>
-            <TouchableOpacity
-              style={[s.viewToggleBtn, viewMode === 'procedure' && s.viewToggleBtnActive]}
-              onPress={() => setViewMode('procedure')}
-            >
-              <Ionicons
-                name="navigate-circle-outline"
-                size={14}
-                color={viewMode === 'procedure' ? C.primary : C.textMuted}
-              />
-              <Text
-                style={[
-                  s.viewToggleText,
-                  viewMode === 'procedure' && s.viewToggleTextActive,
-                ]}
-              >
-                Procedure
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[s.viewToggleBtn, viewMode === 'text' && s.viewToggleBtnActive]}
-              onPress={() => setViewMode('text')}
-            >
-              <Ionicons
-                name="document-text-outline"
-                size={13}
-                color={viewMode === 'text' ? C.primary : C.textMuted}
-              />
-              <Text
-                style={[
-                  s.viewToggleText,
-                  viewMode === 'text' && s.viewToggleTextActive,
-                ]}
-              >
-                Full Text
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {hasSteps && viewMode === 'procedure'
-          ? (
-            <ProcedureViewer
-              steps={item.steps}
-              state={procedureState}
-              onChange={setProcedureState}
-            />
-          )
-          : (
-            <Markdown
-              style={markdownStyles}
-              rules={markdownRules}
-              mergeStyle
-            >
-              {item.text}
-            </Markdown>
-          )
-        }
-
-        {item.sources?.length > 0 && (
-          <View style={s.sourcesBox}>
-            <View style={s.sourcesLabelRow}>
-              <Ionicons name="attach-outline" size={10} color="#7c3aed" />
-              <Text style={s.sourcesLabel}> SOURCES</Text>
-            </View>
-            {item.sources.map((src, i) => <SourceItem key={i} source={src} />)}
-          </View>
-        )}
-      </View>
-    );
-  };
-
-  // ─── Render message ───────────────────────────────────────────────────────
 
   const renderMessage = ({ item }) => {
     const isUser = item.from === 'user';
     return (
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
-        {isUser
-          ? (
-            <View style={[s.bubble, s.bubbleUser]}>
-              {messagePhotos(item).length === 1 ? <PhotoThumb uri={messagePhotos(item)[0]} /> : null}
-              {messagePhotos(item).length > 1 ? (
-                <View style={s.msgPhotoGrid}>
-                  {messagePhotos(item).map((uri, i) => <PhotoThumb key={i} uri={uri} small />)}
-                </View>
-              ) : null}
-              <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
-            </View>
-          )
-          : <BotMessage item={item} />
-        }
+        {isUser ? (
+          <View style={[s.bubble, s.bubbleUser]}>
+            {messagePhotos(item).length === 1 ? <PhotoThumb uri={messagePhotos(item)[0]} /> : null}
+            {messagePhotos(item).length > 1 ? (
+              <View style={s.msgPhotoGrid}>
+                {messagePhotos(item).map((uri, i) => <PhotoThumb key={i} uri={uri} small />)}
+              </View>
+            ) : null}
+            <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
+          </View>
+        ) : (
+          <BotMessage item={item} updateMessage={updateMessage} />
+        )}
       </View>
     );
   };
@@ -1007,27 +405,16 @@ export default function Dashboard() {
                   </View>
                 )}
               />
-              <TouchableOpacity
-                style={s.clearAllBtn}
-                onPress={() => {
-                  if (Platform.OS === 'web') {
-                    if (window.confirm('Delete all conversations?')) {
-                      setChats([{ id: '1', messages: [] }]);
-                      setActiveChatId('1');
-                      setShowSidebar(false);
-                    }
-                    return;
-                  }
-                  Alert.alert('Clear All Chats', 'Delete all conversations?', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Clear All', style: 'destructive', onPress: () => {
-                      setChats([{ id: '1', messages: [] }]);
-                      setActiveChatId('1');
-                      setShowSidebar(false);
-                    }},
-                  ]);
-                }}
-              >
+              <TouchableOpacity style={s.clearAllBtn} onPress={() => {
+                if (Platform.OS === 'web') {
+                  if (window.confirm('Delete all conversations?')) { setChats([{ id: '1', messages: [] }]); setActiveChatId('1'); setShowSidebar(false); }
+                  return;
+                }
+                Alert.alert('Clear All Chats', 'Delete all conversations?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Clear All', style: 'destructive', onPress: () => { setChats([{ id: '1', messages: [] }]); setActiveChatId('1'); setShowSidebar(false); } },
+                ]);
+              }}>
                 <Ionicons name="trash-outline" size={14} color={C.red} />
                 <Text style={s.clearAllText}> Clear All Chats</Text>
               </TouchableOpacity>
@@ -1040,106 +427,71 @@ export default function Dashboard() {
           </View>
         )}
 
-         {/* ─── Model Filter Modal ─────────────────────────────────── */}
-        <Modal
-          visible={showFilterPicker}
-          animationType="slide"
-          onRequestClose={() => setShowFilterPicker(false)}
-        >
-          <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-
-            <View style={s.filterModalHeader}>
-              <Text style={s.filterModalTitle}>
-                Ground to a model
-              </Text>
-
-              <TouchableOpacity
-                onPress={() => setShowFilterPicker(false)}
-              >
-                <Ionicons
-                  name="close-outline"
-                  size={26}
-                  color={C.text}
-                />
-              </TouchableOpacity>
-            </View>
-
-            <View style={s.filterSearchBar}>
-              <Ionicons
-                name="search-outline"
-                size={16}
-                color={C.textMuted}
-              />
-
+        {/* ─── Report Issue Modal ───────────────────────────────────── */}
+        <Modal visible={showReportModal} animationType="slide" transparent onRequestClose={() => setShowReportModal(false)}>
+          <View style={s.reportOverlay}>
+            <View style={s.reportSheet}>
+              <View style={s.reportHeader}>
+                <Ionicons name="bug-outline" size={20} color="#ea580c" />
+                <Text style={s.reportTitle}>Report an Issue</Text>
+                <TouchableOpacity onPress={() => { setShowReportModal(false); setReportText(''); }}>
+                  <Ionicons name="close-outline" size={24} color={C.text} />
+                </TouchableOpacity>
+              </View>
+              <Text style={s.reportSub}>Describe the problem — wrong answer, missing procedure, equipment fault, etc.</Text>
               <TextInput
-                style={s.filterSearchInput}
-                placeholder="Search model number, brand..."
+                style={s.reportInput}
+                placeholder="What went wrong or what did you notice?"
                 placeholderTextColor={C.textMuted}
-                value={filterSearchText}
-                onChangeText={setFilterSearchText}
+                value={reportText}
+                onChangeText={setReportText}
+                multiline
                 autoFocus
               />
+              <TouchableOpacity
+                style={[s.reportSubmitBtn, !reportText.trim() && s.reportSubmitBtnDisabled]}
+                disabled={!reportText.trim()}
+                onPress={handleSubmitReport}
+              >
+                <Ionicons name="send-outline" size={14} color="#fff" />
+                <Text style={s.reportSubmitText}>Submit Report</Text>
+              </TouchableOpacity>
             </View>
+          </View>
+        </Modal>
 
-            <TouchableOpacity
-              style={s.filterAllOption}
-              onPress={() => handleSelectFilter(null)}
-            >
-              <Ionicons
-                name="layers-outline"
-                size={16}
-                color={C.primary}
-              />
-
-              <Text style={s.filterAllOptionText}>
-                {' '}All models (no filter)
-              </Text>
+        {/* ─── Model Filter Modal ───────────────────────────────────── */}
+        <Modal visible={showFilterPicker} animationType="slide" onRequestClose={() => setShowFilterPicker(false)}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+            <View style={s.filterModalHeader}>
+              <Text style={s.filterModalTitle}>Ground to a model</Text>
+              <TouchableOpacity onPress={() => setShowFilterPicker(false)}>
+                <Ionicons name="close-outline" size={26} color={C.text} />
+              </TouchableOpacity>
+            </View>
+            <View style={s.filterSearchBar}>
+              <Ionicons name="search-outline" size={16} color={C.textMuted} />
+              <TextInput style={s.filterSearchInput} placeholder="Search model number, brand..." placeholderTextColor={C.textMuted} value={filterSearchText} onChangeText={setFilterSearchText} autoFocus />
+            </View>
+            <TouchableOpacity style={s.filterAllOption} onPress={() => handleSelectFilter(null)}>
+              <Ionicons name="layers-outline" size={16} color={C.primary} />
+              <Text style={s.filterAllOptionText}> All models (no filter)</Text>
             </TouchableOpacity>
-
             <FlatList
               data={filteredOptions}
               keyExtractor={item => item.id}
               keyboardShouldPersistTaps="handled"
-
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={s.filterOptionRow}
-                  onPress={() => handleSelectFilter(item)}
-                >
+                <TouchableOpacity style={s.filterOptionRow} onPress={() => handleSelectFilter(item)}>
                   <View style={{ flex: 1 }}>
-
-                    <Text style={s.filterOptionLabel}>
-                      {item.label}
-                    </Text>
-
-                    {!!item.filename && (
-                      <Text
-                        style={s.filterOptionSub}
-                        numberOfLines={1}
-                      >
-                        {item.filename}
-                      </Text>
-                    )}
-
+                    <Text style={s.filterOptionLabel}>{item.label}</Text>
+                    {!!item.filename && <Text style={s.filterOptionSub} numberOfLines={1}>{item.filename}</Text>}
                   </View>
-
-                  {activeChat?.filter?.id === item.id && (
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={18}
-                      color={C.primary}
-                    />
-                  )}
+                  {activeChat?.filter?.id === item.id && <Ionicons name="checkmark-circle" size={18} color={C.primary} />}
                 </TouchableOpacity>
               )}
-
-              ListEmptyComponent={
-                <Text style={s.filterEmptyText}>
-                  No models match "{filterSearchText}"
-                </Text>
-              }
+              ListEmptyComponent={<Text style={s.filterEmptyText}>No models match "{filterSearchText}"</Text>}
             />
-
           </SafeAreaView>
         </Modal>
 
@@ -1198,8 +550,6 @@ export default function Dashboard() {
               showsVerticalScrollIndicator
             />
           )}
-
-          {/* ─── Typing indicator ──────────────────────────────────── */}
           {isProcessing && (
             <View style={s.typingRow}>
               <View style={s.typingBubble}>
@@ -1214,30 +564,8 @@ export default function Dashboard() {
           )}
         </View>
 
-
-
-        {/* Temporary test button — commented out for presentation
-        <TouchableOpacity
-          style={{ backgroundColor: '#dc2626', padding: 10, margin: 10, borderRadius: 8, alignItems: 'center' }}
-          onPress={async () => {
-            console.log('🔵 Test button pressed');
-            try {
-              const result = await submitQuery('test query');
-              console.log('✅ Test result:', result);
-              Alert.alert('Test Success', 'Check Metro logs');
-            } catch (err) {
-              console.error('❌ Test error:', err);
-              Alert.alert('Test Failed', err.message);
-            }
-          }}
-        >
-          <Text style={{ color: 'white', fontWeight: 'bold' }}>TEST API</Text>
-        </TouchableOpacity>
-        */}
-
-
+        {/* ─── Input area ──────────────────────────────────────────── */}
         <View style={s.inputWrapper}>
-
           <HandsFreeBar
             phase={handsFree.phase}
             level={handsFree.level}
@@ -1255,92 +583,50 @@ export default function Dashboard() {
                 {pendingPhotos.map((p, i) => (
                   <View key={p.uri + i} style={s.pendingPhotoTile}>
                     <Image source={{ uri: p.uri }} style={s.pendingPhotoImg} />
-                    <TouchableOpacity
-                      style={s.pendingPhotoRemove}
-                      onPress={() => removePendingPhoto(i)}
-                      accessibilityLabel={`Remove photo ${i + 1}`}
-                    >
+                    <TouchableOpacity style={s.pendingPhotoRemove} onPress={() => removePendingPhoto(i)}>
                       <Ionicons name="close-circle" size={20} color="#fff" />
                     </TouchableOpacity>
                   </View>
                 ))}
                 {pendingPhotos.length < MAX_PHOTOS && (
-                  <TouchableOpacity
-                    style={s.pendingPhotoAdd}
-                    onPress={handleAttachPhoto}
-                    disabled={isPhotoBusy || isProcessing}
-                    accessibilityLabel="Add another photo"
-                  >
-                    {isPhotoBusy
-                      ? <ActivityIndicator size="small" color={C.primary} />
-                      : <Ionicons name="add" size={24} color={C.primary} />}
+                  <TouchableOpacity style={s.pendingPhotoAdd} onPress={handleAttachPhoto} disabled={isPhotoBusy || isProcessing}>
+                    {isPhotoBusy ? <ActivityIndicator size="small" color={C.primary} /> : <Ionicons name="add" size={24} color={C.primary} />}
                   </TouchableOpacity>
                 )}
               </ScrollView>
-              <Text style={s.pendingPhotoText}>
-                {pendingPhotos.length} of {MAX_PHOTOS} photos. Ask about them, or just send.
-              </Text>
+              <Text style={s.pendingPhotoText}>{pendingPhotos.length} of {MAX_PHOTOS} photos. Ask about them, or just send.</Text>
             </View>
           )}
 
           <View style={s.filterBar}>
-            <TouchableOpacity
-              style={s.filterChip}
-              onPress={() => setShowFilterPicker(true)}
-            >
-              <Ionicons
-                name="filter-outline"
-                size={13}
-                color={activeChat?.filter ? C.primary : C.textMuted}
-              />
-
-              <Text
-                style={[
-                  s.filterChipText,
-                  activeChat?.filter && {
-                    color: C.primary,
-                    fontWeight: '700',
-                  },
-                ]}
-                numberOfLines={1}
-              >
-                {activeChat?.filter
-                  ? activeChat.filter.label
-                  : 'All models (no filter)'}
+            <TouchableOpacity style={s.filterChip} onPress={() => setShowFilterPicker(true)}>
+              <Ionicons name="filter-outline" size={13} color={activeChat?.filter ? C.primary : C.textMuted} />
+              <Text style={[s.filterChipText, activeChat?.filter && { color: C.primary, fontWeight: '700' }]} numberOfLines={1}>
+                {activeChat?.filter ? activeChat.filter.label : 'All models (no filter)'}
               </Text>
             </TouchableOpacity>
-
             {activeChat?.filter && (
-              <TouchableOpacity
-                onPress={() => handleSelectFilter(null)}
-                style={s.filterClearBtn}
-              >
-                <Ionicons
-                  name="close-circle"
-                  size={16}
-                  color={C.textMuted}
-                />
+              <TouchableOpacity onPress={() => handleSelectFilter(null)} style={s.filterClearBtn}>
+                <Ionicons name="close-circle" size={16} color={C.textMuted} />
               </TouchableOpacity>
             )}
-
             {activeChat?.confirmedModel && (
               <View style={s.machineChip}>
                 <Ionicons name="hardware-chip-outline" size={13} color={C.primary} />
                 <Text style={s.machineChipText} numberOfLines={1}>{activeChat.confirmedModel}</Text>
-                <TouchableOpacity
-                  onPress={() => updateChat(activeChatId, { confirmedModel: null })}
-                  accessibilityLabel="Clear confirmed machine"
-                >
+                <TouchableOpacity onPress={() => updateChat(activeChatId, { confirmedModel: null })}>
                   <Ionicons name="close-circle" size={15} color={C.textMuted} />
                 </TouchableOpacity>
               </View>
             )}
-
+            <TouchableOpacity style={s.reportChip} onPress={() => setShowReportModal(true)}>
+              <Ionicons name="bug-outline" size={13} color="#ea580c" />
+              <Text style={s.reportChipText}>Report</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={[s.handsFreeChip, handsFree.active && s.handsFreeChipOn]}
               onPress={toggleHandsFree}
               disabled={!handsFree.active && (isProcessing || isPhotoBusy)}
-              accessibilityLabel={handsFree.active ? 'Stop hands-free' : 'Start hands-free'}
             >
               <Ionicons name="headset-outline" size={13} color={handsFree.active ? '#fff' : C.primary} />
               <Text style={[s.handsFreeChipText, handsFree.active && { color: '#fff' }]}>Hands-free</Text>
@@ -1348,24 +634,10 @@ export default function Dashboard() {
           </View>
 
           <View style={s.inputBar}>
-
-          <TouchableOpacity
-            style={s.iconBtn}
-            onPress={handleAttachPhoto}
-            disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}
-            accessibilityLabel="Attach a photo"
-          >
-            {isPhotoBusy
-              ? <ActivityIndicator size="small" color={C.primary} />
-              : <Ionicons name="camera-outline" size={20} color={C.primary} />}
-          </TouchableOpacity>
-
-          <MicButton
-            style={s.iconBtn}
-            disabled={isProcessing || handsFree.active}
-            onTranscript={(text) => setInputValue(text)}
-          />
-
+            <TouchableOpacity style={s.iconBtn} onPress={handleAttachPhoto} disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}>
+              {isPhotoBusy ? <ActivityIndicator size="small" color={C.primary} /> : <Ionicons name="camera-outline" size={20} color={C.primary} />}
+            </TouchableOpacity>
+            <MicButton style={s.iconBtn} disabled={isProcessing || handsFree.active} onTranscript={(text) => setInputValue(text)} />
             <TextInput
               style={s.input}
               placeholder={pendingPhotos.length ? 'Ask about these photos...' : 'Ask a maintenance question...'}
@@ -1383,7 +655,6 @@ export default function Dashboard() {
               <Ionicons name="send-outline" size={16} color="#fff" />
             </TouchableOpacity>
           </View>
-
         </View>
 
       </SafeAreaView>
@@ -1392,67 +663,56 @@ export default function Dashboard() {
 }
 
 const s = StyleSheet.create({
-  safe:             { flex: 1, backgroundColor: C.bg },
-  overlay:          { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: 'row' },
-  overlayBg:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sidebar:          { width: 280, backgroundColor: C.card, paddingTop: 50, paddingHorizontal: 16, paddingBottom: 20 },
-  sidebarTitle:     { color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 16 },
-  newChatBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, marginBottom: 16 },
-  newChatText:      { color: '#fff', fontWeight: '700', fontSize: 14 },
-  chatItem:         { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, marginBottom: 6, backgroundColor: C.bg },
-  clearAllBtn:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 10, marginTop: 8, marginBottom: 8 },
-  clearAllText:     { color: C.red, fontWeight: '700', fontSize: 12 },
-  chatItemActive:   { backgroundColor: C.primaryLight },
-  chatItemText:     { color: C.text, fontSize: 13, flex: 1 },
-  logoutSidebar:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 'auto', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 12 },
-  logoutSidebarText:{ color: C.red, fontWeight: '700', fontSize: 13 },
-  header:           { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card },
-  menuBtn:          { padding: 6 },
-  headerTitle:      { color: C.text, fontWeight: '700', fontSize: 16 },
-  headerRole:       { color: C.primary, fontSize: 10, fontWeight: '700', marginTop: 1 },
-  newChatIconBtn:   { padding: 6 },
-  banner:           { flexDirection: 'row', alignItems: 'center', borderWidth: 1, padding: 10, paddingHorizontal: 16 },
-  bannerText:       { fontSize: 11, lineHeight: 16, flex: 1 },
-  messageArea:      { flex: 1 },
-  welcomeContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
-  logoCircle:       { width: 80, height: 80, borderRadius: 40, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  welcomeTitle:     { color: C.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
-  welcomeSub:       { color: C.textSub, fontSize: 14, textAlign: 'center', marginBottom: 4 },
-  welcomeSub2:      { color: C.textMuted, fontSize: 12, textAlign: 'center' },
-  msgFlatList:      { flex: 1 },
-  msgList:          { padding: 16, paddingBottom: 12 },
-  msgRow:           { flexDirection: 'row', marginBottom: 14 },
-  msgRowUser:       { justifyContent: 'flex-end' },
-  msgRowBot:        { justifyContent: 'flex-start' },
-  bubble:           { maxWidth: '88%', borderRadius: 18, padding: 12 },
-  bubbleUser:       { backgroundColor: C.primary, borderBottomRightRadius: 4 },
-  bubbleBot:        { backgroundColor: C.card, borderWidth: 1, borderColor: C.cardBorder, borderBottomLeftRadius: 4 },
-  bubbleText:       { color: C.text, fontSize: 14, lineHeight: 20 },
-  bubbleTextUser:   { color: '#fff' },
-  sourcesBox:       { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: '#ddd6fe' },
-  sourcesLabelRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  sourcesLabel:     { fontSize: 9, fontWeight: '700', color: '#7c3aed', letterSpacing: 1 },
-  sourceContainer:  { marginBottom: 8 },
-  sourceRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
-  sourceItem:       { fontSize: 11, color: '#6d28d9', marginBottom: 2 },
-  imageDropdown:    { marginTop: 6, marginLeft: 12, padding: 8, backgroundColor: '#f9f9ff', borderRadius: 8, borderWidth: 1, borderColor: '#e0e7ff' },
-  imageCard:        { marginBottom: 8, padding: 6, backgroundColor: '#fff', borderRadius: 6, alignItems: 'center' },
-  imagePlaceholder: { fontSize: 12, color: '#6b7280' },
-  tableScroll:      { marginVertical: 8 },
-  typingRow:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
-  typingBubble:     { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 16, padding: 10, gap: 8, borderWidth: 1, borderColor: C.cardBorder, flex: 1 },
-  typingText:       { color: C.textMuted, fontSize: 12 },
-  cancelBtn:        { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
-  cancelText:       { color: '#f87171', fontSize: 12, fontWeight: '700' },
-  inputWrapper:     { backgroundColor: C.card, borderTopWidth: 1, borderColor: C.cardBorder, paddingBottom: 0 },
-  fileBadge:        { flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginTop: 8, backgroundColor: C.primaryLight, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6, gap: 8 },
-  fileBadgeText:    { color: C.primary, fontSize: 12, flex: 1, fontWeight: '600' },
-  inputBar:         { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
-  iconBtn:          { width: 36, height: 36, borderRadius: 18, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-  input:            { flex: 1, backgroundColor: C.inputBg, color: C.text, borderRadius: 20, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 120 },
-  sendBtn:          { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-  sendBtnDisabled:  { backgroundColor: '#c4b5fd' },
-  thumbnail:        { width: 220, height: 160, borderRadius: 6, marginTop: 4 },
+  safe:               { flex: 1, backgroundColor: C.bg },
+  overlay:            { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: 'row' },
+  overlayBg:          { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  sidebar:            { width: 280, backgroundColor: C.card, paddingTop: 50, paddingHorizontal: 16, paddingBottom: 20 },
+  sidebarTitle:       { color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 16 },
+  newChatBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, marginBottom: 16 },
+  newChatText:        { color: '#fff', fontWeight: '700', fontSize: 14 },
+  chatItem:           { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, marginBottom: 6, backgroundColor: C.bg },
+  chatItemActive:     { backgroundColor: C.primaryLight },
+  chatItemText:       { color: C.text, fontSize: 13, flex: 1 },
+  clearAllBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 10, marginTop: 8, marginBottom: 8 },
+  clearAllText:       { color: C.red, fontWeight: '700', fontSize: 12 },
+  logoutSidebar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 'auto', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 12 },
+  logoutSidebarText:  { color: C.red, fontWeight: '700', fontSize: 13 },
+  header:             { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card },
+  menuBtn:            { padding: 6 },
+  headerTitle:        { color: C.text, fontWeight: '700', fontSize: 16 },
+  headerRole:         { color: C.primary, fontSize: 10, fontWeight: '700', marginTop: 1 },
+  newChatIconBtn:     { padding: 6 },
+  banner:             { flexDirection: 'row', alignItems: 'center', borderWidth: 1, padding: 10, paddingHorizontal: 16 },
+  bannerText:         { fontSize: 11, lineHeight: 16, flex: 1 },
+  messageArea:        { flex: 1 },
+  welcomeContainer:   { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  logoCircle:         { width: 80, height: 80, borderRadius: 40, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  welcomeTitle:       { color: C.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
+  welcomeSub:         { color: C.textSub, fontSize: 14, textAlign: 'center', marginBottom: 4 },
+  welcomeSub2:        { color: C.textMuted, fontSize: 12, textAlign: 'center' },
+  msgFlatList:        { flex: 1 },
+  msgList:            { padding: 16, paddingBottom: 12 },
+  msgRow:             { flexDirection: 'row', marginBottom: 14 },
+  msgRowUser:         { justifyContent: 'flex-end' },
+  msgRowBot:          { justifyContent: 'flex-start' },
+  bubble:             { maxWidth: '88%', borderRadius: 18, padding: 12 },
+  bubbleUser:         { backgroundColor: C.primary, borderBottomRightRadius: 4 },
+  bubbleText:         { color: C.text, fontSize: 14, lineHeight: 20 },
+  bubbleTextUser:     { color: '#fff' },
+  msgPhoto:           { width: 200, height: 150, borderRadius: 10, marginBottom: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
+  msgPhotoSmall:      { width: 96, height: 96, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.2)' },
+  msgPhotoGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6, maxWidth: 196 },
+  typingRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+  typingBubble:       { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 16, padding: 10, gap: 8, borderWidth: 1, borderColor: C.cardBorder, flex: 1 },
+  typingText:         { color: C.textMuted, fontSize: 12 },
+  cancelBtn:          { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  cancelText:         { color: '#f87171', fontSize: 12, fontWeight: '700' },
+  inputWrapper:       { backgroundColor: C.card, borderTopWidth: 1, borderColor: C.cardBorder, paddingBottom: 0 },
+  inputBar:           { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
+  iconBtn:            { width: 36, height: 36, borderRadius: 18, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  input:              { flex: 1, backgroundColor: C.inputBg, color: C.text, borderRadius: 20, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 120 },
+  sendBtn:            { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  sendBtnDisabled:    { backgroundColor: '#c4b5fd' },
   filterBar:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, gap: 6 },
   filterChip:         { flexDirection: 'row', alignItems: 'center', backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, gap: 4, flexShrink: 1 },
   filterChipText:     { fontSize: 12, color: C.textSub, flexShrink: 1 },
@@ -1467,80 +727,12 @@ const s = StyleSheet.create({
   filterOptionLabel:  { color: C.text, fontSize: 14, fontWeight: '600' },
   filterOptionSub:    { color: C.textMuted, fontSize: 11, marginTop: 2 },
   filterEmptyText:    { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 24 },
-
-  // ─── Integrated guided procedure + completion tracking ────────────
-  stepViewer:          { marginTop: 2 },
-  procedureTopRow:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  procedureEyebrow:    { fontSize: 9, fontWeight: '800', letterSpacing: 0.9, color: C.primary, marginBottom: 2 },
-  procedureProgressText:{ fontSize: 12, fontWeight: '700', color: C.text },
-  procedurePercentPill:{ minWidth: 46, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, backgroundColor: C.primaryLight, alignItems: 'center' },
-  procedurePercentText:{ fontSize: 11, fontWeight: '800', color: C.primary },
-  procedureProgressTrack:{ height: 7, borderRadius: 999, backgroundColor: '#ede9fe', overflow: 'hidden', marginBottom: 14 },
-  procedureProgressFill:{ height: '100%', borderRadius: 999, backgroundColor: C.primary },
-  procedureCompleteBanner:{ flexDirection: 'row', gap: 8, alignItems: 'center', backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#bbf7d0', borderRadius: 10, padding: 10, marginBottom: 12 },
-  procedureCompleteTitle:{ fontSize: 12, fontWeight: '800', color: '#166534' },
-  procedureCompleteSub:{ fontSize: 10, lineHeight: 14, color: '#15803d', marginTop: 1 },
-
-  stepHeaderRow:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  stepCounter:         { fontSize: 11, color: C.textMuted, fontWeight: '700' },
-  stepCompletedPill:   { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999, backgroundColor: '#f0fdf4' },
-  stepCompletedPillText:{ fontSize: 9, fontWeight: '800', color: '#15803d' },
-
-  stepCard:            { borderWidth: 1, borderRadius: 14, padding: 13, backgroundColor: C.bg },
-  stepWarningBanner:   { flexDirection: 'row', alignItems: 'center', borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 9, alignSelf: 'flex-start' },
-  stepWarningText:     { fontSize: 10, fontWeight: '800' },
-  stepTitle:           { fontSize: 15, fontWeight: '800', color: C.text, marginBottom: 7 },
-  stepDescription:     { fontSize: 13, color: C.text, lineHeight: 19 },
-
-  stepToolsRow:        { flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderColor: C.cardBorder },
-  stepToolsLabel:      { fontSize: 9, fontWeight: '800', color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
-  stepToolsText:       { fontSize: 11, color: C.textSub, lineHeight: 16 },
-
-  stepCompleteAction:  { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 13, padding: 11, borderWidth: 1, borderColor: '#ddd6fe', borderRadius: 11, backgroundColor: '#faf9ff' },
-  stepCompleteActionChecked:{ borderColor: '#bbf7d0', backgroundColor: '#f0fdf4' },
-  stepCheckbox:        { width: 23, height: 23, borderRadius: 7, borderWidth: 2, borderColor: C.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
-  stepCheckboxChecked: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
-  stepCompleteActionTitle:{ fontSize: 11, fontWeight: '800', color: C.primaryText },
-  stepCompleteActionTitleChecked:{ color: '#166534' },
-  stepCompleteActionSub:{ fontSize: 9, lineHeight: 13, color: C.textMuted, marginTop: 2 },
-
-  stepNavRow:          { flexDirection: 'row', justifyContent: 'space-between', marginTop: 11, gap: 8 },
-  stepNavBtn:          { flex: 1, minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderColor: C.primary, borderRadius: 10, paddingVertical: 8 },
-  stepNavBtnDisabled:  { borderColor: C.cardBorder, backgroundColor: '#fafafa', opacity: 0.65 },
-  stepNavText:         { fontSize: 12, fontWeight: '800', color: C.primary },
-  nextHintRow:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 7 },
-  nextHintText:        { fontSize: 9, color: C.textMuted },
-
-  overviewToggle:      { marginTop: 13, paddingVertical: 10, paddingHorizontal: 2, borderTopWidth: 1, borderColor: C.cardBorder, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  overviewToggleLeft:  { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  overviewToggleRight: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  overviewToggleText:  { fontSize: 11, fontWeight: '800', color: C.primary },
-  overviewCountText:   { fontSize: 10, fontWeight: '700', color: C.textMuted },
-  overviewList:        { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 11, overflow: 'hidden', backgroundColor: C.bg },
-  overviewItem:        { minHeight: 47, paddingHorizontal: 10, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: 1, borderColor: C.cardBorder },
-  overviewItemActive:  { backgroundColor: C.primaryLight },
-  overviewStatusIcon:  { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: C.cardBorder, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  overviewStatusIconDone:{ backgroundColor: '#16a34a', borderColor: '#16a34a' },
-  overviewStatusNumber:{ fontSize: 9, fontWeight: '800', color: C.textMuted },
-  overviewItemTitle:   { flex: 1, fontSize: 10, fontWeight: '700', color: C.text, lineHeight: 14 },
-  overviewItemTitleDone:{ color: C.textSub },
-  overviewCurrentLabel:{ fontSize: 8, fontWeight: '900', letterSpacing: 0.5, color: C.primary },
-
-  // ─── Procedure / Full Text toggle ─────────────────────────────────
-  viewToggleRow:       { flexDirection: 'row', gap: 6, marginBottom: 12, padding: 3, borderRadius: 10, backgroundColor: C.bg },
-  viewToggleBtn:       { flex: 1, minHeight: 31, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
-  viewToggleBtnActive: { backgroundColor: C.card, borderWidth: 1, borderColor: '#ddd6fe' },
-  viewToggleText:      { fontSize: 11, color: C.textMuted, fontWeight: '700' },
-  viewToggleTextActive:{ color: C.primary, fontWeight: '800' },
-
-  // ─── Photos, reply buttons and hands-free ──────────────────────────
-  msgPhoto:           { width: 200, height: 150, borderRadius: 10, marginBottom: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
-  msgPhotoSmall:      { width: 96, height: 96, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.2)' },
-  msgPhotoGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6, maxWidth: 196 },
-  actionsRow:         { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
-  actionChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, backgroundColor: C.primaryLight, borderWidth: 1, borderColor: '#ddd6fe' },
-  actionChipAlt:      { backgroundColor: C.card },
-  actionChipText:     { color: C.primary, fontSize: 12, fontWeight: '700' },
+  machineChip:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6, flexShrink: 1 },
+  machineChipText:    { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
+  handsFreeChip:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: C.primary },
+  handsFreeChipOn:    { backgroundColor: C.primary },
+  handsFreeChipText:  { fontSize: 12, color: C.primary, fontWeight: '700' },
+  handsFreeNotice:    { marginHorizontal: 12, marginTop: 6, color: C.textMuted, fontSize: 12 },
   pendingPhotos:      { marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight, gap: 6 },
   pendingPhotoStrip:  { gap: 8, alignItems: 'center' },
   pendingPhotoTile:   { width: 64, height: 64 },
@@ -1548,26 +740,15 @@ const s = StyleSheet.create({
   pendingPhotoRemove: { position: 'absolute', top: -2, right: -2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12 },
   pendingPhotoAdd:    { width: 64, height: 64, borderRadius: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: C.primary, alignItems: 'center', justifyContent: 'center' },
   pendingPhotoText:   { color: C.primary, fontSize: 12, fontWeight: '600' },
-  machineChip:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6, flexShrink: 1 },
-  machineChipText:    { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
-  handsFreeChip:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: C.primary },
-  handsFreeChipOn:    { backgroundColor: C.primary },
-  handsFreeChipText:  { fontSize: 12, color: C.primary, fontWeight: '700' },
-  handsFreeNotice:    { marginHorizontal: 12, marginTop: 6, color: C.textMuted, fontSize: 12 },
+  reportChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#ea580c', backgroundColor: '#fff7ed' },
+  reportChipText:     { fontSize: 12, color: '#ea580c', fontWeight: '700' },
+  reportOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  reportSheet:        { backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 14 },
+  reportHeader:       { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  reportTitle:        { flex: 1, fontSize: 17, fontWeight: '700', color: C.text },
+  reportSub:          { color: C.textMuted, fontSize: 13, lineHeight: 18 },
+  reportInput:        { backgroundColor: C.inputBg, borderWidth: 1, borderColor: C.inputBorder, borderRadius: 12, padding: 12, color: C.text, fontSize: 14, minHeight: 100, textAlignVertical: 'top' },
+  reportSubmitBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#ea580c', borderRadius: 12, paddingVertical: 14 },
+  reportSubmitBtnDisabled: { backgroundColor: '#fdba74' },
+  reportSubmitText:   { color: '#fff', fontWeight: '700', fontSize: 14 },
 });
-
-const markdownStyles = {
-  body:         { color: C.text, fontSize: 14, lineHeight: 20 },
-  strong:       { fontWeight: '700' },
-  bullet_list:  { marginVertical: 4 },
-  ordered_list: { marginVertical: 4 },
-  code_inline:  { backgroundColor: '#f3f4f6', borderRadius: 4, paddingHorizontal: 4, fontFamily: 'monospace', fontSize: 12 },
-  fence:        { backgroundColor: '#f3f4f6', borderRadius: 8, padding: 10, fontSize: 12, fontFamily: 'monospace' },
-  heading1:     { fontSize: 18, fontWeight: '700', marginVertical: 6 },
-  heading2:     { fontSize: 16, fontWeight: '700', marginVertical: 4 },
-  table:        { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 8, marginVertical: 4 },
-  thead:        { backgroundColor: C.primaryLight },
-  th:           { padding: 8, fontWeight: '700', fontSize: 12, color: C.primaryText, borderRightWidth: 1, borderColor: C.cardBorder, minWidth: 100 },
-  tr:           { borderBottomWidth: 1, borderColor: C.cardBorder, flexDirection: 'row' },
-  td:           { padding: 8, fontSize: 12, color: C.text, borderRightWidth: 1, borderColor: C.cardBorder, minWidth: 100 },
-};
