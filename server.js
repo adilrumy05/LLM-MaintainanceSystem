@@ -602,7 +602,7 @@ function detectAlerts(query, responseText, role) {
         level:  'critical',
         icon:   '🚨',
         title:  'CRITICAL Safety Procedure Detected',
-        reason: `Response contains critical safety requirement: "${kw}"`,
+        reason: `Critical safety requirement detected: ${kw}`,
       };
     }
   }
@@ -613,7 +613,7 @@ function detectAlerts(query, responseText, role) {
         level:  'warning',
         icon:   '⚠️',
         title:  'Safety Warning in Response',
-        reason: `Response contains safety content: "${kw}"`,
+        reason: `Safety content detected: ${kw}`,
       };
     }
   }

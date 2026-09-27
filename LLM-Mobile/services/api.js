@@ -297,9 +297,7 @@ export const submitQuery = async (query, options = {}) => {
               data.alert.title ||
               'Maintenance Alert',
             message:
-              `${userRole.toUpperCase()} · ` +
-              `"${query.slice(0, 80)}" — ` +
-              `${data.alert.reason || ''}`,
+            `${data.alert.reason || ''} · Query: ${query.slice(0, 80)}`,
             status: isCritical
               ? 'Requires Immediate Review'
               : 'Pending Review',
