@@ -53,9 +53,8 @@ const getApiUrl = () => {
 
 export const API_URL = getApiUrl();
 
-console.log('[API] Platform:', Platform.OS);
-console.log('[API] Expo host:', Constants.expoConfig?.hostUri || 'Not detected');
-console.log('[API] Backend URL:', API_URL);
+
+
 
 // ─────────────────────────────────────────────
 // SESSION
@@ -68,7 +67,7 @@ let currentSessionId = generateSessionId();
 
 export const resetSession = () => {
   currentSessionId = generateSessionId();
-  console.log('[API] New session:', currentSessionId);
+
 };
 
 // ─────────────────────────────────────────────
@@ -196,15 +195,12 @@ export const submitQuery = async (query, options = {}) => {
     console.warn('[API] Failed to load auth token:', error);
   }
 
-  console.log('[API] Sending query to:', fullUrl);
-  console.log('[API] Role:', userRole);
-  console.log('[API] Session:', currentSessionId);
-  console.log('[API] Document group:', docGroup || 'ALL');
+
   if (imageBase64) {
     const kb = images.reduce((sum, b64) => sum + (b64.length * 3) / 4, 0) / 1024;
-    console.log(`[API] ${images.length} photo(s) attached: ${Math.round(kb)} KB`);
+
   }
-  if (confirmedModel) console.log('[API] Confirmed model:', confirmedModel);
+
 
   try {
     const response = await fetchWithTimeout(
@@ -256,12 +252,10 @@ export const submitQuery = async (query, options = {}) => {
 
     const data = await response.json();
 
-    console.log('[API] Query successful');
+  
 
     if (data?.sources) {
-      console.log(
-        `[API] Received ${data.sources.length} source(s)`
-      );
+
     }
 
     // ─────────────────────────────────────────
@@ -322,11 +316,7 @@ export const submitQuery = async (query, options = {}) => {
           }
         );
 
-        console.log(
-          `[ALERT AGENT] ${
-            data.alert.level?.toUpperCase() || 'UNKNOWN'
-          } alert logged`
-        );
+
       }
     } catch (error) {
       // Firebase failure must not break Copilot
@@ -365,7 +355,7 @@ export const submitQuery = async (query, options = {}) => {
 export const transcribeAudio = async (localUri) => {
   const fullUrl = `${API_URL}/transcribe`;
 
-  console.log('[API] Sending audio to:', fullUrl);
+
 
   const formData = new FormData();
 
