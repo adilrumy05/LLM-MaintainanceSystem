@@ -109,7 +109,7 @@ const menuItems = [
     { key: "users",     title: "User Management",       sub: "Accounts & roles",                    icon: "people-outline",              badge: `${userCount} users`,          onPress: () => router.push("/usermanagement") },
     { key: "analytics", title: "Analytics",             sub: "Queries, approvals & stats",          icon: "bar-chart-outline",           badge: "Live",                        onPress: () => router.push("/analytics") },
     { key: "logs",      title: "Audit Logs",            sub: "Session history & HITL review",       icon: "document-text-outline",       badge: pendingCount > 0 ? `${pendingCount} pending` : "0 pending", onPress: () => router.push("/history") },
-    { key: "tasks",     title: "Maintenance Tasks",     sub: "Create & assign tasks",               icon: "checkmark-circle-outline",    badge: "Tasks",                       onPress: () => router.push("/tasks") },
+
     { key: "documents", title: "RAG Document Library",  sub: "View manuals loaded in vector store", icon: "library-outline",             badge: "RAG",                         onPress: () => router.push("/documents") },
     { key: "ai",        title: "System Agent Status",   sub: "View active agents & endpoints",      icon: "settings-outline",            badge: "Live",                        onPress: () => router.push('/agentconfig') },
   ];
