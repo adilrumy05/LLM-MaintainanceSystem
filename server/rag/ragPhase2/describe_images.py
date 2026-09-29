@@ -14,9 +14,12 @@ Three things this version specifically handles:
    cropped figure from the same page never get confused when filtering later.
 
 2. Diagram accuracy. Anything tagged "diagram" on the first pass automatically
-   gets a second, stricter pass that forces exhaustive, view-by-view
-   transcription of every measurement and callout — stored both in the prose
-   description and as a structured `vlmMeasurements` list.
+   gets a second, stricter pass using a MORE CAPABLE model (--diagram-model,
+   default gpt-6-sol) that forces exhaustive, view-by-view transcription of
+   every measurement and callout — stored both in the prose description and
+   as a structured `vlmMeasurements` list. The classify pass stays on the
+   cheaper --model (default gpt-4o-mini) since accuracy matters far more for
+   the numbers than for the initial tag.
 
 3. Real cost tracking. Every OpenAI call's actual response.usage is read and
    priced via vlm_pipeline/pricing.py — not an estimate — and a browser-based
@@ -25,7 +28,8 @@ Three things this version specifically handles:
    your FYP evaluation, with the ratings exportable as JSON/CSV.
 
 Fields written to each ManualImages/{docId} on success:
-    vlmDescription, vlmTag, imageScope, vlmMeasurements (diagrams only), vlmModel
+    vlmDescription, vlmTag, imageScope, vlmModel
+    vlmMeasurements, vlmHasVisibleMeasurements, vlmDiagramModel (diagrams only)
     vlmOriginalWidth/Height, vlmSentWidth/Height
     vlmInputTokens, vlmOutputTokens, vlmTotalTokens
     vlmInputCostUSD, vlmOutputCostUSD, vlmTotalCostUSD
@@ -64,6 +68,25 @@ Usage
 
     # Skip the diagram 2nd pass entirely (cheaper, less exact on dimensions)
     python describe_images.py --no-diagram-detail
+
+    # Re-tag everything currently marked "diagram" under the new 5-tag taxonomy
+    # (graphs, schematics, and flowcharts that were previously lumped into
+    # "diagram" get correctly split out). Only touches docs tagged diagram —
+    # photos, icons, tables etc. are left alone. --force is implied.
+    python describe_images.py --only-tag diagram
+
+    # Same, but only for one manual, and multiple tags at once
+    python describe_images.py --document-group <group> --only-tag diagram,graph
+
+    # Use a different (or cheaper) model for the diagram pass than the default gpt-6-sol
+    python describe_images.py --diagram-model gpt-6-astra   # even more capable, ~5x gpt-6-sol cost
+    python describe_images.py --diagram-model gpt-4o-mini   # disable the upgrade, same model throughout
+
+NOTE on --diagram-model: gpt-6-sol is current as of Sept 2026 — if your
+OpenAI account doesn't yet have access to it (new model rollouts are
+sometimes gated), the diagram pass will fail with a clear vlmError on the
+affected docs while everything else keeps working. Test with
+`--max-pages 1 --force` on a page you know is a diagram before a full sweep.
 """
 
 import argparse
@@ -89,13 +112,21 @@ def main():
     ap.add_argument("--limit", type=int, default=None, help="Hard cap on number of image docs processed")
     ap.add_argument("--dry-run", action="store_true", help="Show plan + cost estimate, call nothing, write nothing")
     ap.add_argument("--force", action="store_true", help="Re-describe even if vlmStatus is already set")
-    ap.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenAI vision model (default {DEFAULT_MODEL})")
+    ap.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenAI vision model for the classify pass (default {DEFAULT_MODEL})")
+    ap.add_argument("--diagram-model", default=os.getenv("VLM_DIAGRAM_MODEL", "gpt-6-sol"),
+                     help="More capable model used ONLY for the diagram measurement-extraction pass (default: gpt-6-sol). "
+                          "Set to the same value as --model to disable the upgrade and use one model throughout.")
     ap.add_argument("--dedup-threshold", type=int, default=5, help="Hamming distance for near-duplicate match (default 5)")
     ap.add_argument("--no-diagram-detail", action="store_true", help="Disable the diagram 2nd-pass measurement extraction")
     ap.add_argument("--service-account", default=env_path("FIREBASE_SERVICE_ACCOUNT", "../serviceAccountKey.json"))
     ap.add_argument("--bucket", default=DEFAULT_BUCKET)
     ap.add_argument("--report", action="store_true", help="Print status/scope/tag/cost breakdown for the scope and exit")
     ap.add_argument("--rebuild-review", action="store_true", help="Rebuild vlm_review/review.html from already-described docs (no OpenAI calls)")
+    ap.add_argument("--only-tag", default=None,
+                     help="Comma-separated vlmTag(s) to re-tag, e.g. 'diagram' or 'diagram,graph'. "
+                          "Implies --force for the matched docs and skips dedup (they already passed it once). "
+                          "Use this after a prompt/taxonomy change to re-classify only what's affected, "
+                          "instead of re-running everything.")
     args = ap.parse_args()
 
     if not args.dry_run and not args.report and not args.rebuild_review and not os.getenv("OPENAI_API_KEY"):
@@ -116,10 +147,12 @@ def main():
         dry_run=args.dry_run,
         force=args.force,
         model=args.model,
+        diagram_model=args.diagram_model,
         dedup_threshold=args.dedup_threshold,
         service_account_path=args.service_account,
         bucket_name=args.bucket,
         diagram_detail=not args.no_diagram_detail,
+        only_tags=[t.strip() for t in args.only_tag.split(",")] if args.only_tag else None,
     )
     print(stats.summary(args.dry_run))
 

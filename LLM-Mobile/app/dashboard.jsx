@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+// app/(tabs)/index.js
+
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, Modal,
   ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,
@@ -23,27 +25,48 @@ import { db } from '../firebaseConfig';
 
 const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
 
-function PhotoThumb({ uri, small }) {
+// ─── Module-scope helpers still needed by Dashboard ────────────────────
+
+const messagePhotos = (item) =>
+  item.imageUris || (item.imageUri ? [item.imageUri] : []);
+
+const choosePhotoSource = () => new Promise((resolve) => {
+  if (Platform.OS === 'web') { resolve('library'); return; }
+  Alert.alert('Add a photo', 'Photograph a nameplate, a fault display, or a part.', [
+    { text: 'Take photo',          onPress: () => resolve('camera') },
+    { text: 'Choose from library', onPress: () => resolve('library') },
+    { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+  ], { cancelable: true, onDismiss: () => resolve(null) });
+});
+
+const PhotoThumb = memo(function PhotoThumb({ uri, small }) {
   const [failed, setFailed] = useState(false);
   if (!uri || failed) return null;
-  return <Image source={{ uri }} style={small ? s.msgPhotoSmall : s.msgPhoto} resizeMode="cover" onError={() => setFailed(true)} />;
-}
-
-const messagePhotos = (item) => item.imageUris || (item.imageUri ? [item.imageUri] : []);
+  return (
+    <Image
+      source={{ uri }}
+      style={small ? s.msgPhotoSmall : s.msgPhoto}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+    />
+  );
+});
 
 export default function Dashboard() {
-  const newChatId = Date.now().toString();
-  const [chats, setChats]               = useState([{ id: newChatId, messages: [] }]);
-  const [activeChatId, setActiveChatId] = useState(newChatId);
-  const [inputValue, setInputValue]     = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [showSidebar, setShowSidebar]   = useState(false);
-  const [loaded, setLoaded]             = useState(false);
-  const [allFilters, setAllFilters]     = useState(null);
+  const [chats, setChats]                 = useState(() => {
+    const id = Date.now().toString();
+    return [{ id, messages: [] }];
+  });
+  const [activeChatId, setActiveChatId]   = useState(() => chats[0].id);
+  const [inputValue, setInputValue]       = useState('');
+  const [isProcessing, setIsProcessing]   = useState(false);
+  const [showSidebar, setShowSidebar]     = useState(false);
+  const [loaded, setLoaded]               = useState(false);
+  const [allFilters, setAllFilters]       = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [filterSearchText, setFilterSearchText] = useState('');
-  const [pendingPhotos, setPendingPhotos]   = useState([]);
-  const [isPhotoBusy, setIsPhotoBusy]       = useState(false);
+  const [pendingPhotos, setPendingPhotos] = useState([]);
+  const [isPhotoBusy, setIsPhotoBusy]     = useState(false);
   const [handsFreeNotice, setHandsFreeNotice] = useState(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportText, setReportText]           = useState('');
@@ -63,63 +86,68 @@ export default function Dashboard() {
   const { user, setUser }                  = useUser();
 
   const activeChat = chats.find(c => c.id === activeChatId);
-  const messages   = activeChat?.messages || [];
+  const messages   = useMemo(() => activeChat?.messages || [], [activeChat]);
   const isEmpty    = messages.length === 0;
 
   useEffect(() => {
     if (!role) return;
-const loadChats = async () => {
-  try {
-    const raw = await AsyncStorage.getItem(`chats_${role}`);
-    if (raw) {
-      const saved = JSON.parse(raw);
-      if (saved.length > 0) {
-        const newId = Date.now().toString();
-        const freshChat = { id: newId, messages: [], filter: null, confirmedModel: null };
-        const updatedChats = [freshChat, ...saved.map(c => ({ ...c, filter: c.filter || null }))];
-        setChats(updatedChats);
-        setActiveChatId(newId);
-      }
-    }
-  } catch (e) { console.log('Error loading chats:', e); }
-  setLoaded(true);
-};
+    const loadChats = async () => {
+      try {
+        const raw = await AsyncStorage.getItem(`chats_${role}`);
+        if (raw) {
+          const saved = JSON.parse(raw);
+          if (saved.length > 0) {
+            const newId = Date.now().toString();
+            const freshChat = { id: newId, messages: [], filter: null, confirmedModel: null };
+            const updatedChats = [freshChat, ...saved.map(c => ({ ...c, filter: c.filter || null }))];
+            setChats(updatedChats);
+            setActiveChatId(newId);
+          }
+        }
+      } catch (e) { console.log('Error loading chats:', e); }
+      setLoaded(true);
+    };
     loadChats();
   }, [role]);
 
   useEffect(() => {
     if (!role || !loaded) return;
-    AsyncStorage.setItem(`chats_${role}`, JSON.stringify(chats)).catch(e => console.log('Error saving chats:', e));
+    AsyncStorage.setItem(`chats_${role}`, JSON.stringify(chats))
+      .catch(e => console.log('Error saving chats:', e));
   }, [chats, role, loaded]);
 
   useEffect(() => {
     getFilters().then(setAllFilters).catch(e => console.log('Error loading filters:', e));
   }, []);
 
-  const addMessage = (from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
+  // ─── Chat mutation callbacks ────────────────────────────────────────
+  const addMessage = useCallback((from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
     const msg = { id: Date.now().toString() + Math.random(), from, text, sources, ...extra };
     setChats(prev => prev.map(c => c.id === chatId ? { ...c, messages: [...c.messages, msg] } : c));
     requestAnimationFrame(() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80));
-  };
+  }, []);
 
-  const updateMessage = (messageId, updater, chatId = activeChatIdRef.current) => {
+  // Kept so the external BotMessage can persist step state
+  const updateMessage = useCallback((messageId, updater, chatId = activeChatIdRef.current) => {
     setChats(prev => prev.map(c => {
       if (c.id !== chatId) return c;
       return { ...c, messages: c.messages.map(m => m.id === messageId ? updater(m) : m) };
     }));
-  };
+  }, []);
 
-  const updateChat = (chatId, patch) =>
-    setChats(prev => prev.map(c => (c.id === chatId ? { ...c, ...patch } : c)));
+  const updateChat = useCallback((chatId, patch) =>
+    setChats(prev => prev.map(c => (c.id === chatId ? { ...c, ...patch } : c))), []);
 
-  const setActionsUsed = (chatId, messageId, used) =>
+  const setActionsUsed = useCallback((chatId, messageId, used) =>
     setChats(prev => prev.map(c => (c.id !== chatId ? c : {
-      ...c, messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
-    })));
-  const markActionsUsed   = (chatId, messageId) => setActionsUsed(chatId, messageId, true);
-  const markActionsUnused = (chatId, messageId) => setActionsUsed(chatId, messageId, false);
+      ...c,
+      messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
+    }))), []);
 
-  const runQuery = async ({ text, photos = [], confirmedModel, docGroup, voice = false }) => {
+  const markActionsUsed   = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, true),  [setActionsUsed]);
+  const markActionsUnused = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, false), [setActionsUsed]);
+
+  const runQuery = useCallback(async ({ text, photos = [], confirmedModel, docGroup, voice = false }) => {
     const chatId = activeChatIdRef.current;
     const chat   = chatsRef.current.find(c => c.id === chatId);
     const model  = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
@@ -145,6 +173,7 @@ const loadChats = async () => {
             description: decodeEntities(st.description),
             warningLevel: st.warning_level,
             toolsRequired: st.tools_required || [],
+            imageUrl: st.image_url || null,
           })),
           procedureView: (result.isProcedural && result.steps?.length > 0) ? 'procedure' : 'text',
           procedureState: (result.isProcedural && result.steps?.length > 0)
@@ -163,7 +192,7 @@ const loadChats = async () => {
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, [addMessage, updateChat]);
 
   const handleSend = async (overrideText) => {
     const typed  = (overrideText || inputValue).trim();
@@ -181,16 +210,7 @@ const loadChats = async () => {
     await runQuery({ text: queryText, photos });
   };
 
-  const choosePhotoSource = () => new Promise((resolve) => {
-    if (Platform.OS === 'web') { resolve('library'); return; }
-    Alert.alert('Add a photo', 'Photograph a nameplate, a fault display, or a part.', [
-      { text: 'Take photo',           onPress: () => resolve('camera') },
-      { text: 'Choose from library',  onPress: () => resolve('library') },
-      { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
-    ], { cancelable: true, onDismiss: () => resolve(null) });
-  });
-
-  const getPhotos = async (limit) => {
+  const getPhotos = useCallback(async (limit) => {
     if (limit < 1) { Alert.alert('Photos', `You can attach up to ${MAX_PHOTOS} photos to one question.`); return []; }
     const source = await choosePhotoSource();
     if (!source) return [];
@@ -198,7 +218,7 @@ const loadChats = async () => {
     try { return await capturePhotos(source, { limit }); }
     catch (e) { Alert.alert('Photo', e.message || 'Could not get the photo.'); return []; }
     finally { setIsPhotoBusy(false); }
-  };
+  }, []);
 
   const handleAttachPhoto = async () => {
     const added = await getPhotos(MAX_PHOTOS - pendingPhotos.length);
@@ -208,7 +228,7 @@ const loadChats = async () => {
   const removePendingPhoto = (index) =>
     setPendingPhotos(prev => prev.filter((_, i) => i !== index));
 
-  const handleAction = async (message, action) => {
+  const handleAction = useCallback(async (message, action) => {
     const chatId = activeChatIdRef.current;
     const req    = lastRequestRef.current[chatId];
     markActionsUsed(chatId, message.id);
@@ -246,7 +266,7 @@ const loadChats = async () => {
       }
       default:
     }
-  };
+  }, [markActionsUsed, markActionsUnused, updateChat, addMessage, runQuery, getPhotos]);
 
   const askHandsFree = async (text) => {
     addMessage('user', text);
@@ -265,6 +285,7 @@ const loadChats = async () => {
   };
 
   const handsFree        = useHandsFree({ ask: askHandsFree, onNotice: showHandsFreeNotice });
+  const handsFreeActive  = handsFree.active;
   const handsFreeStopRef = useRef(handsFree.stop);
   handsFreeStopRef.current = handsFree.stop;
 
@@ -275,20 +296,36 @@ const loadChats = async () => {
     else handsFree.start();
   };
 
+  const prettifyFilterLabel = (id) => {
+    if (!id) return '';
+    const parts = id.split('_');
+    const model = parts.pop();
+    const rest = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+    return `${rest} ${model}`;
+  };
+
   const filterOptions = (allFilters?.document_group_ids || []).map((id, idx) => ({
-    id, label: id.split('_').map((p, i, a) => i === a.length - 1 ? p : p.charAt(0).toUpperCase() + p.slice(1)).join(' '),
+    id,
+    label: prettifyFilterLabel(id),
     filename: allFilters?.filenames?.[idx] || '',
   }));
 
   const filteredOptions = filterOptions.filter(opt => {
     const q = filterSearchText.trim().toLowerCase();
     if (!q) return true;
-    return opt.label.toLowerCase().includes(q) || opt.id.toLowerCase().includes(q) || opt.filename.toLowerCase().includes(q);
+    return (
+      opt.label.toLowerCase().includes(q) ||
+      opt.id.toLowerCase().includes(q) ||
+      opt.filename.toLowerCase().includes(q)
+    );
   });
 
   const handleSelectFilter = (opt) => {
-    setChats(prev => prev.map(c => c.id === activeChatId
-      ? { ...c, filter: opt || null, confirmedModel: (c.filter?.id === opt?.id) ? c.confirmedModel : null } : c));
+    setChats(prev => prev.map(c =>
+      c.id === activeChatId
+        ? { ...c, filter: opt || null, confirmedModel: (c.filter?.id === opt?.id) ? c.confirmedModel : null }
+        : c
+    ));
     setShowFilterPicker(false);
     setFilterSearchText('');
   };
@@ -316,7 +353,12 @@ const loadChats = async () => {
   };
 
   const handleDeleteChat = (id) => {
-    if (chats.length === 1) { setChats([{ id: '1', messages: [], filter: null }]); setActiveChatId('1'); setShowSidebar(false); return; }
+    if (chats.length === 1) {
+      setChats([{ id: '1', messages: [], filter: null }]);
+      setActiveChatId('1');
+      setShowSidebar(false);
+      return;
+    }
     const remaining = chats.filter(c => c.id !== id);
     setChats(remaining);
     if (activeChatId === id) setActiveChatId(remaining[0].id);
@@ -360,8 +402,9 @@ const loadChats = async () => {
     }
   };
 
-  const renderMessage = ({ item }) => {
+  const renderMessage = useCallback(({ item }) => {
     const isUser = item.from === 'user';
+    const disabled = isProcessing || isPhotoBusy || handsFreeActive;
     return (
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
         {isUser ? (
@@ -375,17 +418,21 @@ const loadChats = async () => {
             <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
           </View>
         ) : (
-          <BotMessage item={item} updateMessage={updateMessage} />
+          <BotMessage
+            item={item}
+            onAction={handleAction}
+            disabled={disabled}
+            updateMessage={updateMessage}
+          />
         )}
       </View>
     );
-  };
+  }, [handleAction, isProcessing, isPhotoBusy, handsFreeActive, updateMessage]);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={0}>
       <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
 
-        {/* ─── Sidebar ─────────────────────────────────────────────── */}
         {showSidebar && (
           <View style={s.overlay}>
             <View style={s.sidebar}>
@@ -474,7 +521,14 @@ const loadChats = async () => {
             </View>
             <View style={s.filterSearchBar}>
               <Ionicons name="search-outline" size={16} color={C.textMuted} />
-              <TextInput style={s.filterSearchInput} placeholder="Search model number, brand..." placeholderTextColor={C.textMuted} value={filterSearchText} onChangeText={setFilterSearchText} autoFocus />
+              <TextInput
+                style={s.filterSearchInput}
+                placeholder="Search model number, brand..."
+                placeholderTextColor={C.textMuted}
+                value={filterSearchText}
+                onChangeText={setFilterSearchText}
+                autoFocus
+              />
             </View>
             <TouchableOpacity style={s.filterAllOption} onPress={() => handleSelectFilter(null)}>
               <Ionicons name="layers-outline" size={16} color={C.primary} />
@@ -512,7 +566,6 @@ const loadChats = async () => {
           </TouchableOpacity>
         </View>
 
-        {/* ─── Role banners ────────────────────────────────────────── */}
         {isJunior && (
           <View style={[s.banner, { borderColor: C.blue, backgroundColor: C.blueBg }]}>
             <Ionicons name="bulb-outline" size={13} color={C.blue} />
@@ -551,8 +604,14 @@ const loadChats = async () => {
               directionalLockEnabled
               scrollEventThrottle={16}
               showsVerticalScrollIndicator
+              removeClippedSubviews
+              maxToRenderPerBatch={5}
+              updateCellsBatchingPeriod={50}
+              windowSize={5}
+              initialNumToRender={5}
             />
           )}
+
           {isProcessing && (
             <View style={s.typingRow}>
               <View style={s.typingBubble}>
@@ -665,6 +724,11 @@ const loadChats = async () => {
   );
 }
 
+// ─── Styles ────────────────────────────────────────────────────────────
+// Styles that belong to the external BotMessage component (step viewer,
+// view toggle, sources, action chips, markdown, tableScroll) live in
+// ../components/BotMessage.js — not here.
+
 const s = StyleSheet.create({
   safe:               { flex: 1, backgroundColor: C.bg },
   overlay:            { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: 'row' },
@@ -730,19 +794,14 @@ const s = StyleSheet.create({
   filterOptionLabel:  { color: C.text, fontSize: 14, fontWeight: '600' },
   filterOptionSub:    { color: C.textMuted, fontSize: 11, marginTop: 2 },
   filterEmptyText:    { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 24 },
+
   machineChip:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6, flexShrink: 1 },
   machineChipText:    { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
   handsFreeChip:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: C.primary },
   handsFreeChipOn:    { backgroundColor: C.primary },
   handsFreeChipText:  { fontSize: 12, color: C.primary, fontWeight: '700' },
   handsFreeNotice:    { marginHorizontal: 12, marginTop: 6, color: C.textMuted, fontSize: 12 },
-  pendingPhotos:      { marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight, gap: 6 },
-  pendingPhotoStrip:  { gap: 8, alignItems: 'center' },
-  pendingPhotoTile:   { width: 64, height: 64 },
-  pendingPhotoImg:    { width: 64, height: 64, borderRadius: 8 },
-  pendingPhotoRemove: { position: 'absolute', top: -2, right: -2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12 },
-  pendingPhotoAdd:    { width: 64, height: 64, borderRadius: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: C.primary, alignItems: 'center', justifyContent: 'center' },
-  pendingPhotoText:   { color: C.primary, fontSize: 12, fontWeight: '600' },
+
   reportChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#ea580c', backgroundColor: '#fff7ed' },
   reportChipText:     { fontSize: 12, color: '#ea580c', fontWeight: '700' },
   reportOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
@@ -754,4 +813,12 @@ const s = StyleSheet.create({
   reportSubmitBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#ea580c', borderRadius: 12, paddingVertical: 14 },
   reportSubmitBtnDisabled: { backgroundColor: '#fdba74' },
   reportSubmitText:   { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  pendingPhotos:      { marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight, gap: 6 },
+  pendingPhotoStrip:  { gap: 8, alignItems: 'center' },
+  pendingPhotoTile:   { width: 64, height: 64 },
+  pendingPhotoImg:    { width: 64, height: 64, borderRadius: 8 },
+  pendingPhotoRemove: { position: 'absolute', top: -2, right: -2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12 },
+  pendingPhotoAdd:    { width: 64, height: 64, borderRadius: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  pendingPhotoText:   { color: C.primary, fontSize: 12, fontWeight: '600' },
 });

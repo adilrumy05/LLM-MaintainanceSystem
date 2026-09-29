@@ -304,7 +304,7 @@ class RetrievalPipeline:
         embedder  = self._get_embedder()
         k         = top_k    or self.top_k
         min_score = score_min if score_min is not None else self.score_min
-        types     = chunk_types or ["child", "table"]
+        types = chunk_types or ["child", "table", "image"]
 
         # ── 1. TOC nav check ──────────────────────────────────────────────
         toc_section = self._toc_section_for_query(

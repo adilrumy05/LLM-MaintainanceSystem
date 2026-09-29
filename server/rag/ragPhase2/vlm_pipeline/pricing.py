@@ -1,8 +1,19 @@
-"""OpenAI vision pricing — USD per 1 MILLION tokens.
+"""OpenAI vision pricing — USD per 1 MILLION tokens (Standard tier, short context).
 
-Update MODEL_PRICING if you change VLM_MODEL or OpenAI changes pricing.
-Cost is calculated from the ACTUAL token usage OpenAI returns per call, not
-an estimate — see vlm.py, which reads resp.usage off every response.
+Update MODEL_PRICING if you change VLM_MODEL/VLM_DIAGRAM_MODEL or OpenAI
+changes pricing. Cost is calculated from the ACTUAL token usage OpenAI
+returns per call, not an estimate — see vlm.py, which reads resp.usage off
+every response.
+
+Rates below for gpt-6-astra/sol/luna are current as of Sept 2026, pulled
+from https://developers.openai.com/api/docs/pricing (Standard tier, short
+context — long-context and batch/flex rates differ; check that page if your
+prompts are unusually large or you switch processing tiers).
+
+gpt-4o-mini is kept here for backward compatibility since it's still your
+classify-pass default and still callable, but it no longer appears on
+OpenAI's current flagship pricing page — worth planning a migration to the
+GPT-6 line eventually, just not forced here.
 """
 
 from typing import Tuple
@@ -11,6 +22,18 @@ MODEL_PRICING = {
     "gpt-4o-mini": {
         "input_per_1m": 0.15,
         "output_per_1m": 0.60,
+    },
+    "gpt-6-luna": {
+        "input_per_1m": 0.10,
+        "output_per_1m": 0.50,
+    },
+    "gpt-6-sol": {
+        "input_per_1m": 2.00,
+        "output_per_1m": 10.00,
+    },
+    "gpt-6-astra": {
+        "input_per_1m": 10.00,
+        "output_per_1m": 50.00,
     },
 }
 

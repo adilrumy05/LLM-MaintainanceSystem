@@ -200,6 +200,25 @@ body {
 
 .measurements th { color: #666; font-weight: 600; }
 
+.graph-block {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed #ddd;
+}
+
+.graph-block:first-of-type {
+    margin-top: 8px;
+    padding-top: 0;
+    border-top: none;
+}
+
+.curve-note {
+    margin: 8px 0 0;
+    font-size: 13px;
+    color: #555;
+    font-style: italic;
+}
+
 .metadata {
     display: grid;
     grid-template-columns: repeat(2, minmax(150px, 1fr));
@@ -449,6 +468,136 @@ def _measurements_html(measurements: List[Dict[str, str]]) -> str:
     """
 
 
+def _graphs_html(graphs: List[Dict[str, Any]]) -> str:
+    if not graphs:
+        return ""
+    blocks = []
+    for i, g in enumerate(graphs, 1):
+        x, y = g.get("x_axis") or {}, g.get("y_axis") or {}
+        x_ticks = ", ".join(html.escape(str(t)) for t in (x.get("ticks") or []))
+        y_ticks = ", ".join(html.escape(str(t)) for t in (y.get("ticks") or []))
+        blocks.append(f"""
+            <div class="graph-block">
+                <strong class="title">Graph {i}: {html.escape(str(g.get('title', '')))}</strong>
+                <table>
+                    <tr><th>Axis</th><th>Label</th><th>Unit</th><th>Ticks</th></tr>
+                    <tr><td>X</td><td>{html.escape(str(x.get('label','')))}</td><td>{html.escape(str(x.get('unit','')))}</td><td>{x_ticks}</td></tr>
+                    <tr><td>Y</td><td>{html.escape(str(y.get('label','')))}</td><td>{html.escape(str(y.get('unit','')))}</td><td>{y_ticks}</td></tr>
+                </table>
+                <p class="curve-note">{html.escape(str(g.get('curve_description', '')))}</p>
+            </div>
+        """)
+    return f"""
+            <div class="measurements">
+                <strong class="title">Extracted graphs ({len(graphs)})</strong>
+                {''.join(blocks)}
+            </div>
+    """
+
+
+def _schematic_html(components: List[Dict[str, Any]], connections: List[Dict[str, Any]]) -> str:
+    if not components and not connections:
+        return ""
+    comp_rows = "".join(
+        f"<tr><td>{html.escape(str(c.get('name','')))}</td><td>{html.escape(str(c.get('type','')))}</td>"
+        f"<td>{html.escape(str(c.get('value','')))}</td><td>{html.escape(str(c.get('location','')))}</td></tr>"
+        for c in components
+    )
+    conn_rows = "".join(
+        f"<tr><td>{html.escape(str(c.get('from','')))}</td><td>→</td><td>{html.escape(str(c.get('to','')))}</td>"
+        f"<td>{html.escape(str(c.get('relationship','')))}</td></tr>"
+        for c in connections
+    )
+    return f"""
+            <div class="measurements">
+                <strong class="title">Components ({len(components)})</strong>
+                <table>
+                    <tr><th>Name</th><th>Type</th><th>Value</th><th>Location</th></tr>
+                    {comp_rows}
+                </table>
+                <strong class="title" style="margin-top:14px;">Connections ({len(connections)})</strong>
+                <table>
+                    <tr><th>From</th><th></th><th>To</th><th>Relationship</th></tr>
+                    {conn_rows}
+                </table>
+            </div>
+    """
+
+
+def _flowcharts_html(flowcharts: List[Dict[str, Any]]) -> str:
+    if not flowcharts:
+        return ""
+    blocks = []
+    for f in flowcharts:
+        node_rows = "".join(
+            f"<tr><td>{html.escape(str(n.get('id','')))}</td><td>{html.escape(str(n.get('label','')))}</td>"
+            f"<td>{html.escape(str(n.get('type','')))}</td><td>{html.escape(str(n.get('value','')))}</td></tr>"
+            for n in f.get("nodes") or []
+        )
+        edge_rows = "".join(
+            f"<tr><td>{html.escape(str(e.get('from','')))}</td><td>→</td><td>{html.escape(str(e.get('to','')))}</td>"
+            f"<td>{html.escape(str(e.get('label','')))}</td></tr>"
+            for e in f.get("edges") or []
+        )
+        blocks.append(f"""
+            <div class="graph-block">
+                <strong class="title">{html.escape(str(f.get('title','')))}</strong>
+                <table>
+                    <tr><th>Node</th><th>Label</th><th>Type</th><th>Value</th></tr>
+                    {node_rows}
+                </table>
+                <table style="margin-top:8px;">
+                    <tr><th>From</th><th></th><th>To</th><th>Branch label</th></tr>
+                    {edge_rows}
+                </table>
+            </div>
+        """)
+    return f"""
+            <div class="measurements">
+                <strong class="title">Extracted flowcharts ({len(flowcharts)})</strong>
+                {''.join(blocks)}
+            </div>
+    """
+
+
+def _installation_steps_html(steps: List[Dict[str, Any]]) -> str:
+    if not steps:
+        return ""
+    rows = "".join(
+        f"<tr><td>{i+1}</td><td>{html.escape(str(s.get('panel_title','')))}</td>"
+        f"<td>{html.escape(', '.join(s.get('parts_shown') or []))}</td>"
+        f"<td>{html.escape(str(s.get('note','')))}</td></tr>"
+        for i, s in enumerate(steps)
+    )
+    return f"""
+            <div class="measurements">
+                <strong class="title">Extracted steps ({len(steps)})</strong>
+                <table>
+                    <tr><th>#</th><th>Panel</th><th>Parts shown</th><th>Note</th></tr>
+                    {rows}
+                </table>
+            </div>
+    """
+
+
+def _structured_data_html(item: Dict[str, Any]) -> str:
+    """Dispatch to the right renderer based on which structured fields this
+    item carries — keyed by tag so a graph never tries to render as a
+    measurements table and vice versa."""
+    tag = item.get("tag", "")
+    if tag == "diagram":
+        return _measurements_html(item.get("vlmMeasurements") or item.get("measurements") or [])
+    if tag == "graph":
+        return _graphs_html(item.get("vlmGraphs") or [])
+    if tag == "schematic":
+        return _schematic_html(item.get("vlmComponents") or [], item.get("vlmConnections") or [])
+    if tag == "flowchart":
+        return _flowcharts_html(item.get("vlmFlowcharts") or [])
+    if tag == "installation_diagram":
+        return _installation_steps_html(item.get("vlmInstallationSteps") or [])
+    return ""
+
+
 def _review_card_html(item: Dict[str, Any]) -> str:
     """Build a single <article> card for one reviewed image."""
     description = html.escape(item.get("description", ""))
@@ -467,7 +616,7 @@ def _review_card_html(item: Dict[str, Any]) -> str:
     output_tokens = item.get("output_tokens", 0)
     total_tokens = item.get("total_tokens", 0)
     cost = item.get("cost", 0)
-    measurements_html = _measurements_html(item.get("measurements") or [])
+    measurements_html = _structured_data_html(item)
 
     return f"""
     <article class="card"
@@ -706,7 +855,6 @@ def rebuild_review(
             "description": doc.get("vlmDescription", ""),
             "tag": doc.get("vlmTag", ""),
             "image_scope": doc.get("imageScope", ""),
-            "measurements": doc.get("vlmMeasurements") or [],
             "model": doc.get("vlmModel", ""),
             "original_width": doc.get("vlmOriginalWidth"),
             "original_height": doc.get("vlmOriginalHeight"),
@@ -716,6 +864,14 @@ def rebuild_review(
             "output_tokens": doc.get("vlmOutputTokens", 0),
             "total_tokens": doc.get("vlmTotalTokens", 0),
             "cost": doc.get("vlmTotalCostUSD", 0),
+            # Whichever of these the doc actually has (by tag) carries through —
+            # _structured_data_html picks the right one based on "tag".
+            "vlmMeasurements": doc.get("vlmMeasurements") or [],
+            "vlmGraphs": doc.get("vlmGraphs") or [],
+            "vlmComponents": doc.get("vlmComponents") or [],
+            "vlmConnections": doc.get("vlmConnections") or [],
+            "vlmFlowcharts": doc.get("vlmFlowcharts") or [],
+            "vlmInstallationSteps": doc.get("vlmInstallationSteps") or [],
         })
 
     generate_review_html(review_items)

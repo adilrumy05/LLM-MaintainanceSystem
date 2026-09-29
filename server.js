@@ -1,4 +1,4 @@
-// OpenAI gpt-4o-mini with RAG Server.js
+// server.js
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -38,6 +38,14 @@ const transcribeRouter = require('./server/routes/transcribe');
 app.use('/api', transcribeRouter);
 const RETRIEVAL_SERVICE_URL = process.env.RETRIEVAL_SERVICE_URL || 'http://localhost:8001';
 const PROMPT_FILE_PATH = path.join(__dirname, 'latest_prompt.txt');
+
+// Iterative retrieval: how many total retrieval rounds one question may use.
+// 1 = old single-shot behavior. 2 lets the model ask ONE follow-up search
+// when the first pass is insufficient (e.g. it needs to trace a component
+// mentioned in the retrieved schematic but not yet retrieved itself). Each
+// extra round costs one more /retrieve call plus one more Call-1 LLM call, so
+// this is intentionally small and hard-capped rather than open-ended.
+const MAX_RETRIEVAL_ROUNDS = parseInt(process.env.MAX_RETRIEVAL_ROUNDS || '2', 10);
 
 const ROLE_SYSTEM_PROMPTS = {
   beginner: `You are a Guidance Helper for a junior maintenance technician.
@@ -85,6 +93,169 @@ function extractDateFromQuery(query) {
     return `${year}-${month}-${day}`;
   }
   return null;
+}
+
+// ── Retrieval: one round ───────────────────────────────────────────────────
+// Extracted so the iterative loop below can call it more than once with a
+// different `question` each time, without duplicating the fetch/error
+// handling. Returns null on any transport/HTTP failure — same contract the
+// inline version had, so the existing "retrieval_unavailable" handling below
+// still works unchanged.
+async function fetchRetrievalRound(question, filters) {
+  const response = await fetch(`${RETRIEVAL_SERVICE_URL}/retrieve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, ...filters }),
+  }).catch((err) => {
+    console.error('Retrieval service unreachable:', err.message);
+    return null;
+  });
+
+  if (!response || !response.ok) {
+    if (response) {
+      const errText = await response.text().catch(() => '');
+      console.error('Retrieval service error:', response.status, errText);
+    }
+    return null;
+  }
+
+  return response.json();
+}
+
+// ── Merge context_blocks / sources across retrieval rounds ────────────────
+// context_blocks are deduped by chunk_id (now returned by retrieval_service.py
+// specifically so this loop can do this). sources are deduped by
+// (document_group_id, filename, page), with their `images[]` unioned by url —
+// round 2 can surface a source round 1 already had, just with an image round
+// 1's context didn't happen to include.
+function mergeRetrievalRounds(rounds) {
+  const blocksById = new Map();
+  const sourcesByKey = new Map();
+
+  for (const round of rounds) {
+    for (const b of round.context_blocks || []) {
+      if (!blocksById.has(b.chunk_id)) blocksById.set(b.chunk_id, b);
+    }
+    for (const src of round.sources || []) {
+      const key = `${src.document_group_id}|${src.filename}|${src.page}`;
+      const existing = sourcesByKey.get(key);
+      if (!existing) {
+        sourcesByKey.set(key, { ...src, images: [...(src.images || [])] });
+      } else {
+        const seenUrls = new Set(existing.images.map((i) => i.url));
+        for (const img of src.images || []) {
+          if (img.url && !seenUrls.has(img.url)) {
+            existing.images.push(img);
+            seenUrls.add(img.url);
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    context_blocks: [...blocksById.values()],
+    sources: [...sourcesByKey.values()],
+  };
+}
+
+// Prompt built from the MERGED block list (retrieval_service.py's own
+// build_prompt() only ever sees one round at a time, so a second round's
+// blocks need folding in here rather than re-fetched from Python).
+function buildMergedPrompt(contextBlocks, question) {
+  const contextStr = contextBlocks.length
+    ? contextBlocks
+        .map((b, i) => {
+          const header = `[${i + 1}] [${b.chunk_type}] page ${b.page} — ${b.document_group_id} / ${b.filename}`;
+          const scoreStr = b.score > 0 ? `score: ${b.score.toFixed(3)}` : '(context parent)';
+          return `${header}\n${scoreStr}\n${b.text}\n---`;
+        })
+        .join('\n\n')
+    : '(no context retrieved)';
+
+  return (
+    `You are a helpful technical assistant. Answer the question using ONLY the context provided below. ` +
+    `If the context does not contain enough information, say so. Cite page numbers where relevant.\n\n` +
+    `=== CONTEXT ===\n${contextStr}\n` +
+    `=== QUESTION ===\n${question}\n\n=== ANSWER ===`
+  );
+}
+
+// ── Call 1: answer, or ask for one more targeted search ────────────────────
+// Structured output instead of a 3rd LLM call for the sufficiency check —
+// the model decides in the SAME call whether it can answer, reusing the
+// step-extraction pattern already proven below (Call 2). `forceAnswer` is set
+// on the last allowed round: the model must answer with what it has rather
+// than requesting a round MAX_RETRIEVAL_ROUNDS + 1 that will never happen.
+async function callAnswerModel({ apiKey, systemPrompt, prompt, photos, imageBase64, visualModel, visualReading, forceAnswer }) {
+  const visionRules = imageBase64
+    ? `
+
+The user attached ${photos.length > 1 ? `${photos.length} photographs of one job` : 'a photograph'}. It has already been read as: ${JSON.stringify({
+        model: visualModel,
+        faultCode: visualReading?.faultCode || null,
+        observation: visualReading?.observation || null,
+      })}.
+Answer using ONLY the manual extracts above, and cite pages exactly as normal.
+Refer to what is visible in the photo where it helps, but never state a
+specification, torque figure, tolerance or procedure that is not in the extracts.`
+    : '';
+
+  const sufficiencyRules = forceAnswer
+    ? `
+
+You MUST answer now using everything provided above — this is the last retrieval round available, so set "sufficient" to true and put your complete answer in "answer" regardless of any remaining gaps. If something is genuinely missing, say so within the answer itself rather than requesting another search.`
+    : `
+
+Before answering, judge whether the context above is actually enough to fully and safely answer the question. If it is NOT — for example the extracts reference a component, fault code, or section by name but do not describe it — set "sufficient" to false, leave "answer" as an empty string, and set "follow_up_query" to a short, specific search query for exactly that missing piece (not a restatement of the original question). If the context IS enough, set "sufficient" to true, "follow_up_query" to an empty string, and put your complete, safe, well-cited answer in "answer".`;
+
+  const fullSystemPrompt = systemPrompt + visionRules + sufficiencyRules;
+
+  const userContent = imageBase64
+    ? [
+        { type: 'text', text: prompt },
+        ...photos.map((b64) => ({
+          type: 'image_url',
+          image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'auto' },
+        })),
+      ]
+    : prompt;
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: fullSystemPrompt },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.2,
+      max_tokens: 2048,
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'answer_or_followup',
+          strict: true,
+          schema: {
+            type: 'object',
+            properties: {
+              sufficient: { type: 'boolean' },
+              answer: { type: 'string' },
+              follow_up_query: { type: 'string' },
+            },
+            required: ['sufficient', 'answer', 'follow_up_query'],
+            additionalProperties: false,
+          },
+        },
+      },
+    }),
+  }).catch((err) => {
+    console.error('OpenAI unreachable:', err.message);
+    return null;
+  });
+
+  return response;
 }
 
 app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
@@ -208,35 +379,29 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       console.log(`[VISION] model=${visualModel} fault=${visualReading?.faultCode || '-'}`);
     }
 
-    // ── Step 1: Get RAG context from Python retrieval service ─────────────────
-    console.log(`Calling retrieval service for: "${query}"`);
-    const retrievalResponse = await fetch(`${RETRIEVAL_SERVICE_URL}/retrieve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        // Enriched with the photo's findings when one was attached.
-        question: retrievalQuery,
-        document_group_id: matchedGroup || docGroup || null,
-        filename: matchedFile || null,
-        classification: matchedClassification || classification || null,
-        category_level_1: matchedCategory1 || category1 || null,
-        category_level_2: matchedCategory2 || category2 || null,
-        // A model read off the nameplate is stronger evidence than a substring
-        // match against the typed text, so it wins.
-        model_number: visualModel || matchedModel || (imageBase64 ? null : trustedConfirmedModel) || null,
-        date_added: matchedDate || null,
-        top_k: topK,
-      }),
-    }).catch((err) => {
-      console.error('Retrieval service unreachable:', err.message);
-      return null;
-    });
+    // ── Steps 1+2: iterative retrieve -> answer loop ───────────────────────────
+    // Round 1 uses the photo/query-derived retrievalQuery exactly as before.
+    // If Call 1 reports the context was insufficient, round 2 retrieves again
+    // with the model's own follow_up_query and both rounds' context are
+    // merged for the final (forced) answer. Capped at MAX_RETRIEVAL_ROUNDS so
+    // a question can never loop indefinitely.
+    const retrievalFilters = {
+      document_group_id: matchedGroup || docGroup || null,
+      filename: matchedFile || null,
+      classification: matchedClassification || classification || null,
+      category_level_1: matchedCategory1 || category1 || null,
+      category_level_2: matchedCategory2 || category2 || null,
+      // A model read off the nameplate is stronger evidence than a substring
+      // match against the typed text, so it wins.
+      model_number: visualModel || matchedModel || (imageBase64 ? null : trustedConfirmedModel) || null,
+      date_added: matchedDate || null,
+      top_k: topK,
+    };
 
-    if (!retrievalResponse || !retrievalResponse.ok) {
-      if (retrievalResponse) {
-        const errText = await retrievalResponse.text().catch(() => '');
-        console.error('Retrieval service error:', retrievalResponse.status, errText);
-      }
+    console.log(`Calling retrieval service for: "${query}"`);
+    const round1 = await fetchRetrievalRound(retrievalQuery, retrievalFilters);
+
+    if (!round1) {
       // The raw upstream body stays in the server log. The app shows `error`
       // verbatim, and a Python traceback is not something a technician can act on.
       return serviceFailure(res, 503, 'retrieval_unavailable',
@@ -244,10 +409,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
         Boolean(imageBase64));
     }
 
-    const retrievalData = await retrievalResponse.json();
-    const finalPrompt   = retrievalData.prompt;
-
-    console.log(`Retrieved ${retrievalData.context_blocks.length} context blocks`);
+    console.log(`Retrieved ${round1.context_blocks.length} context blocks (round 1)`);
 
     // Stop rather than answer from the image alone.
     //
@@ -255,9 +417,11 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     // so a model filter that disagrees with the selected document group returns
     // nothing at all. Answering anyway would mean the LLM inventing maintenance
     // guidance with no manual behind it - ungrounded and uncitable, which is the
-    // one thing this system exists to avoid.
+    // one thing this system exists to avoid. Checked after round 1 only: if a
+    // photo-scoped question already found nothing, a follow-up round under the
+    // same model scope is essentially certain to find nothing either.
     const modelScopedByConfirmation = !imageBase64 && !matchedModel && Boolean(trustedConfirmedModel);
-    if ((imageBase64 || modelScopedByConfirmation) && (retrievalData.context_blocks?.length || 0) === 0) {
+    if ((imageBase64 || modelScopedByConfirmation) && (round1.context_blocks?.length || 0) === 0) {
       const scopedModel = visualModel || (modelScopedByConfirmation ? trustedConfirmedModel : null);
       console.log('[VISION] no context retrieved — refusing to answer unsupported');
       return res.status(200).json({
@@ -271,83 +435,101 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       });
     }
 
-    // ── Save latest prompt to file ────────────────────────────────────────────
-    fs.writeFile(PROMPT_FILE_PATH, finalPrompt, 'utf8', (err) => {
-      if (err) console.error('Failed to write latest prompt file:', err);
-      else     console.log(`Latest prompt saved to ${PROMPT_FILE_PATH}`);
-    });
-
-    // ── Step 2: Send enriched prompt to OpenAI ───────────────────────────────
     const systemPrompt = ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT;
 
-    // ── Call 1: original narrative answer, UNCHANGED from before ─────────────
-    //
-    // With a photo attached, the image rides alongside the retrieved context so
-    // the model can describe what is shown - but the ANSWER still has to come
-    // from the manual extracts, and still has to cite pages. The image adds
-    // context; it is not a second source of truth.
-    const visionRules = `
+    let rounds = [round1];
+    let merged = mergeRetrievalRounds(rounds);
+    let text = '';
+    let round = 1;
 
-The user attached ${photos.length > 1 ? `${photos.length} photographs of one job` : 'a photograph'}. It has already been read as: ${JSON.stringify({
-      model: visualModel,
-      faultCode: visualReading?.faultCode || null,
-      observation: visualReading?.observation || null,
-    })}.
-Answer using ONLY the manual extracts above, and cite pages exactly as normal.
-Refer to what is visible in the photo where it helps, but never state a
-specification, torque figure, tolerance or procedure that is not in the extracts.`;
+    while (true) {
+      const forceAnswer = round >= MAX_RETRIEVAL_ROUNDS;
+      const prompt = buildMergedPrompt(merged.context_blocks, retrievalQuery);
 
-    const userContent = imageBase64
-      ? [
-          { type: 'text', text: finalPrompt },
-          ...photos.map((b64) => ({
-            type: 'image_url',
-            image_url: { url: `data:image/jpeg;base64,${b64}`, detail: 'auto' },
-          })),
-        ]
-      : finalPrompt;
+      // Save latest prompt to file (kept from before — last round's prompt wins).
+      fs.writeFile(PROMPT_FILE_PATH, prompt, 'utf8', (err) => {
+        if (err) console.error('Failed to write latest prompt file:', err);
+        else     console.log(`Latest prompt saved to ${PROMPT_FILE_PATH}`);
+      });
 
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: imageBase64 ? systemPrompt + visionRules : systemPrompt },
-          { role: 'user',   content: userContent },
-        ],
-        temperature: 0.2,
-        max_tokens: 2048,
-      }),
-    }).catch((err) => {
-      console.error('OpenAI unreachable:', err.message);
-      return null;
-    });
+      const openaiResponse = await callAnswerModel({
+        apiKey,
+        systemPrompt,
+        prompt,
+        // Photos ride along on round 1 only — the model has already
+        // incorporated what it saw into its first attempt; re-sending the
+        // same image on a follow-up round doubles image token cost for no
+        // new information.
+        photos: round === 1 ? photos : [],
+        imageBase64: round === 1 && imageBase64,
+        visualModel,
+        visualReading,
+        forceAnswer,
+      });
 
-    if (!openaiResponse) {
-      return serviceFailure(res, 503, 'answer_unavailable',
-        'Could not reach the answer service. Try again in a moment.', Boolean(imageBase64));
+      if (!openaiResponse) {
+        return serviceFailure(res, 503, 'answer_unavailable',
+          'Could not reach the answer service. Try again in a moment.', Boolean(imageBase64));
+      }
+
+      const data = await openaiResponse.json().catch(() => null);
+      console.log(`OpenAI status (round ${round}):`, openaiResponse.status);
+
+      if (!openaiResponse.ok) {
+        console.error('OpenAI error:', JSON.stringify(data, null, 2));
+        // Never pass the provider's status through: a 401 from OpenAI means OUR
+        // key is wrong, not the technician's session, and a 429 is our quota.
+        // 502 says an upstream service failed.
+        return serviceFailure(res, 502, 'answer_unavailable',
+          'The answer service failed. Try again in a moment.', Boolean(imageBase64));
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(data?.choices?.[0]?.message?.content || '{}');
+      } catch (e) {
+        parsed = { sufficient: true, answer: data?.choices?.[0]?.message?.content || 'No response text returned.', follow_up_query: '' };
+      }
+
+      if (parsed.sufficient || forceAnswer) {
+        text = parsed.answer || 'No response text returned.';
+        break;
+      }
+
+      // Insufficient, and rounds remain: retrieve again with the model's own
+      // follow-up query, merge, and loop.
+      round += 1;
+      const followUp = (parsed.follow_up_query || '').trim() || retrievalQuery;
+      console.log(`[RETRIEVAL LOOP] round 1 insufficient, searching again: "${followUp}"`);
+      const nextRound = await fetchRetrievalRound(followUp, retrievalFilters);
+      if (nextRound) {
+        rounds.push(nextRound);
+        merged = mergeRetrievalRounds(rounds);
+        console.log(`Retrieved ${nextRound.context_blocks.length} context blocks (round ${round}, ${merged.context_blocks.length} total after merge)`);
+      } else {
+        // Follow-up retrieval failed — don't fail the whole request over it,
+        // just force an answer from what round 1 already found.
+        console.warn('[RETRIEVAL LOOP] follow-up retrieval failed, forcing an answer from round 1 context only');
+      }
     }
 
-    const data = await openaiResponse.json().catch(() => null);
-    console.log('OpenAI status:', openaiResponse.status);
-
-    if (!openaiResponse.ok) {
-      console.error('OpenAI error:', JSON.stringify(data, null, 2));
-      // Never pass the provider's status through: a 401 from OpenAI means OUR key
-      // is wrong, not the technician's session, and a 429 is our quota. 502 says
-      // an upstream service failed.
-      return serviceFailure(res, 502, 'answer_unavailable',
-        'The answer service failed. Try again in a moment.', Boolean(imageBase64));
-    }
-
-    const text = data?.choices?.[0]?.message?.content || 'No response text returned.';
+    const retrievalData = { context_blocks: merged.context_blocks, sources: merged.sources };
 
     // ── Call 2: cheap structured extraction FROM the finished answer ─────────
+    // Now also given the list of images available across every retrieval
+    // round, so a step that matches one can carry it through to the app.
     let isProcedural = false;
     let steps = [];
 
+    const availableImages = merged.context_blocks
+      .filter((b) => b.chunk_type === 'image' && b.image_url)
+      .map((b) => ({ id: b.chunk_id, page: b.page, caption: (b.text || '').slice(0, 150) }));
+
     try {
+      const stepUserContent = availableImages.length
+        ? `${text}\n\n=== AVAILABLE REFERENCE IMAGES ===\n${JSON.stringify(availableImages)}`
+        : text;
+
       const stepResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -356,9 +538,11 @@ specification, torque figure, tolerance or procedure that is not in the extracts
           messages: [
             {
               role: 'system',
-              content: `You extract structured step breakdowns from maintenance answers. Given the answer text below, determine if it describes a procedure, troubleshooting flow, checklist, or multi-step task. If so, break it into atomic steps without changing the meaning or adding new information. If it is not procedural, return an empty steps array.`,
+              content: `You extract structured step breakdowns from maintenance answers. Given the answer text below, determine if it describes a procedure, troubleshooting flow, checklist, or multi-step task. If so, break it into atomic steps without changing the meaning or adding new information. If it is not procedural, return an empty steps array.
+
+If a list of AVAILABLE REFERENCE IMAGES is provided (each with an id, page, and short caption), set a step's image_id to the id of the one image that clearly illustrates that specific step — e.g. a wiring step matches a schematic image, an installation step matches an installation-diagram image. Only set it when genuinely confident; otherwise use an empty string. Never invent an id that isn't in the list.`,
             },
-            { role: 'user', content: text },
+            { role: 'user', content: stepUserContent },
           ],
           temperature: 0,
           max_tokens: 1500,
@@ -380,8 +564,9 @@ specification, torque figure, tolerance or procedure that is not in the extracts
                         description: { type: 'string' },
                         warning_level: { type: 'string', enum: ['none', 'caution', 'critical'] },
                         tools_required: { type: 'array', items: { type: 'string' } },
+                        image_id: { type: 'string' },
                       },
-                      required: ['title', 'description', 'warning_level', 'tools_required'],
+                      required: ['title', 'description', 'warning_level', 'tools_required', 'image_id'],
                       additionalProperties: false,
                     },
                   },
@@ -397,7 +582,26 @@ specification, torque figure, tolerance or procedure that is not in the extracts
       const stepData = await stepResponse.json();
       const parsed = JSON.parse(stepData?.choices?.[0]?.message?.content || '{}');
       isProcedural = !!parsed.is_procedural;
-      steps = Array.isArray(parsed.steps) ? parsed.steps : [];
+
+      const imageById = new Map(availableImages.map((img) => [img.id, img]));
+      const imageUrlById = new Map(
+        merged.context_blocks.filter((b) => b.image_url).map((b) => [b.chunk_id, b.image_url])
+      );
+
+      steps = Array.isArray(parsed.steps)
+        ? parsed.steps.map((st) => {
+            const matched = st.image_id && imageById.has(st.image_id);
+            return {
+              title: st.title,
+              description: st.description,
+              warning_level: st.warning_level,
+              tools_required: st.tools_required,
+              // Translated from the internal image_id to a direct URL here —
+              // the client never needs to know chunk ids exist.
+              image_url: matched ? imageUrlById.get(st.image_id) || null : null,
+            };
+          })
+        : [];
     } catch (stepErr) {
       console.error('Step extraction failed, continuing with text-only response:', stepErr);
     }

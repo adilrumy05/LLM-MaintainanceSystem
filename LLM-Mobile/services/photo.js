@@ -1,4 +1,4 @@
-// services/photo.js
+// LLM-Mobile/services/photo.js
 //
 // Capture or pick a photo and prepare it for /api/query.
 //
