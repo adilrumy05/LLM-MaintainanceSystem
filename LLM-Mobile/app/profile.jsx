@@ -9,12 +9,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useUser } from './_layout';
 
-
 const ROLE_CONFIG = {
-  admin:        { label: 'Supervisor / Admin',    color: '#7c3aed', bg: '#ede9fe', icon: 'shield-checkmark-outline', permissions: ['Manage Users & Roles', 'Configure AI Agents', 'Audit System Logs', 'Query RAG System', 'Approve / Reject Sessions'] },
-  expert:       { label: 'Worker — Expert',       color: C.green,   bg: C.greenBg, icon: 'star-outline',            permissions: ['Full RAG Query Access', 'Update Maintenance Logs', 'Execute Disassembly Tasks', 'Authorize AI Recommendations'] },
-  intermediate: { label: 'Worker — Intermediate', color: C.orange,  bg: C.orangeBg, icon: 'construct-outline',      permissions: ['Query RAG System', 'Update Maintenance Logs (Limited)', 'View Source Citations'] },
-  beginner:     { label: 'Worker — Beginner',     color: C.blue,    bg: C.blueBg,  icon: 'book-outline',            permissions: ['View Disassembly Steps Only', 'Basic Query Access'] },
+  admin:        { label: 'Supervisor / Admin',    color: '#7c3aed', bg: '#ede9fe', icon: 'shield-checkmark-outline' },
+  expert:       { label: 'Worker — Expert',       color: '#16a34a', bg: '#f0fdf4', icon: 'star-outline'            },
+  intermediate: { label: 'Worker — Intermediate', color: '#d97706', bg: '#fffbeb', icon: 'construct-outline'       },
+  beginner:     { label: 'Worker — Beginner',     color: '#2563eb', bg: '#eff6ff', icon: 'book-outline'            },
 };
 
 export default function Profile() {
@@ -22,26 +21,17 @@ export default function Profile() {
   const [stats, setStats]     = useState({ total: 0, approved: 0, rejected: 0, pending: 0 });
   const [loading, setLoading] = useState(true);
   const router                = useRouter();
-
-  const hasLoadedRef = useRef(false);
+  const hasLoadedRef          = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
       if (!user) return;
-
       if (!hasLoadedRef.current) setLoading(true);
-
       const loadStats = async () => {
         try {
           const userId = user.uid || user.id || user.email || 'anonymous_user';
-          const snap   = await getDocs(
-            query(
-              collection(db, 'audit_logs'),
-              where('user_id', '==', userId),
-              limit(30),
-            )
-          );
-          const logs = snap.docs.map(d => d.data());
+          const snap   = await getDocs(query(collection(db, 'audit_logs'), where('user_id', '==', userId), limit(30)));
+          const logs   = snap.docs.map(d => d.data());
           setStats({
             total:    logs.length,
             approved: logs.filter(l => l.status === 'approved').length,
@@ -52,29 +42,28 @@ export default function Profile() {
         hasLoadedRef.current = true;
         setLoading(false);
       };
-
       loadStats();
     }, [user])
   );
 
-    const handleLogout = () => {
-      if (Platform.OS === 'web') {
-        if (window.confirm('Are you sure you want to logout?')) {
-          AsyncStorage.removeItem('user');
-          setUser(null);
-          window.location.href = '/';   // hard reload, clears all Firestore listeners
-        }
-        return;
+  const handleLogout = () => {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Are you sure you want to logout?')) {
+        AsyncStorage.removeItem('user');
+        setUser(null);
+        window.location.href = '/';
       }
-      Alert.alert('Logout', 'Are you sure you want to logout?', [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Logout', style: 'destructive', onPress: async () => {
-          await AsyncStorage.removeItem('user');
-          setUser(null);
-          router.replace('/login');
-        }},
-      ]);
-    };
+      return;
+    }
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Logout', style: 'destructive', onPress: async () => {
+        await AsyncStorage.removeItem('user');
+        setUser(null);
+        router.replace('/login');
+      }},
+    ]);
+  };
 
   if (loading) return (
     <SafeAreaView style={s.safe}><ActivityIndicator color={C.primary} size="large" style={{ marginTop: 60 }} /></SafeAreaView>
@@ -90,102 +79,116 @@ export default function Profile() {
     : 'N/A';
 
   return (
-    <SafeAreaView style={s.safe}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <View style={s.banner}>
-          <View style={s.avatarCircle}><Text style={s.avatarText}>{initials}</Text></View>
+    <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+
+        {/* ─── Header ──────────────────────────────────────────────── */}
+        <View style={s.header}>
+          <View style={s.avatarCircle}>
+            <Text style={s.avatarText}>{initials}</Text>
+          </View>
           <Text style={s.displayName}>{user.username || 'Technician'}</Text>
           <Text style={s.emailText}>{user.email || 'No email'}</Text>
           <View style={[s.rolePill, { backgroundColor: roleCfg.bg }]}>
-            <Ionicons name={roleCfg.icon} size={14} color={roleCfg.color} />
+            <Ionicons name={roleCfg.icon} size={13} color={roleCfg.color} />
             <Text style={[s.rolePillText, { color: roleCfg.color }]}> {roleCfg.label}</Text>
           </View>
         </View>
+
         <View style={s.body}>
-          <Text style={s.sectionLabel}>SESSION STATISTICS</Text>
-          <View style={s.statsRow}>
-            <StatCard label="Total"    value={stats.total}    color={C.primary} />
-            <StatCard label="Approved" value={stats.approved} color={C.green}   />
-            <StatCard label="Pending"  value={stats.pending}  color="#d97706"   />
-            <StatCard label="Rejected" value={stats.rejected} color={C.red}     />
+
+          {/* ─── Stats ───────────────────────────────────────────────── */}
+          <View style={s.statsGrid}>
+            <View style={s.statCard}>
+              <Text style={s.statValue}>{stats.total}</Text>
+              <Text style={s.statLabel}>Sessions</Text>
+            </View>
+            <View style={s.statCard}>
+              <Text style={[s.statValue, { color: '#16a34a' }]}>{stats.approved}</Text>
+              <Text style={s.statLabel}>Approved</Text>
+            </View>
+            <View style={s.statCard}>
+              <Text style={[s.statValue, { color: '#d97706' }]}>{stats.pending}</Text>
+              <Text style={s.statLabel}>Pending</Text>
+            </View>
+            <View style={s.statCard}>
+              <Text style={[s.statValue, { color: '#dc2626' }]}>{stats.rejected}</Text>
+              <Text style={s.statLabel}>Rejected</Text>
+            </View>
           </View>
-          <Text style={s.sectionLabel}>ACCOUNT INFO</Text>
-          <View style={s.infoCard}>
-            <InfoRow iconName="person-outline"  label="Name"   value={user.username || 'Not set'} />
-            <InfoRow iconName="mail-outline"     label="Email"  value={user.email || 'Not set'} />
-            <InfoRow iconName="shield-outline"   label="Role"   value={roleCfg.label} valueColor={roleCfg.color} />
-            <InfoRow iconName="calendar-outline" label="Joined" value={joinDate} last />
+
+          {/* ─── Account ─────────────────────────────────────────────── */}
+          <Text style={s.sectionLabel}>ACCOUNT</Text>
+          <View style={s.card}>
+            <Row iconName="person-outline"  label="Name"   value={user.username || 'Not set'} />
+            <Row iconName="mail-outline"     label="Email"  value={user.email || 'Not set'} />
+            <Row iconName="calendar-outline" label="Joined" value={joinDate} last />
           </View>
-          <Text style={s.sectionLabel}>YOUR PERMISSIONS</Text>
-          <View style={s.infoCard}>
-            {roleCfg.permissions.map((perm, i) => (
-              <View key={i} style={[s.permRow, i < roleCfg.permissions.length - 1 && s.permBorder]}>
-                <Ionicons name="checkmark-circle-outline" size={16} color={C.green} />
-                <Text style={s.permText}>{perm}</Text>
-              </View>
-            ))}
-          </View>
-          <Text style={s.sectionLabel}>QUICK ACTIONS</Text>
-          <View style={s.actionsCard}>
-            <ActionRow iconName="time-outline"    label="View My Audit History"    onPress={() => router.push(user.role === 'admin' ? '/history' : '/mysessions')} />
-            <View style={s.actionDivider} />
-            <ActionRow iconName="flash-outline"   label="Open Maintenance Copilot" onPress={() => router.push('/dashboard')} />
-            {user.role === 'admin' && (
-              <>
-                <View style={s.actionDivider} />
-                <ActionRow iconName="settings-outline" label="Admin Dashboard" onPress={() => router.push('/admin')} />
-              </>
-            )}
-          </View>
+
+
+
+          {/* ─── Logout ──────────────────────────────────────────────── */}
           <TouchableOpacity style={s.logoutBtn} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={18} color={C.red} />
-            <Text style={s.logoutText}> Logout</Text>
+            <Ionicons name="log-out-outline" size={18} color="#dc2626" />
+            <Text style={s.logoutText}>Logout</Text>
           </TouchableOpacity>
+
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function StatCard({ label, value, color }) {
-  return <View style={[s.statCard, { borderColor: color }]}><Text style={[s.statValue, { color }]}>{value}</Text><Text style={s.statLabel}>{label}</Text></View>;
+function Row({ iconName, label, value, last }) {
+  return (
+    <View style={[s.row, !last && s.rowBorder]}>
+      <Ionicons name={iconName} size={17} color={C.textMuted} />
+      <Text style={s.rowLabel}>{label}</Text>
+      <Text style={s.rowValue} numberOfLines={1}>{value}</Text>
+    </View>
+  );
 }
-function InfoRow({ iconName, label, value, valueColor, last }) {
-  return <View style={[s.infoRow, !last && s.infoBorder]}><Ionicons name={iconName} size={18} color={C.textSub} style={{ width: 24 }} /><Text style={s.infoLabel}>{label}</Text><Text style={[s.infoValue, valueColor && { color: valueColor }]} numberOfLines={1}>{value}</Text></View>;
-}
-function ActionRow({ iconName, label, onPress }) {
-  return <TouchableOpacity style={s.actionRow} onPress={onPress}><Ionicons name={iconName} size={20} color={C.primary} style={{ width: 28 }} /><Text style={s.actionLabel}>{label}</Text><Ionicons name="chevron-forward-outline" size={18} color={C.textMuted} /></TouchableOpacity>;
+
+function Action({ iconName, label, onPress }) {
+  return (
+    <TouchableOpacity style={s.actionRow} onPress={onPress}>
+      <View style={s.actionIcon}>
+        <Ionicons name={iconName} size={18} color={C.primary} />
+      </View>
+      <Text style={s.actionLabel}>{label}</Text>
+      <Ionicons name="chevron-forward-outline" size={16} color={C.textMuted} />
+    </TouchableOpacity>
+  );
 }
 
 const s = StyleSheet.create({
   safe:         { flex: 1, backgroundColor: C.bg },
-  center:       { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  center:       { flex: 1, alignItems: 'center', justifyContent: 'center' },
   muted:        { color: C.textMuted, fontSize: 14 },
-  banner:       { backgroundColor: C.primary, paddingTop: 40, paddingBottom: 32, alignItems: 'center', gap: 8 },
-  avatarCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  avatarText:   { fontSize: 32, fontWeight: '700', color: '#fff' },
-  displayName:  { fontSize: 20, fontWeight: '700', color: '#fff' },
-  emailText:    { fontSize: 13, color: 'rgba(255,255,255,0.8)' },
+
+  header:       { alignItems: 'center', paddingTop: 48, paddingBottom: 32, paddingHorizontal: 24, gap: 6 },
+  avatarCircle: { width: 88, height: 88, borderRadius: 44, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 8, borderWidth: 3, borderColor: C.primary + '30' },
+  avatarText:   { fontSize: 34, fontWeight: '700', color: C.primary },
+  displayName:  { fontSize: 22, fontWeight: '700', color: C.text },
+  emailText:    { fontSize: 13, color: C.textMuted },
   rolePill:     { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, marginTop: 4 },
   rolePillText: { fontSize: 12, fontWeight: '700' },
-  body:         { padding: 16, gap: 8 },
-  sectionLabel: { fontSize: 10, fontWeight: '700', color: C.primary, letterSpacing: 1.2, marginTop: 16, marginBottom: 8 },
-  statsRow:     { flexDirection: 'row', gap: 8 },
-  statCard:     { flex: 1, backgroundColor: C.card, borderRadius: 12, padding: 12, alignItems: 'center', borderWidth: 1 },
-  statValue:    { fontSize: 22, fontWeight: '700' },
+
+  body:         { paddingHorizontal: 16, gap: 8 },
+  sectionLabel: { fontSize: 10, fontWeight: '700', color: C.textMuted, letterSpacing: 1.2, marginTop: 8, marginBottom: 4 },
+
+  statsGrid:    { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  statCard:     { flex: 1, backgroundColor: C.card, borderRadius: 14, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: C.cardBorder },
+  statValue:    { fontSize: 22, fontWeight: '800', color: C.text },
   statLabel:    { fontSize: 10, color: C.textMuted, marginTop: 2, fontWeight: '600' },
-  infoCard:     { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.cardBorder, overflow: 'hidden' },
-  infoRow:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, gap: 12 },
-  infoBorder:   { borderBottomWidth: 1, borderBottomColor: C.cardBorder },
-  infoLabel:    { color: C.textSub, fontSize: 13, width: 60 },
-  infoValue:    { flex: 1, color: C.text, fontSize: 13, fontWeight: '600', textAlign: 'right' },
-  permRow:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
-  permBorder:   { borderBottomWidth: 1, borderBottomColor: C.cardBorder },
-  permText:     { color: C.text, fontSize: 13, flex: 1 },
-  actionsCard:  { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.cardBorder, overflow: 'hidden' },
-  actionRow:    { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 16, gap: 12 },
-  actionDivider:{ height: 1, backgroundColor: C.cardBorder },
-  actionLabel:  { flex: 1, color: C.text, fontSize: 14, fontWeight: '600' },
-  logoutBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.redBg, borderWidth: 1, borderColor: '#fecaca', borderRadius: 14, paddingVertical: 16, marginTop: 8 },
-  logoutText:   { color: C.red, fontWeight: '700', fontSize: 15 },
+
+  card:         { backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.cardBorder, overflow: 'hidden' },
+  row:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, gap: 12 },
+  rowBorder:    { borderBottomWidth: 1, borderBottomColor: C.cardBorder },
+  rowLabel:     { color: C.textMuted, fontSize: 13, width: 56 },
+  rowValue:     { flex: 1, color: C.text, fontSize: 13, fontWeight: '600', textAlign: 'right' },
+
+
+  logoutBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 14, paddingVertical: 15, marginTop: 16 },
+  logoutText:   { color: '#dc2626', fontWeight: '700', fontSize: 15 },
 });

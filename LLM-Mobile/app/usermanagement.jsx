@@ -140,7 +140,7 @@ export default function UserManagementScreen() {
 
         {/* Top Bar */}
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.push('/admin')}>
             <Ionicons name="chevron-back" size={18} color="#7c3aed" />
           </TouchableOpacity>
           <View style={styles.topCenter}>

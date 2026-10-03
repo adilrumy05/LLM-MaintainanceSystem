@@ -73,14 +73,10 @@ export default function Layout() {
     }}>
       <Tabs.Screen name="index"          options={{ href: null }} />
       <Tabs.Screen name="login"          options={{ href: null }} />
-      <Tabs.Screen name="beginner"       options={{ href: null }} />
-      <Tabs.Screen name="expert"         options={{ href: null }} />
-      <Tabs.Screen name="intermediate"   options={{ href: null }} />
       <Tabs.Screen name="usermanagement" options={{ href: null }} />
       <Tabs.Screen name="userform"       options={{ href: null }} />
       <Tabs.Screen name="agentconfig"    options={{ href: null }} />
-
-      <Tabs.Screen name="tasks"     options={{ href: null }} />
+      
       <Tabs.Screen name="analytics" options={{ href: null }} />
       <Tabs.Screen name="documents" options={{ href: null }} />
       <Tabs.Screen name="history"   options={{ href: null }} />

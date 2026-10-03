@@ -27,6 +27,9 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+
+
 echo  [OK] Docker is running.
 
 :: ── Port conflict checks ─────────────────────────────────────────
@@ -91,8 +94,8 @@ echo ============================================
 :: A shell without .venv activated would otherwise fall back to system Python
 :: and fail on missing packages (torch, FlagEmbedding, qdrant-client).
 :: Falls back to bare "python" only if .venv has not been created yet.
-if exist "%ROOT%.venv\Scripts\python.exe" (
-    set "PYEXE=%ROOT%.venv\Scripts\python.exe"
+if exist "%ROOT%venv\Scripts\python.exe" (
+    set "PYEXE=%ROOT%venv\Scripts\python.exe"
 ) else (
     echo  [WARNING] .venv not found - falling back to system Python.
     echo  Create it with:  python -m venv .venv

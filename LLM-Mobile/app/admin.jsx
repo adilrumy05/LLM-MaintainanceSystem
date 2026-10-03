@@ -105,15 +105,13 @@ export default function AdminScreen() {
     );
   }
 
-  const menuItems = [
-    { key: "users",   title: "User Management",       sub: "Accounts & roles",           icon: "people-outline",            badge: `${userCount} users`,         onPress: () => router.push("/usermanagement") },
-    { key: "analytics", title: "Analytics",            sub: "Queries, approvals & stats", icon: "bar-chart-outline",         badge: "Live",                         onPress: () => router.push("/analytics") },
-    { key: "logs",      title: "Audit Logs",           sub: "Session history & HITL review", icon: "document-text-outline", badge: pendingCount > 0 ? `${pendingCount} pending` : "0 pending", onPress: () => router.push("/history") },
-    { key: "activity",  title: "Activity Feed",        sub: "Real-time alerts & events",  icon: "notifications-outline",     badge: alertsCount > 0 ? `${alertsCount} alerts` : "0 alerts", onPress: () => router.push("/activity") },
-    { key: "tasks",     title: "Maintenance Tasks",    sub: "Create & assign tasks",      icon: "checkmark-circle-outline",   badge: "Tasks",                       onPress: () => router.push("/tasks") },
-    { key: "documents", title: "RAG Document Library", sub: "View manuals loaded in vector store", icon: "library-outline",  badge: "RAG",                         onPress: () => router.push("/documents") },
-    { key: "ai",        title: "AI Agent Config",      sub: "System agents & settings",   icon: "settings-outline",          badge: "Live",                         onPress: () => router.push('/agentconfig') },
-    { key: "chat",      title: "Maintenance Copilot",  sub: "AI-powered chat assistant",  icon: "chatbubble-ellipses-outline", badge: "AI",                          onPress: () => router.push("/dashboard") },
+const menuItems = [
+    { key: "users",     title: "User Management",       sub: "Accounts & roles",                    icon: "people-outline",              badge: `${userCount} users`,          onPress: () => router.push("/usermanagement") },
+    { key: "analytics", title: "Analytics",             sub: "Queries, approvals & stats",          icon: "bar-chart-outline",           badge: "Live",                        onPress: () => router.push("/analytics") },
+    { key: "logs",      title: "Audit Logs",            sub: "Session history & HITL review",       icon: "document-text-outline",       badge: pendingCount > 0 ? `${pendingCount} pending` : "0 pending", onPress: () => router.push("/history") },
+
+    { key: "documents", title: "RAG Document Library",  sub: "View manuals loaded in vector store", icon: "library-outline",             badge: "RAG",                         onPress: () => router.push("/documents") },
+    { key: "ai",        title: "System Agent Status",   sub: "View active agents & endpoints",      icon: "settings-outline",            badge: "Live",                        onPress: () => router.push('/agentconfig') },
   ];
 
   return (

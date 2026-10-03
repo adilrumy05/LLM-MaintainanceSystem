@@ -1,50 +1,103 @@
-import { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, Modal, Dimensions, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Keyboard, TouchableWithoutFeedback } from 'react-native';
+// app/(tabs)/index.js
+
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity, FlatList, Modal,
+  ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,
+  Platform, Image, ScrollView,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { useUser } from './_layout';
-import { submitQuery, resetSession, setSession, getSession, generateReport, logTimerEvent } from '../services/api';
+import { submitQuery, decodeEntities, getFilters,
+         resetSession, setSession, getSession,
+         generateReport, logTimerEvent } from '../services/api';
 import { shareReportPdf } from '../services/reportPdf';
-import * as ImagePicker from 'expo-image-picker';
-import Markdown from 'react-native-markdown-display';
-import MicButton from '../components/MicButton';
-import ProcedureTimer from '../components/ProcedureTimer';
 import { extractTimers } from '../services/procedureTimers';
-import { transcribeAudio } from '../services/api';
-import { getFilters } from '../services/api';
+import { capturePhotos, MAX_PHOTOS } from '../services/photo';
+import MicButton from '../components/MicButton';
+import HandsFreeBar from '../components/HandsFreeBar';
+import { useHandsFree } from '../hooks/useHandsFree';
+import BotMessage from '../components/BotMessage';
+import { actionsForOutcome } from '../utils/chatActions';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
+
+const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
+
+// ─── Module-scope helpers still needed by Dashboard ────────────────────
+
+const messagePhotos = (item) =>
+  item.imageUris || (item.imageUri ? [item.imageUri] : []);
+
+const choosePhotoSource = () => new Promise((resolve) => {
+  if (Platform.OS === 'web') { resolve('library'); return; }
+  Alert.alert('Add a photo', 'Photograph a nameplate, a fault display, or a part.', [
+    { text: 'Take photo',          onPress: () => resolve('camera') },
+    { text: 'Choose from library', onPress: () => resolve('library') },
+    { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+  ], { cancelable: true, onDismiss: () => resolve(null) });
+});
+
+const PhotoThumb = memo(function PhotoThumb({ uri, small }) {
+  const [failed, setFailed] = useState(false);
+  if (!uri || failed) return null;
+  return (
+    <Image
+      source={{ uri }}
+      style={small ? s.msgPhotoSmall : s.msgPhoto}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+    />
+  );
+});
 
 export default function Dashboard() {
-  // Seed chat '1' with the session api.js generated at module load, so the
-  // first conversation is bound to a session without burning an extra id.
-  const [chats, setChats]               = useState([{ id: '1', messages: [], sessionId: getSession() }]);
-  const [activeChatId, setActiveChatId] = useState('1');
-  const [inputValue, setInputValue]     = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [showSidebar, setShowSidebar]   = useState(false);
-  const [loaded, setLoaded]             = useState(false);
-  //const [uploadedFile, setUploadedFile] = useState(null);
-  const cancelRef                       = useRef(false);
-  const flatListRef                     = useRef(null);
-  const router                          = useRouter();
-  const { role, isJunior, isIntermediate } = useRole();
-  const { setUser } = useUser();
-  const [allFilters, setAllFilters]         = useState(null);
+  const [chats, setChats]                 = useState(() => {
+    const id = Date.now().toString();
+    // One chat == one audit session == one job. Without this each chat would
+    // append into the same audit_logs document.
+    return [{ id, messages: [], sessionId: getSession() }];
+  });
+  const [activeChatId, setActiveChatId]   = useState(() => chats[0].id);
+  const [inputValue, setInputValue]       = useState('');
+  const [isProcessing, setIsProcessing]   = useState(false);
+  const [showSidebar, setShowSidebar]     = useState(false);
+  const [loaded, setLoaded]               = useState(false);
+  const [allFilters, setAllFilters]       = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
-
-  // Repair report
-  const [reportBusy, setReportBusy]     = useState(false);
-  const [reportData, setReportData]     = useState(null);
-  const [reportError, setReportError]   = useState(null);
-  const [sharingPdf, setSharingPdf]     = useState(false);
   const [filterSearchText, setFilterSearchText] = useState('');
+  const [pendingPhotos, setPendingPhotos] = useState([]);
+  const [isPhotoBusy, setIsPhotoBusy]     = useState(false);
+  const [handsFreeNotice, setHandsFreeNotice] = useState(null);
+  // Repair report (distinct from the Report Issue modal above)
+  const [repairReport, setRepairReport]       = useState(null);
+  const [repairReportBusy, setRepairReportBusy]   = useState(false);
+  const [repairReportError, setRepairReportError] = useState(null);
+  const [sharingRepairPdf, setSharingRepairPdf]   = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportText, setReportText]           = useState('');
 
+  const cancelRef       = useRef(false);
+  const flatListRef     = useRef(null);
+  const chatsRef        = useRef(chats);
+  const activeChatIdRef = useRef(activeChatId);
+  const lastRequestRef  = useRef({});
+  const noticeTimer     = useRef(null);
+
+  chatsRef.current        = chats;
+  activeChatIdRef.current = activeChatId;
+
+  const router                             = useRouter();
+  const { role, isJunior, isIntermediate } = useRole();
+  const { user, setUser }                  = useUser();
 
   const activeChat = chats.find(c => c.id === activeChatId);
-  const messages   = activeChat?.messages || [];
+  const messages   = useMemo(() => activeChat?.messages || [], [activeChat]);
   const isEmpty    = messages.length === 0;
 
   useEffect(() => {
@@ -55,18 +108,16 @@ export default function Dashboard() {
         if (raw) {
           const saved = JSON.parse(raw);
           if (saved.length > 0) {
-            // Chats persisted before sessionId tracking have no session of
-            // their own. Give each one a fresh id rather than letting them all
-            // keep sharing the module-level session.
-            const migrated = saved.map(c => ({
-              ...c,
-              filter: c.filter || null,
-              sessionId: c.sessionId || resetSession(),
-            }));
-            setChats(migrated);
-            setActiveChatId(migrated[0].id);
-            setSession(migrated[0].sessionId);
-            setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 200);
+            const newId = Date.now().toString();
+            const freshChat = { id: newId, messages: [], filter: null, confirmedModel: null, sessionId: resetSession() };
+            // Chats saved before sessionId tracking get one each, rather than
+            // all continuing to share the module-level session.
+            const updatedChats = [freshChat, ...saved.map(c => ({
+              ...c, filter: c.filter || null, sessionId: c.sessionId || resetSession(),
+            }))];
+            setChats(updatedChats);
+            setActiveChatId(newId);
+            setSession(freshChat.sessionId);
           }
         }
       } catch (e) { console.log('Error loading chats:', e); }
@@ -77,101 +128,212 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!role || !loaded) return;
-    AsyncStorage.setItem(`chats_${role}`, JSON.stringify(chats)).catch(e => console.log('Error saving chats:', e));
+    AsyncStorage.setItem(`chats_${role}`, JSON.stringify(chats))
+      .catch(e => console.log('Error saving chats:', e));
   }, [chats, role, loaded]);
 
   useEffect(() => {
-  getFilters()
-    .then(setAllFilters)
-    .catch(e => console.log('Error loading filters:', e));
-}, []);
+    getFilters().then(setAllFilters).catch(e => console.log('Error loading filters:', e));
+  }, []);
 
+  // ─── Chat mutation callbacks ────────────────────────────────────────
+  const addMessage = useCallback((from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
+    const msg = { id: Date.now().toString() + Math.random(), from, text, sources, ...extra };
+    setChats(prev => prev.map(c => c.id === chatId ? { ...c, messages: [...c.messages, msg] } : c));
+    requestAnimationFrame(() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80));
+  }, []);
 
+  // Kept so the external BotMessage can persist step state
+  const updateMessage = useCallback((messageId, updater, chatId = activeChatIdRef.current) => {
+    setChats(prev => prev.map(c => {
+      if (c.id !== chatId) return c;
+      return { ...c, messages: c.messages.map(m => m.id === messageId ? updater(m) : m) };
+    }));
+  }, []);
 
-  const addMessage = (from, text, sources = [], timers = [], isProcedural = false, steps = []) => {
-    const msg = { id: Date.now().toString() + Math.random(), from, text, sources, timers, isProcedural, steps };
-    setChats(prev => prev.map(c => c.id === activeChatId ? { ...c, messages: [...c.messages, msg] } : c));
-    requestAnimationFrame(() => {
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
-    });
-  };
+  const updateChat = useCallback((chatId, patch) =>
+    setChats(prev => prev.map(c => (c.id === chatId ? { ...c, ...patch } : c))), []);
 
-  const decodeEntities = (str) => {
-    if (typeof str !== 'string') return str;
-    return str
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'");
-  };
-  
+  const setActionsUsed = useCallback((chatId, messageId, used) =>
+    setChats(prev => prev.map(c => (c.id !== chatId ? c : {
+      ...c,
+      messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
+    }))), []);
+
+  const markActionsUsed   = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, true),  [setActionsUsed]);
+  const markActionsUnused = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, false), [setActionsUsed]);
+
+  const runQuery = useCallback(async ({ text, photos = [], confirmedModel, docGroup, voice = false }) => {
+    const chatId = activeChatIdRef.current;
+    const chat   = chatsRef.current.find(c => c.id === chatId);
+    const model  = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
+    const group  = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
+    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group };
+    const hasPhotos = photos.length > 0;
+
+    cancelRef.current = false;
+    setIsProcessing(true);
+    try {
+      const result = await submitQuery(text, {
+        docGroup: group, images: photos.map(p => p.base64), confirmedModel: model, voice,
+      });
+      if (cancelRef.current) return { cancelled: true };
+
+      if (result.needsInput) {
+        addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, hasPhotos) }, chatId);
+      } else {
+        // Decode entities first, then strip [[TIMER:...]] markers: order matters,
+        // or the markers can be missed. Markers never reach the renderer,
+        // AsyncStorage, or a later repair report.
+        const { cleanText, timers } = extractTimers(decodeEntities(result.text));
+        addMessage('bot', cleanText, result.sources || [], {
+          timers,
+          isProcedural: result.isProcedural || false,
+          steps: (result.steps || []).map(st => ({
+            title: decodeEntities(st.title),
+            description: decodeEntities(st.description),
+            warningLevel: st.warning_level,
+            toolsRequired: st.tools_required || [],
+            imageUrl: st.image_url || null,
+          })),
+          procedureView: (result.isProcedural && result.steps?.length > 0) ? 'procedure' : 'text',
+          procedureState: (result.isProcedural && result.steps?.length > 0)
+            ? { currentStep: 0, completedSteps: [], overviewOpen: false } : null,
+        }, chatId);
+        if (result.identifiedModel) updateChat(chatId, { confirmedModel: decodeEntities(result.identifiedModel) });
+      }
+      return { result };
+    } catch (err) {
+      if (cancelRef.current) return { cancelled: true };
+      const photoProblem = err.code === 'invalid_image' || err.code === 'image_too_large';
+      const actions = hasPhotos && photoProblem ? [{ type: 'retake' }]
+        : err.retryable || !err.status ? [{ type: 'retry' }] : [];
+      addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`, [], { actions }, chatId);
+      return { error: err };
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [addMessage, updateChat]);
 
   const handleSend = async (overrideText) => {
-    const queryText = (overrideText || inputValue).trim();
-    if (!queryText || isProcessing) return;
+    const typed  = (overrideText || inputValue).trim();
+    const photos = pendingPhotos;
+    if ((!typed && !photos.length) || isProcessing) return;
+    const queryText = typed || DEFAULT_PHOTO_QUESTION;
     setInputValue('');
-    cancelRef.current = false;
+    setPendingPhotos([]);
     const raw = await AsyncStorage.getItem('queryHistory');
     const existing = JSON.parse(raw || '[]');
     await AsyncStorage.setItem('queryHistory', JSON.stringify(
       [{ id: Date.now(), text: queryText, timestamp: new Date().toISOString() }, ...existing].slice(0, 50)
     ));
-    addMessage('user', queryText);
-    setIsProcessing(true);
-    try {
-      const result = await submitQuery(queryText, activeChat?.filter?.id || null);
-      if (!cancelRef.current) {
-        // Decode first, then strip [[TIMER:...]] markers, so markers never
-        // reach the renderer, AsyncStorage, or a later repair report. Order
-        // matters: entity decoding must happen before marker matching.
-        const { cleanText, timers } = extractTimers(decodeEntities(result.text));
-        addMessage(
-          'bot',
-          cleanText,
-          result.sources || [],
-          timers,
-          result.isProcedural || false,
-          (result.steps || []).map(st => ({
-            title: decodeEntities(st.title),
-            description: decodeEntities(st.description),
-            warningLevel: st.warning_level,
-            toolsRequired: st.tools_required || [],
-          }))
-        );
+    addMessage('user', queryText, [], photos.length ? { imageUris: photos.map(p => p.uri) } : {});
+    await runQuery({ text: queryText, photos });
+  };
+
+  const getPhotos = useCallback(async (limit) => {
+    if (limit < 1) { Alert.alert('Photos', `You can attach up to ${MAX_PHOTOS} photos to one question.`); return []; }
+    const source = await choosePhotoSource();
+    if (!source) return [];
+    setIsPhotoBusy(true);
+    try { return await capturePhotos(source, { limit }); }
+    catch (e) { Alert.alert('Photo', e.message || 'Could not get the photo.'); return []; }
+    finally { setIsPhotoBusy(false); }
+  }, []);
+
+  const handleAttachPhoto = async () => {
+    const added = await getPhotos(MAX_PHOTOS - pendingPhotos.length);
+    if (added.length) setPendingPhotos(prev => [...prev, ...added].slice(0, MAX_PHOTOS));
+  };
+
+  const removePendingPhoto = (index) =>
+    setPendingPhotos(prev => prev.filter((_, i) => i !== index));
+
+  const handleAction = useCallback(async (message, action) => {
+    const chatId = activeChatIdRef.current;
+    const req    = lastRequestRef.current[chatId];
+    markActionsUsed(chatId, message.id);
+
+    switch (action.type) {
+      case 'confirm_model': {
+        updateChat(chatId, { confirmedModel: action.model });
+        addMessage('user', `It's the ${action.model}`);
+        if (!req) { addMessage('bot', `Saved ${action.model} for this chat. Ask your question again.`); return; }
+        await runQuery({ ...req, confirmedModel: action.model });
+        return;
       }
-    } catch (err) {
-      if (!cancelRef.current) addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`);
+      case 'use_photo_model': {
+        updateChat(chatId, { confirmedModel: action.model, filter: null });
+        addMessage('user', `Use ${action.model}`);
+        if (!req) { addMessage('bot', `Switched this chat to ${action.model}. Ask your question again.`); return; }
+        await runQuery({ ...req, confirmedModel: action.model, docGroup: null });
+        return;
+      }
+      case 'retake':
+      case 'add_photo': {
+        const kept  = action.type === 'add_photo' ? req?.photos || [] : [];
+        const added = await getPhotos(MAX_PHOTOS - kept.length);
+        if (!added.length) { markActionsUnused(chatId, message.id); return; }
+        const photos = [...kept, ...added].slice(0, MAX_PHOTOS);
+        const text   = req?.text || DEFAULT_PHOTO_QUESTION;
+        addMessage('user', text, [], { imageUris: photos.map(p => p.uri) });
+        await runQuery({ text, photos, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup });
+        return;
+      }
+      case 'retry': {
+        if (!req) { addMessage('bot', 'That request is no longer available. Please ask again.'); return; }
+        await runQuery(req);
+        return;
+      }
+      default:
     }
-    setIsProcessing(false);
+  }, [markActionsUsed, markActionsUnused, updateChat, addMessage, runQuery, getPhotos]);
+
+  const askHandsFree = async (text) => {
+    addMessage('user', text);
+    const { result, error, cancelled } = await runQuery({ text, voice: true });
+    if (cancelled) return { speak: 'Cancelled.', stopAfter: true };
+    if (error)     return { speak: `Sorry, that failed. ${error.message || ''}`.trim(), stopAfter: true };
+    if (result.needsInput)  return { speak: decodeEntities(result.text) };
+    if (result.spokenText)  return { speak: decodeEntities(result.spokenText) };
+    return { speak: 'Audio guidance is not available for this answer. The full answer is on your screen.' };
+  };
+
+  const showHandsFreeNotice = (msg) => {
+    setHandsFreeNotice(msg);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setHandsFreeNotice(null), 5000);
+  };
+
+  const handsFree        = useHandsFree({ ask: askHandsFree, onNotice: showHandsFreeNotice });
+  const handsFreeActive  = handsFree.active;
+  const handsFreeStopRef = useRef(handsFree.stop);
+  handsFreeStopRef.current = handsFree.stop;
+
+  useFocusEffect(useCallback(() => () => { handsFreeStopRef.current(); }, []));
+
+  const toggleHandsFree = () => {
+    if (handsFree.active) handsFree.stop('Hands-free stopped.');
+    else handsFree.start();
   };
 
   const prettifyFilterLabel = (id) => {
     if (!id) return '';
-
     const parts = id.split('_');
     const model = parts.pop();
-
-    const rest = parts
-      .map(p => p.charAt(0).toUpperCase() + p.slice(1))
-      .join(' ');
-
+    const rest = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
     return `${rest} ${model}`;
   };
 
-  const filterOptions = (allFilters?.document_group_ids || []).map(
-    (id, idx) => ({
-      id,
-      label: prettifyFilterLabel(id),
-      filename: allFilters?.filenames?.[idx] || '',
-    })
-  );
+  const filterOptions = (allFilters?.document_group_ids || []).map((id, idx) => ({
+    id,
+    label: prettifyFilterLabel(id),
+    filename: allFilters?.filenames?.[idx] || '',
+  }));
 
   const filteredOptions = filterOptions.filter(opt => {
     const q = filterSearchText.trim().toLowerCase();
-
     if (!q) return true;
-
     return (
       opt.label.toLowerCase().includes(q) ||
       opt.id.toLowerCase().includes(q) ||
@@ -180,14 +342,11 @@ export default function Dashboard() {
   });
 
   const handleSelectFilter = (opt) => {
-    setChats(prev =>
-      prev.map(c =>
-        c.id === activeChatId
-          ? { ...c, filter: opt || null }
-          : c
-      )
-    );
-
+    setChats(prev => prev.map(c =>
+      c.id === activeChatId
+        ? { ...c, filter: opt || null, confirmedModel: (c.filter?.id === opt?.id) ? c.confirmedModel : null }
+        : c
+    ));
     setShowFilterPicker(false);
     setFilterSearchText('');
   };
@@ -198,164 +357,20 @@ export default function Dashboard() {
     addMessage('bot', 'Response stopped. You can continue the conversation.');
   };
 
-  // Upload disabled — not yet connected to RAG
-  // const handleFilePick = async () => {
-  //   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  //   if (status !== 'granted') { Alert.alert('Permission Denied', 'Please allow access to your files.'); return; }
-  //   const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, allowsEditing: false, quality: 1 });
-  //   if (!result.canceled && result.assets?.[0]) {
-  //     const file = result.assets[0];
-  //     setUploadedFile(file);
-  //     addMessage('user', `Attached: ${file.fileName || 'file'}`);
-  //     addMessage('bot', 'File received! You can now ask questions about it.');
-  //   }
-  // };
-
-  // A completed wait is evidence the procedure was followed, so it is recorded
-  // against the session rather than being purely a UI convenience.
-  const handleTimerComplete = (message, doneTimer) => {
-    const sessionId = activeChat?.sessionId;
-    if (sessionId) {
-      logTimerEvent(sessionId, {
-        label: doneTimer.label,
-        seconds: doneTimer.seconds,
-        completed_at: doneTimer.completedAt,
-      }).catch(e => console.warn('[timers] could not record:', e.message));
-    }
-    const msg = `${doneTimer.label} — wait complete. You can continue.`;
-    Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Procedure timer', msg);
-  };
-
-  // ── Repair report ─────────────────────────────────────────────
-  // Summarises THIS chat's session. Each chat owns its own sessionId, so the
-  // report covers one job rather than everything since app launch.
-  const handleGenerateReport = async () => {
-    if (reportBusy || isEmpty) return;
-    const sessionId = activeChat?.sessionId;
-    if (!sessionId) {
-      setReportError('This chat has no session yet. Send a message first.');
-      return;
-    }
-    setReportBusy(true);
-    setReportError(null);
-    setReportData(null);
-    try {
-      const record = await generateReport(sessionId);
-      setReportData(record);
-    } catch (e) {
-      setReportError(e.message || 'Could not generate the report.');
-    }
-    setReportBusy(false);
-  };
-
-  const handleSharePdf = async () => {
-    if (!reportData || sharingPdf) return;
-    setSharingPdf(true);
-    try {
-      const { shared } = await shareReportPdf(reportData);
-      if (!shared) {
-        // Sharing is unavailable on web; the preview stays open so the
-        // technician can still read and copy the summary.
-        const msg = 'Sharing is not available on this platform. The report is saved and viewable here.';
-        Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Export', msg);
-      }
-    } catch (e) {
-      const msg = e.message || 'Could not create the PDF.';
-      Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Export failed', msg);
-    }
-    setSharingPdf(false);
-  };
-
-  const closeReport = () => { setReportData(null); setReportError(null); };
-
-  const WARNING_COLORS = {
-    none:     { border: C.cardBorder, bg: 'transparent', text: C.textMuted, icon: null },
-    caution:  { border: '#fcd34d', bg: '#fef9c3', text: '#d97706', icon: 'warning-outline' },
-    critical: { border: '#fecaca', bg: '#fef2f2', text: '#dc2626', icon: 'alert-circle-outline' },
-  };
-
-  const StepCardViewer = ({ steps }) => {
-    const [current, setCurrent] = useState(0);
-    const step = steps[current];
-    const warn = WARNING_COLORS[step.warningLevel] || WARNING_COLORS.none;
-    const isFirst = current === 0;
-    const isLast = current === steps.length - 1;
-
-    return (
-      <View style={s.stepViewer}>
-        <View style={s.stepProgressRow}>
-          {steps.map((_, i) => (
-            <View key={i} style={[s.stepDot, i === current && s.stepDotActive]} />
-          ))}
-        </View>
-
-        <Text style={s.stepCounter}>Step {current + 1} of {steps.length}</Text>
-
-        <View style={[s.stepCard, { borderColor: warn.border }]}>
-          {warn.icon && (
-            <View style={[s.stepWarningBanner, { backgroundColor: warn.bg }]}>
-              <Ionicons name={warn.icon} size={14} color={warn.text} />
-              <Text style={[s.stepWarningText, { color: warn.text }]}>
-                {step.warningLevel === 'critical' ? ' CRITICAL' : ' CAUTION'}
-              </Text>
-            </View>
-          )}
-          <Text style={s.stepTitle}>{step.title}</Text>
-          <Text style={s.stepDescription}>{step.description}</Text>
-          {step.toolsRequired?.length > 0 && (
-            <View style={s.stepToolsRow}>
-              <Ionicons name="build-outline" size={12} color={C.textMuted} />
-              <Text style={s.stepToolsText}> {step.toolsRequired.join(', ')}</Text>
-            </View>
-          )}
-        </View>
-
-        <View style={s.stepNavRow}>
-          <TouchableOpacity
-            style={[s.stepNavBtn, isFirst && s.stepNavBtnDisabled]}
-            onPress={() => setCurrent(c => Math.max(0, c - 1))}
-            disabled={isFirst}
-          >
-            <Ionicons name="chevron-back-outline" size={16} color={isFirst ? C.textMuted : C.primary} />
-            <Text style={[s.stepNavText, isFirst && { color: C.textMuted }]}>Previous</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.stepNavBtn, isLast && s.stepNavBtnDisabled]}
-            onPress={() => setCurrent(c => Math.min(steps.length - 1, c + 1))}
-            disabled={isLast}
-          >
-            <Text style={[s.stepNavText, isLast && { color: C.textMuted }]}>Next</Text>
-            <Ionicons name="chevron-forward-outline" size={16} color={isLast ? C.textMuted : C.primary} />
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
   const handleNewChat = () => {
     const newId = Date.now().toString();
-    // A new conversation is a new audit session — otherwise this chat's
-    // messages append to the previous chat's audit_logs document.
-    const sessionId = resetSession();
-
-    setChats(prev => [
-      ...prev,
-      {
-        id: newId,
-        messages: [],
-        filter: null,
-        sessionId,
-      },
-    ]);
-
+    handsFree.stop();
+    setPendingPhotos([]);
+    setChats(prev => [...prev, { id: newId, messages: [], filter: null, confirmedModel: null, sessionId: resetSession() }]);
     setActiveChatId(newId);
     setShowSidebar(false);
     setInputValue('');
   };
 
   const handleSwitchChat = (id) => {
-    // Re-point the API at this chat's session so new messages land in its own
-    // audit_logs document rather than whichever chat was open last.
+    if (id !== activeChatId) { handsFree.stop(); setPendingPhotos([]); }
+    // Re-point the API at this chat's session so its messages land in its own
+    // audit_logs document.
     const target = chats.find(c => c.id === id);
     if (target?.sessionId) setSession(target.sessionId);
     setActiveChatId(id);
@@ -364,8 +379,6 @@ export default function Dashboard() {
 
   const handleDeleteChat = (id) => {
     if (chats.length === 1) {
-      // Deleting the only chat leaves a blank one — it needs its own session,
-      // not the deleted chat's.
       setChats([{ id: '1', messages: [], filter: null, sessionId: resetSession() }]);
       setActiveChatId('1');
       setShowSidebar(false);
@@ -380,21 +393,68 @@ export default function Dashboard() {
     setShowSidebar(false);
   };
 
+  // A completed wait is evidence the procedure was followed, so it is recorded
+  // against the session rather than being only a UI convenience.
+  const handleTimerComplete = useCallback((doneTimer) => {
+    const sessionId = chatsRef.current.find(c => c.id === activeChatIdRef.current)?.sessionId;
+    if (sessionId) {
+      logTimerEvent(sessionId, {
+        label: doneTimer.label,
+        seconds: doneTimer.seconds,
+        completed_at: doneTimer.completedAt,
+      }).catch(e => console.warn('[timers] could not record:', e.message));
+    }
+    const msg = `${doneTimer.label} — wait complete. You can continue.`;
+    Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Procedure timer', msg);
+  }, []);
+
+  // Summarises THIS chat's session. Each chat owns its sessionId, so the
+  // report covers one job rather than everything since app launch.
+  const handleGenerateRepairReport = async () => {
+    if (repairReportBusy) return;
+    const chat = chats.find(c => c.id === activeChatId);
+    if (!chat?.messages?.length) return;
+    if (!chat?.sessionId) {
+      setRepairReportError('This chat has no session yet. Send a message first.');
+      return;
+    }
+    setRepairReportBusy(true);
+    setRepairReportError(null);
+    setRepairReport(null);
+    try {
+      setRepairReport(await generateReport(chat.sessionId));
+    } catch (e) {
+      setRepairReportError(e.message || 'Could not generate the report.');
+    }
+    setRepairReportBusy(false);
+  };
+
+  const handleShareRepairPdf = async () => {
+    if (!repairReport || sharingRepairPdf) return;
+    setSharingRepairPdf(true);
+    try {
+      const { shared } = await shareReportPdf(repairReport);
+      if (!shared) {
+        const msg = 'Sharing is not available on this platform. The report is saved and viewable here.';
+        Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Export', msg);
+      }
+    } catch (e) {
+      const msg = e.message || 'Could not create the PDF.';
+      Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Export failed', msg);
+    }
+    setSharingRepairPdf(false);
+  };
+
+  const closeRepairReport = () => { setRepairReport(null); setRepairReportError(null); };
+
   const handleLogout = () => {
     if (Platform.OS === 'web') {
-      if (window.confirm('Are you sure you want to logout?')) {
-        AsyncStorage.removeItem('user');
-        router.replace('/login');
-      }
+      if (window.confirm('Are you sure you want to logout?')) { AsyncStorage.removeItem('user'); router.replace('/login'); }
       return;
     }
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: async () => {
-        await AsyncStorage.removeItem('user');
-        setUser(null);
-        router.replace('/login');
-      }},
+      { text: 'Logout', style: 'destructive', onPress: async () => { await AsyncStorage.removeItem('user'); setUser(null); router.replace('/login'); } },
     ]);
   };
 
@@ -403,173 +463,59 @@ export default function Dashboard() {
     return first ? first.text.slice(0, 30) + (first.text.length > 30 ? '...' : '') : 'New Chat';
   };
 
-  // ─── Horizontal scroll rule for tables ───────────────────────────────────
-  const markdownRules = {
-    table: (node, children) => (
-      <ScrollView key={node.key} horizontal nestedScrollEnabled directionalLockEnabled showsHorizontalScrollIndicator style={s.tableScroll}>
-        <View>{children}</View>
-      </ScrollView>
-    ),
+  const handleSubmitReport = async () => {
+    try {
+      await addDoc(collection(db, 'Alerts'), {
+        type: 'report',
+        title: 'Issue Reported',
+        message: reportText.trim(),
+        userEmail: user?.email || 'unknown',
+        role: user?.role || 'beginner',
+        status: 'Pending Review',
+        statusColor: '#ea580c',
+        statusBg: '#fff7ed',
+        createdAt: serverTimestamp(),
+      });
+      setShowReportModal(false);
+      setReportText('');
+      Alert.alert('Reported', 'Your issue has been sent to the admin team.');
+    } catch (e) {
+      Alert.alert('Error', 'Could not submit report. Please try again.');
+    }
   };
 
-  const SourceItem = ({ source }) => {
-    const [expanded, setExpanded] = useState(false);
-    const [selectedImage, setSelectedImage] = useState(null);
-    const hasImages = source.images && source.images.length > 0;
-
-    return (
-      <View style={s.sourceContainer}>
-
-        {/* Fullscreen Modal */}
-        <Modal
-          visible={!!selectedImage}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setSelectedImage(null)}
-        >
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)' }}>
-            {/* Close button */}
-            <TouchableOpacity
-              onPress={() => setSelectedImage(null)}
-              style={{ position: 'absolute', top: 50, right: 20, zIndex: 10 }}
-            >
-              <Ionicons name="close-circle" size={36} color="#fff" />
-            </TouchableOpacity>
-
-            {/* Zoomable ScrollView */}
-            <ScrollView
-              style={{ flex: 1 }}
-              contentContainerStyle={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
-              maximumZoomScale={5}
-              minimumZoomScale={1}
-              centerContent
-              showsHorizontalScrollIndicator={false}
-              showsVerticalScrollIndicator={false}
-            >
-              <Image
-                source={{ uri: selectedImage }}
-                style={{
-                  width: Dimensions.get('window').width,
-                  height: Dimensions.get('window').height * 0.8,
-                }}
-                resizeMode="contain"
-              />
-            </ScrollView>
-          </View>
-        </Modal>
-
-        {/* Source row toggle */}
-        <TouchableOpacity onPress={() => setExpanded(!expanded)} style={s.sourceRow}>
-          <Text style={s.sourceItem}>
-            • {source.filename || source.document_group_id}{source.page ? ` — p.${source.page}` : ''}
-          </Text>
-        </TouchableOpacity>
-
-        {/* Image dropdown */}
-        {expanded && hasImages && (
-          <View style={s.imageDropdown}>
-            {source.images.map((img, imgIdx) => (
-              <View key={imgIdx} style={s.imageCard}>
-                {img.url ? (
-                  <TouchableOpacity onPress={() => setSelectedImage(img.url)} activeOpacity={0.8}>
-                    <Image source={{ uri: img.url }} style={s.thumbnail} resizeMode="contain" />
-                    {/* Hint icon */}
-                    <View style={{
-                      position: 'absolute', bottom: 6, right: 6,
-                      backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12, padding: 4
-                    }}>
-                      <Ionicons name="expand-outline" size={14} color="#fff" />
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
-                {img.caption ? <Text style={s.imagePlaceholder}>{img.caption}</Text> : null}
-              </View>
-            ))}
-          </View>
-        )}
-
-      </View>
-    );
-  };
-
-  // ─── Bot message (own component so toggle state persists per bubble) ─────
-  const BotMessage = ({ item }) => {
-    const hasSteps = item.isProcedural && item.steps?.length > 0;
-    const [viewMode, setViewMode] = useState(hasSteps ? 'cards' : 'text');
-
-    return (
-      <View style={[s.bubble, s.bubbleBot]}>
-        {hasSteps && (
-          <View style={s.viewToggleRow}>
-            <TouchableOpacity
-              style={[s.viewToggleBtn, viewMode === 'cards' && s.viewToggleBtnActive]}
-              onPress={() => setViewMode('cards')}
-            >
-              <Text style={[s.viewToggleText, viewMode === 'cards' && s.viewToggleTextActive]}>Steps</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.viewToggleBtn, viewMode === 'text' && s.viewToggleBtnActive]}
-              onPress={() => setViewMode('text')}
-            >
-              <Text style={[s.viewToggleText, viewMode === 'text' && s.viewToggleTextActive]}>Full Text</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {hasSteps && viewMode === 'cards'
-          ? <StepCardViewer steps={item.steps} />
-          : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
-        }
-
-        {/* Timers sit outside the Steps/Full Text toggle: a mandated wait
-            applies to the job regardless of how the answer is being read. */}
-        {item.timers?.length > 0 && (
-          <View style={s.timersBox}>
-            {item.timers.map((t) => (
-              <ProcedureTimer
-                key={t.id}
-                timer={t}
-                onComplete={(done) => handleTimerComplete(item, done)}
-              />
-            ))}
-          </View>
-        )}
-
-        {item.sources?.length > 0 && (
-          <View style={s.sourcesBox}>
-            <View style={s.sourcesLabelRow}>
-              <Ionicons name="attach-outline" size={10} color="#7c3aed" />
-              <Text style={s.sourcesLabel}> SOURCES</Text>
-            </View>
-            {item.sources.map((src, i) => <SourceItem key={i} source={src} />)}
-          </View>
-        )}
-      </View>
-    );
-  };
-
-  // ─── Render message ───────────────────────────────────────────────────────
-  const renderMessage = ({ item }) => {
+  const renderMessage = useCallback(({ item }) => {
     const isUser = item.from === 'user';
+    const disabled = isProcessing || isPhotoBusy || handsFreeActive;
     return (
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
-        {isUser
-          ? (
-            <View style={[s.bubble, s.bubbleUser]}>
-              <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
-            </View>
-          )
-          : <BotMessage item={item} />
-        }
+        {isUser ? (
+          <View style={[s.bubble, s.bubbleUser]}>
+            {messagePhotos(item).length === 1 ? <PhotoThumb uri={messagePhotos(item)[0]} /> : null}
+            {messagePhotos(item).length > 1 ? (
+              <View style={s.msgPhotoGrid}>
+                {messagePhotos(item).map((uri, i) => <PhotoThumb key={i} uri={uri} small />)}
+              </View>
+            ) : null}
+            <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
+          </View>
+        ) : (
+          <BotMessage
+            item={item}
+            onAction={handleAction}
+            disabled={disabled}
+            updateMessage={updateMessage}
+            onTimerComplete={handleTimerComplete}
+          />
+        )}
       </View>
     );
-  };
+  }, [handleAction, isProcessing, isPhotoBusy, handsFreeActive, updateMessage]);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={0}>
       <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
 
-        {/* ─── Sidebar ─────────────────────────────────────────────── */}
         {showSidebar && (
           <View style={s.overlay}>
             <View style={s.sidebar}>
@@ -592,27 +538,16 @@ export default function Dashboard() {
                   </View>
                 )}
               />
-              <TouchableOpacity
-                style={s.clearAllBtn}
-                onPress={() => {
-                  if (Platform.OS === 'web') {
-                    if (window.confirm('Delete all conversations?')) {
-                      setChats([{ id: '1', messages: [] }]);
-                      setActiveChatId('1');
-                      setShowSidebar(false);
-                    }
-                    return;
-                  }
-                  Alert.alert('Clear All Chats', 'Delete all conversations?', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Clear All', style: 'destructive', onPress: () => {
-                      setChats([{ id: '1', messages: [] }]);
-                      setActiveChatId('1');
-                      setShowSidebar(false);
-                    }},
-                  ]);
-                }}
-              >
+              <TouchableOpacity style={s.clearAllBtn} onPress={() => {
+                if (Platform.OS === 'web') {
+                  if (window.confirm('Delete all conversations?')) { setChats([{ id: '1', messages: [] }]); setActiveChatId('1'); setShowSidebar(false); }
+                  return;
+                }
+                Alert.alert('Clear All Chats', 'Delete all conversations?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Clear All', style: 'destructive', onPress: () => { setChats([{ id: '1', messages: [] }]); setActiveChatId('1'); setShowSidebar(false); } },
+                ]);
+              }}>
                 <Ionicons name="trash-outline" size={14} color={C.red} />
                 <Text style={s.clearAllText}> Clear All Chats</Text>
               </TouchableOpacity>
@@ -625,37 +560,131 @@ export default function Dashboard() {
           </View>
         )}
 
-         {/* ─── Model Filter Modal ─────────────────────────────────── */}
-        <Modal
-          visible={showFilterPicker}
-          animationType="slide"
-          onRequestClose={() => setShowFilterPicker(false)}
-        >
-          <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-
-            <View style={s.filterModalHeader}>
-              <Text style={s.filterModalTitle}>
-                Ground to a model
-              </Text>
-
+        {/* ─── Report Issue Modal ───────────────────────────────────── */}
+        <Modal visible={showReportModal} animationType="slide" transparent onRequestClose={() => setShowReportModal(false)}>
+          <View style={s.reportOverlay}>
+            <View style={s.reportSheet}>
+              <View style={s.reportHeader}>
+                <Ionicons name="bug-outline" size={20} color="#ea580c" />
+                <Text style={s.reportTitle}>Report an Issue</Text>
+                <TouchableOpacity onPress={() => { setShowReportModal(false); setReportText(''); }}>
+                  <Ionicons name="close-outline" size={24} color={C.text} />
+                </TouchableOpacity>
+              </View>
+              <Text style={s.reportSub}>Describe the problem — wrong answer, missing procedure, equipment fault, etc.</Text>
+              <TextInput
+                style={s.reportInput}
+                placeholder="What went wrong or what did you notice?"
+                placeholderTextColor={C.textMuted}
+                value={reportText}
+                onChangeText={setReportText}
+                multiline
+                autoFocus
+              />
               <TouchableOpacity
-                onPress={() => setShowFilterPicker(false)}
+                style={[s.reportSubmitBtn, !reportText.trim() && s.reportSubmitBtnDisabled]}
+                disabled={!reportText.trim()}
+                onPress={handleSubmitReport}
               >
-                <Ionicons
-                  name="close-outline"
-                  size={26}
-                  color={C.text}
-                />
+                <Ionicons name="send-outline" size={14} color="#fff" />
+                <Text style={s.reportSubmitText}>Submit Report</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ─── Model Filter Modal ───────────────────────────────────── */}
+        {/* Repair report preview (distinct from the Report Issue modal above) */}
+        <Modal
+          visible={!!repairReport || !!repairReportError}
+          animationType="slide"
+          onRequestClose={closeRepairReport}
+        >
+          <SafeAreaView style={s.rrSheet} edges={['top', 'bottom']}>
+            <View style={s.rrHead}>
+              <Text style={s.rrHeadTitle}>Repair Report</Text>
+              <TouchableOpacity onPress={closeRepairReport} accessibilityLabel="Close report">
+                <Ionicons name="close" size={24} color={C.text} />
               </TouchableOpacity>
             </View>
 
-            <View style={s.filterSearchBar}>
-              <Ionicons
-                name="search-outline"
-                size={16}
-                color={C.textMuted}
-              />
+            {repairReportError ? (
+              <View style={s.rrErrBox}>
+                <Ionicons name="alert-circle-outline" size={20} color={C.red} />
+                <Text style={s.rrErrText}>{repairReportError}</Text>
+              </View>
+            ) : repairReport ? (
+              <>
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={s.rrBody}>
+                  <Text style={s.rrTitle}>{repairReport.report?.title}</Text>
+                  <View style={s.rrMetaRow}>
+                    <Text style={s.rrMeta}>{repairReport.report?.equipment}</Text>
+                    <Text style={s.rrMetaDim}>{repairReport.generated_at}</Text>
+                  </View>
 
+                  <RepairSection label="Problem Reported" text={repairReport.report?.problem_reported} />
+                  <RepairSection label="Diagnosis" text={repairReport.report?.diagnosis} />
+                  <RepairSection label="Actions Taken" items={repairReport.report?.actions_taken} empty="No actions recorded" />
+                  <RepairSection label="Parts Replaced" items={repairReport.report?.parts_replaced} empty="No parts recorded" />
+                  {!!repairReport.report?.safety_notes?.length && (
+                    <View style={s.rrSafety}>
+                      <Text style={s.rrSectionLabel}>Safety Notes</Text>
+                      {repairReport.report.safety_notes.map((n, i) => (
+                        <Text key={i} style={s.rrSafetyItem}>• {n}</Text>
+                      ))}
+                    </View>
+                  )}
+                  <RepairSection label="Outcome" text={repairReport.report?.outcome} />
+                  <RepairSection label="Follow-up" text={repairReport.report?.follow_up} />
+
+                  <Text style={s.rrSectionLabel}>Manual Sources Cited</Text>
+                  {(repairReport.sources || []).length === 0
+                    ? <Text style={s.rrEmpty}>No manual sources cited</Text>
+                    : Object.entries(
+                        (repairReport.sources || []).reduce((acc, src) => {
+                          const k = src.filename || 'Unknown';
+                          (acc[k] = acc[k] || []).push(src.page);
+                          return acc;
+                        }, {})
+                      ).map(([file, pages]) => (
+                        <Text key={file} style={s.rrSource}>
+                          {file} <Text style={s.rrMetaDim}>p. {pages.filter(x => x != null).join(', ') || '—'}</Text>
+                        </Text>
+                      ))}
+
+                  <Text style={s.rrFoot}>
+                    Summarised from {repairReport.exchange_count} logged exchange(s). Stored in Firestore as
+                    repair_reports/{repairReport.session_id}. Verify against the cited pages before acting.
+                  </Text>
+                </ScrollView>
+
+                <View style={s.rrActions}>
+                  <TouchableOpacity
+                    style={[s.rrShareBtn, sharingRepairPdf && s.rrBtnDisabled]}
+                    onPress={handleShareRepairPdf}
+                    disabled={sharingRepairPdf}
+                  >
+                    {sharingRepairPdf
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <><Ionicons name="share-outline" size={18} color="#fff" />
+                          <Text style={s.rrShareText}>  Export PDF</Text></>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+          </SafeAreaView>
+        </Modal>
+
+        <Modal visible={showFilterPicker} animationType="slide" onRequestClose={() => setShowFilterPicker(false)}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+            <View style={s.filterModalHeader}>
+              <Text style={s.filterModalTitle}>Ground to a model</Text>
+              <TouchableOpacity onPress={() => setShowFilterPicker(false)}>
+                <Ionicons name="close-outline" size={26} color={C.text} />
+              </TouchableOpacity>
+            </View>
+            <View style={s.filterSearchBar}>
+              <Ionicons name="search-outline" size={16} color={C.textMuted} />
               <TextInput
                 style={s.filterSearchInput}
                 placeholder="Search model number, brand..."
@@ -665,147 +694,25 @@ export default function Dashboard() {
                 autoFocus
               />
             </View>
-
-            <TouchableOpacity
-              style={s.filterAllOption}
-              onPress={() => handleSelectFilter(null)}
-            >
-              <Ionicons
-                name="layers-outline"
-                size={16}
-                color={C.primary}
-              />
-
-              <Text style={s.filterAllOptionText}>
-                {' '}All models (no filter)
-              </Text>
+            <TouchableOpacity style={s.filterAllOption} onPress={() => handleSelectFilter(null)}>
+              <Ionicons name="layers-outline" size={16} color={C.primary} />
+              <Text style={s.filterAllOptionText}> All models (no filter)</Text>
             </TouchableOpacity>
-
             <FlatList
               data={filteredOptions}
               keyExtractor={item => item.id}
               keyboardShouldPersistTaps="handled"
-
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={s.filterOptionRow}
-                  onPress={() => handleSelectFilter(item)}
-                >
+                <TouchableOpacity style={s.filterOptionRow} onPress={() => handleSelectFilter(item)}>
                   <View style={{ flex: 1 }}>
-
-                    <Text style={s.filterOptionLabel}>
-                      {item.label}
-                    </Text>
-
-                    {!!item.filename && (
-                      <Text
-                        style={s.filterOptionSub}
-                        numberOfLines={1}
-                      >
-                        {item.filename}
-                      </Text>
-                    )}
-
+                    <Text style={s.filterOptionLabel}>{item.label}</Text>
+                    {!!item.filename && <Text style={s.filterOptionSub} numberOfLines={1}>{item.filename}</Text>}
                   </View>
-
-                  {activeChat?.filter?.id === item.id && (
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={18}
-                      color={C.primary}
-                    />
-                  )}
+                  {activeChat?.filter?.id === item.id && <Ionicons name="checkmark-circle" size={18} color={C.primary} />}
                 </TouchableOpacity>
               )}
-
-              ListEmptyComponent={
-                <Text style={s.filterEmptyText}>
-                  No models match "{filterSearchText}"
-                </Text>
-              }
+              ListEmptyComponent={<Text style={s.filterEmptyText}>No models match "{filterSearchText}"</Text>}
             />
-
-          </SafeAreaView>
-        </Modal>
-
-        {/* ─── Repair report preview ───────────────────────────────── */}
-        <Modal
-          visible={!!reportData || !!reportError}
-          animationType="slide"
-          onRequestClose={closeReport}
-        >
-          <SafeAreaView style={s.reportSheet} edges={['top', 'bottom']}>
-            <View style={s.reportHead}>
-              <Text style={s.reportHeadTitle}>Repair Report</Text>
-              <TouchableOpacity onPress={closeReport} accessibilityLabel="Close report">
-                <Ionicons name="close" size={24} color={C.text} />
-              </TouchableOpacity>
-            </View>
-
-            {reportError ? (
-              <View style={s.reportErrBox}>
-                <Ionicons name="alert-circle-outline" size={20} color={C.red} />
-                <Text style={s.reportErrText}>{reportError}</Text>
-              </View>
-            ) : reportData ? (
-              <>
-                <ScrollView style={{ flex: 1 }} contentContainerStyle={s.reportBody}>
-                  <Text style={s.reportTitle}>{reportData.report?.title}</Text>
-                  <View style={s.reportMetaRow}>
-                    <Text style={s.reportMeta}>{reportData.report?.equipment}</Text>
-                    <Text style={s.reportMetaDim}>{reportData.generated_at}</Text>
-                  </View>
-
-                  <ReportSection label="Problem Reported" text={reportData.report?.problem_reported} />
-                  <ReportSection label="Diagnosis" text={reportData.report?.diagnosis} />
-                  <ReportSection label="Actions Taken" items={reportData.report?.actions_taken} empty="No actions recorded" />
-                  <ReportSection label="Parts Replaced" items={reportData.report?.parts_replaced} empty="No parts recorded" />
-                  {!!reportData.report?.safety_notes?.length && (
-                    <View style={s.reportSafety}>
-                      <Text style={s.reportSectionLabel}>Safety Notes</Text>
-                      {reportData.report.safety_notes.map((n, i) => (
-                        <Text key={i} style={s.reportSafetyItem}>• {n}</Text>
-                      ))}
-                    </View>
-                  )}
-                  <ReportSection label="Outcome" text={reportData.report?.outcome} />
-                  <ReportSection label="Follow-up" text={reportData.report?.follow_up} />
-
-                  <Text style={s.reportSectionLabel}>Manual Sources Cited</Text>
-                  {(reportData.sources || []).length === 0
-                    ? <Text style={s.reportEmpty}>No manual sources cited</Text>
-                    : Object.entries(
-                        (reportData.sources || []).reduce((acc, src) => {
-                          const k = src.filename || 'Unknown';
-                          (acc[k] = acc[k] || []).push(src.page);
-                          return acc;
-                        }, {})
-                      ).map(([file, pages]) => (
-                        <Text key={file} style={s.reportSource}>
-                          {file} <Text style={s.reportMetaDim}>p. {pages.filter(x => x != null).join(', ') || '—'}</Text>
-                        </Text>
-                      ))}
-
-                  <Text style={s.reportFoot}>
-                    Summarised from {reportData.exchange_count} logged exchange(s). Saved to Firestore as
-                    repair_reports/{reportData.session_id}. Verify against the cited pages before acting.
-                  </Text>
-                </ScrollView>
-
-                <View style={s.reportActions}>
-                  <TouchableOpacity
-                    style={[s.reportShareBtn, sharingPdf && s.reportBtnDisabled]}
-                    onPress={handleSharePdf}
-                    disabled={sharingPdf}
-                  >
-                    {sharingPdf
-                      ? <ActivityIndicator size="small" color="#fff" />
-                      : <><Ionicons name="share-outline" size={18} color="#fff" />
-                          <Text style={s.reportShareText}>  Export PDF</Text></>}
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : null}
           </SafeAreaView>
         </Modal>
 
@@ -820,20 +727,20 @@ export default function Dashboard() {
           </View>
           <TouchableOpacity
             style={s.newChatIconBtn}
-            onPress={handleGenerateReport}
-            disabled={isEmpty || reportBusy}
+            onPress={handleGenerateRepairReport}
+            disabled={!activeChat?.messages?.length || repairReportBusy}
             accessibilityLabel="Generate repair report"
           >
-            {reportBusy
+            {repairReportBusy
               ? <ActivityIndicator size="small" color={C.primary} />
-              : <Ionicons name="document-text-outline" size={21} color={isEmpty ? C.textMuted : C.text} />}
+              : <Ionicons name="document-text-outline" size={21}
+                  color={activeChat?.messages?.length ? C.text : C.textMuted} />}
           </TouchableOpacity>
           <TouchableOpacity style={s.newChatIconBtn} onPress={handleNewChat}>
             <Ionicons name="create-outline" size={22} color={C.text} />
           </TouchableOpacity>
         </View>
 
-        {/* ─── Role banners ────────────────────────────────────────── */}
         {isJunior && (
           <View style={[s.banner, { borderColor: C.blue, backgroundColor: C.blueBg }]}>
             <Ionicons name="bulb-outline" size={13} color={C.blue} />
@@ -872,10 +779,14 @@ export default function Dashboard() {
               directionalLockEnabled
               scrollEventThrottle={16}
               showsVerticalScrollIndicator
+              removeClippedSubviews
+              maxToRenderPerBatch={5}
+              updateCellsBatchingPeriod={50}
+              windowSize={5}
+              initialNumToRender={5}
             />
           )}
 
-          {/* ─── Typing indicator ──────────────────────────────────── */}
           {isProcessing && (
             <View style={s.typingRow}>
               <View style={s.typingBubble}>
@@ -890,102 +801,97 @@ export default function Dashboard() {
           )}
         </View>
 
-
-
-        {/* Temporary test button — commented out for presentation
-        <TouchableOpacity
-          style={{ backgroundColor: '#dc2626', padding: 10, margin: 10, borderRadius: 8, alignItems: 'center' }}
-          onPress={async () => {
-            console.log('🔵 Test button pressed');
-            try {
-              const result = await submitQuery('test query');
-              console.log('✅ Test result:', result);
-              Alert.alert('Test Success', 'Check Metro logs');
-            } catch (err) {
-              console.error('❌ Test error:', err);
-              Alert.alert('Test Failed', err.message);
-            }
-          }}
-        >
-          <Text style={{ color: 'white', fontWeight: 'bold' }}>TEST API</Text>
-        </TouchableOpacity>
-        */}
-
-
+        {/* ─── Input area ──────────────────────────────────────────── */}
         <View style={s.inputWrapper}>
+          <HandsFreeBar
+            phase={handsFree.phase}
+            level={handsFree.level}
+            floor={handsFree.floor}
+            onStop={() => handsFree.stop('Hands-free stopped.')}
+            onFinishNow={handsFree.finishNow}
+          />
+          {handsFreeNotice && !handsFree.active && (
+            <Text style={s.handsFreeNotice}>{handsFreeNotice}</Text>
+          )}
 
-          {/* Upload disabled — not yet connected to RAG */}
-          {/* {uploadedFile && (
-            ...
-          )} */}
+          {pendingPhotos.length > 0 && (
+            <View style={s.pendingPhotos}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.pendingPhotoStrip}>
+                {pendingPhotos.map((p, i) => (
+                  <View key={p.uri + i} style={s.pendingPhotoTile}>
+                    <Image source={{ uri: p.uri }} style={s.pendingPhotoImg} />
+                    <TouchableOpacity style={s.pendingPhotoRemove} onPress={() => removePendingPhoto(i)}>
+                      <Ionicons name="close-circle" size={20} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                {pendingPhotos.length < MAX_PHOTOS && (
+                  <TouchableOpacity style={s.pendingPhotoAdd} onPress={handleAttachPhoto} disabled={isPhotoBusy || isProcessing}>
+                    {isPhotoBusy ? <ActivityIndicator size="small" color={C.primary} /> : <Ionicons name="add" size={24} color={C.primary} />}
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+              <Text style={s.pendingPhotoText}>{pendingPhotos.length} of {MAX_PHOTOS} photos. Ask about them, or just send.</Text>
+            </View>
+          )}
 
           <View style={s.filterBar}>
-            <TouchableOpacity
-              style={s.filterChip}
-              onPress={() => setShowFilterPicker(true)}
-            >
-              <Ionicons
-                name="filter-outline"
-                size={13}
-                color={activeChat?.filter ? C.primary : C.textMuted}
-              />
-
-              <Text
-                style={[
-                  s.filterChipText,
-                  activeChat?.filter && {
-                    color: C.primary,
-                    fontWeight: '700',
-                  },
-                ]}
-                numberOfLines={1}
-              >
-                {activeChat?.filter
-                  ? activeChat.filter.label
-                  : 'All models (no filter)'}
+            <TouchableOpacity style={s.filterChip} onPress={() => setShowFilterPicker(true)}>
+              <Ionicons name="filter-outline" size={13} color={activeChat?.filter ? C.primary : C.textMuted} />
+              <Text style={[s.filterChipText, activeChat?.filter && { color: C.primary, fontWeight: '700' }]} numberOfLines={1}>
+                {activeChat?.filter ? activeChat.filter.label : 'All models (no filter)'}
               </Text>
             </TouchableOpacity>
-
             {activeChat?.filter && (
-              <TouchableOpacity
-                onPress={() => handleSelectFilter(null)}
-                style={s.filterClearBtn}
-              >
-                <Ionicons
-                  name="close-circle"
-                  size={16}
-                  color={C.textMuted}
-                />
+              <TouchableOpacity onPress={() => handleSelectFilter(null)} style={s.filterClearBtn}>
+                <Ionicons name="close-circle" size={16} color={C.textMuted} />
               </TouchableOpacity>
             )}
+            {activeChat?.confirmedModel && (
+              <View style={s.machineChip}>
+                <Ionicons name="hardware-chip-outline" size={13} color={C.primary} />
+                <Text style={s.machineChipText} numberOfLines={1}>{activeChat.confirmedModel}</Text>
+                <TouchableOpacity onPress={() => updateChat(activeChatId, { confirmedModel: null })}>
+                  <Ionicons name="close-circle" size={15} color={C.textMuted} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <TouchableOpacity style={s.reportChip} onPress={() => setShowReportModal(true)}>
+              <Ionicons name="bug-outline" size={13} color="#ea580c" />
+              <Text style={s.reportChipText}>Report</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.handsFreeChip, handsFree.active && s.handsFreeChipOn]}
+              onPress={toggleHandsFree}
+              disabled={!handsFree.active && (isProcessing || isPhotoBusy)}
+            >
+              <Ionicons name="headset-outline" size={13} color={handsFree.active ? '#fff' : C.primary} />
+              <Text style={[s.handsFreeChipText, handsFree.active && { color: '#fff' }]}>Hands-free</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={s.inputBar}>
-
-          <MicButton
-            style={s.iconBtn}
-            disabled={isProcessing}
-            onTranscript={(text) => setInputValue(text)}
-          />
-
+            <TouchableOpacity style={s.iconBtn} onPress={handleAttachPhoto} disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}>
+              {isPhotoBusy ? <ActivityIndicator size="small" color={C.primary} /> : <Ionicons name="camera-outline" size={20} color={C.primary} />}
+            </TouchableOpacity>
+            <MicButton style={s.iconBtn} disabled={isProcessing || handsFree.active} onTranscript={(text) => setInputValue(text)} />
             <TextInput
               style={s.input}
-              placeholder="Ask a maintenance question..."
+              placeholder={pendingPhotos.length ? 'Ask about these photos...' : 'Ask a maintenance question...'}
               placeholderTextColor={C.textMuted}
               value={inputValue}
               onChangeText={setInputValue}
               multiline
-              editable={!isProcessing}
+              editable={!isProcessing && !handsFree.active}
             />
             <TouchableOpacity
-              style={[s.sendBtn, (!inputValue.trim() || isProcessing) && s.sendBtnDisabled]}
+              style={[s.sendBtn, ((!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active) && s.sendBtnDisabled]}
               onPress={() => handleSend()}
-              disabled={!inputValue.trim() || isProcessing}
+              disabled={(!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active}
             >
               <Ionicons name="send-outline" size={16} color="#fff" />
             </TouchableOpacity>
           </View>
-
         </View>
 
       </SafeAreaView>
@@ -993,108 +899,100 @@ export default function Dashboard() {
   );
 }
 
-// Renders one report section as either a paragraph or a bullet list, so the
-// preview mirrors the PDF's structure without repeating layout code.
-function ReportSection({ label, text, items, empty }) {
+// ─── Styles ────────────────────────────────────────────────────────────
+// Styles that belong to the external BotMessage component (step viewer,
+// view toggle, sources, action chips, markdown, tableScroll) live in
+// ../components/BotMessage.js — not here.
+
+// One repair-report section: paragraph or bullet list, mirroring the PDF.
+function RepairSection({ label, text, items, empty }) {
   return (
     <>
-      <Text style={s.reportSectionLabel}>{label}</Text>
+      <Text style={s.rrSectionLabel}>{label}</Text>
       {items
         ? (items.length
-            ? items.map((it, i) => <Text key={i} style={s.reportItem}>• {it}</Text>)
-            : <Text style={s.reportEmpty}>{empty}</Text>)
-        : <Text style={s.reportText}>{text}</Text>}
+            ? items.map((it, i) => <Text key={i} style={s.rrItem}>• {it}</Text>)
+            : <Text style={s.rrEmpty}>{empty}</Text>)
+        : <Text style={s.rrText}>{text}</Text>}
     </>
   );
 }
 
 const s = StyleSheet.create({
-  timersBox:          { marginTop: 4 },
   // ── Repair report ──
-  reportSheet:        { flex: 1, backgroundColor: C.bg },
-  reportHead:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.cardBorder },
-  reportHeadTitle:    { fontSize: 16, fontWeight: '700', color: C.text },
-  reportBody:         { padding: 16, paddingBottom: 28 },
-  reportTitle:        { fontSize: 18, fontWeight: '700', color: C.text, lineHeight: 24 },
-  reportMetaRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4, marginBottom: 6 },
-  reportMeta:         { fontSize: 12, color: C.textSub, fontWeight: '600' },
-  reportMetaDim:      { fontSize: 12, color: C.textMuted },
-  reportSectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', color: C.primary, marginTop: 16, marginBottom: 5 },
-  reportText:         { fontSize: 14, color: C.text, lineHeight: 20 },
-  reportItem:         { fontSize: 14, color: C.text, lineHeight: 20, marginBottom: 2 },
-  reportEmpty:        { fontSize: 13, color: C.textMuted, fontStyle: 'italic' },
-  reportSafety:       { backgroundColor: C.orangeBg, borderLeftWidth: 3, borderLeftColor: C.orange, borderRadius: 8, padding: 10, marginTop: 6 },
-  reportSafetyItem:   { fontSize: 13, color: C.orange, lineHeight: 19, marginBottom: 2 },
-  reportSource:       { fontSize: 13, color: C.text, marginBottom: 3 },
-  reportFoot:         { fontSize: 11, color: C.textMuted, lineHeight: 16, marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.cardBorder },
-  reportActions:      { padding: 16, borderTopWidth: 1, borderTopColor: C.cardBorder, backgroundColor: C.card },
-  reportShareBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14 },
-  reportShareText:    { color: '#fff', fontWeight: '700', fontSize: 14 },
-  reportBtnDisabled:  { opacity: 0.6 },
-  reportErrBox:       { flexDirection: 'row', alignItems: 'flex-start', gap: 8, margin: 16, padding: 14, backgroundColor: C.redBg, borderRadius: 12 },
-  reportErrText:      { flex: 1, fontSize: 13, color: C.red, lineHeight: 19 },
+  rrSheet:        { flex: 1, backgroundColor: C.bg },
+  rrHead:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.cardBorder },
+  rrHeadTitle:    { fontSize: 16, fontWeight: '700', color: C.text },
+  rrBody:         { padding: 16, paddingBottom: 28 },
+  rrTitle:        { fontSize: 18, fontWeight: '700', color: C.text, lineHeight: 24 },
+  rrMetaRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4, marginBottom: 6 },
+  rrMeta:         { fontSize: 12, color: C.textSub, fontWeight: '600' },
+  rrMetaDim:      { fontSize: 12, color: C.textMuted },
+  rrSectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', color: C.primary, marginTop: 16, marginBottom: 5 },
+  rrText:         { fontSize: 14, color: C.text, lineHeight: 20 },
+  rrItem:         { fontSize: 14, color: C.text, lineHeight: 20, marginBottom: 2 },
+  rrEmpty:        { fontSize: 13, color: C.textMuted, fontStyle: 'italic' },
+  rrSafety:       { backgroundColor: C.orangeBg, borderLeftWidth: 3, borderLeftColor: C.orange, borderRadius: 8, padding: 10, marginTop: 6 },
+  rrSafetyItem:   { fontSize: 13, color: C.orange, lineHeight: 19, marginBottom: 2 },
+  rrSource:       { fontSize: 13, color: C.text, marginBottom: 3 },
+  rrFoot:         { fontSize: 11, color: C.textMuted, lineHeight: 16, marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.cardBorder },
+  rrActions:      { padding: 16, borderTopWidth: 1, borderTopColor: C.cardBorder, backgroundColor: C.card },
+  rrShareBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14 },
+  rrShareText:    { color: '#fff', fontWeight: '700', fontSize: 14 },
+  rrBtnDisabled:  { opacity: 0.6 },
+  rrErrBox:       { flexDirection: 'row', alignItems: 'flex-start', gap: 8, margin: 16, padding: 14, backgroundColor: C.redBg, borderRadius: 12 },
+  rrErrText:      { flex: 1, fontSize: 13, color: C.red, lineHeight: 19 },
 
-  safe:             { flex: 1, backgroundColor: C.bg },
-  overlay:          { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: 'row' },
-  overlayBg:        { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sidebar:          { width: 280, backgroundColor: C.card, paddingTop: 50, paddingHorizontal: 16, paddingBottom: 20 },
-  sidebarTitle:     { color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 16 },
-  newChatBtn:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, marginBottom: 16 },
-  newChatText:      { color: '#fff', fontWeight: '700', fontSize: 14 },
-  chatItem:         { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, marginBottom: 6, backgroundColor: C.bg },
-  clearAllBtn:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 10, marginTop: 8, marginBottom: 8 },
-  clearAllText:     { color: C.red, fontWeight: '700', fontSize: 12 },
-  chatItemActive:   { backgroundColor: C.primaryLight },
-  chatItemText:     { color: C.text, fontSize: 13, flex: 1 },
-  logoutSidebar:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 'auto', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 12 },
-  logoutSidebarText:{ color: C.red, fontWeight: '700', fontSize: 13 },
-  header:           { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card },
-  menuBtn:          { padding: 6 },
-  headerTitle:      { color: C.text, fontWeight: '700', fontSize: 16 },
-  headerRole:       { color: C.primary, fontSize: 10, fontWeight: '700', marginTop: 1 },
-  newChatIconBtn:   { padding: 6 },
-  banner:           { flexDirection: 'row', alignItems: 'center', borderWidth: 1, padding: 10, paddingHorizontal: 16 },
-  bannerText:       { fontSize: 11, lineHeight: 16, flex: 1 },
-  messageArea:      { flex: 1 },
-  welcomeContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
-  logoCircle:       { width: 80, height: 80, borderRadius: 40, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  welcomeTitle:     { color: C.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
-  welcomeSub:       { color: C.textSub, fontSize: 14, textAlign: 'center', marginBottom: 4 },
-  welcomeSub2:      { color: C.textMuted, fontSize: 12, textAlign: 'center' },
-  msgFlatList:      { flex: 1 },
-  msgList:          { padding: 16, paddingBottom: 12 },
-  msgRow:           { flexDirection: 'row', marginBottom: 14 },
-  msgRowUser:       { justifyContent: 'flex-end' },
-  msgRowBot:        { justifyContent: 'flex-start' },
-  bubble:           { maxWidth: '88%', borderRadius: 18, padding: 12 },
-  bubbleUser:       { backgroundColor: C.primary, borderBottomRightRadius: 4 },
-  bubbleBot:        { backgroundColor: C.card, borderWidth: 1, borderColor: C.cardBorder, borderBottomLeftRadius: 4 },
-  bubbleText:       { color: C.text, fontSize: 14, lineHeight: 20 },
-  bubbleTextUser:   { color: '#fff' },
-  sourcesBox:       { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: '#ddd6fe' },
-  sourcesLabelRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  sourcesLabel:     { fontSize: 9, fontWeight: '700', color: '#7c3aed', letterSpacing: 1 },
-  sourceContainer:  { marginBottom: 8 },
-  sourceRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
-  sourceItem:       { fontSize: 11, color: '#6d28d9', marginBottom: 2 },
-  imageDropdown:    { marginTop: 6, marginLeft: 12, padding: 8, backgroundColor: '#f9f9ff', borderRadius: 8, borderWidth: 1, borderColor: '#e0e7ff' },
-  imageCard:        { marginBottom: 8, padding: 6, backgroundColor: '#fff', borderRadius: 6, alignItems: 'center' },
-  imagePlaceholder: { fontSize: 12, color: '#6b7280' },
-  tableScroll:      { marginVertical: 8 },
-  typingRow:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
-  typingBubble:     { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 16, padding: 10, gap: 8, borderWidth: 1, borderColor: C.cardBorder, flex: 1 },
-  typingText:       { color: C.textMuted, fontSize: 12 },
-  cancelBtn:        { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
-  cancelText:       { color: '#f87171', fontSize: 12, fontWeight: '700' },
-  inputWrapper:     { backgroundColor: C.card, borderTopWidth: 1, borderColor: C.cardBorder, paddingBottom: 0 },
-  fileBadge:        { flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginTop: 8, backgroundColor: C.primaryLight, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6, gap: 8 },
-  fileBadgeText:    { color: C.primary, fontSize: 12, flex: 1, fontWeight: '600' },
-  inputBar:         { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
-  iconBtn:          { width: 36, height: 36, borderRadius: 18, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-  input:            { flex: 1, backgroundColor: C.inputBg, color: C.text, borderRadius: 20, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 120 },
-  sendBtn:          { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-  sendBtnDisabled:  { backgroundColor: '#c4b5fd' },
-  thumbnail:        { width: 220, height: 160, borderRadius: 6, marginTop: 4 },
+  safe:               { flex: 1, backgroundColor: C.bg },
+  overlay:            { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: 'row' },
+  overlayBg:          { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  sidebar:            { width: 280, backgroundColor: C.card, paddingTop: 50, paddingHorizontal: 16, paddingBottom: 20 },
+  sidebarTitle:       { color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 16 },
+  newChatBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, marginBottom: 16 },
+  newChatText:        { color: '#fff', fontWeight: '700', fontSize: 14 },
+  chatItem:           { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, marginBottom: 6, backgroundColor: C.bg },
+  chatItemActive:     { backgroundColor: C.primaryLight },
+  chatItemText:       { color: C.text, fontSize: 13, flex: 1 },
+  clearAllBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 10, marginTop: 8, marginBottom: 8 },
+  clearAllText:       { color: C.red, fontWeight: '700', fontSize: 12 },
+  logoutSidebar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 'auto', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 12 },
+  logoutSidebarText:  { color: C.red, fontWeight: '700', fontSize: 13 },
+  header:             { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card },
+  menuBtn:            { padding: 6 },
+  headerTitle:        { color: C.text, fontWeight: '700', fontSize: 16 },
+  headerRole:         { color: C.primary, fontSize: 10, fontWeight: '700', marginTop: 1 },
+  newChatIconBtn:     { padding: 6 },
+  banner:             { flexDirection: 'row', alignItems: 'center', borderWidth: 1, padding: 10, paddingHorizontal: 16 },
+  bannerText:         { fontSize: 11, lineHeight: 16, flex: 1 },
+  messageArea:        { flex: 1 },
+  welcomeContainer:   { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  logoCircle:         { width: 80, height: 80, borderRadius: 40, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  welcomeTitle:       { color: C.text, fontSize: 22, fontWeight: '700', marginBottom: 8 },
+  welcomeSub:         { color: C.textSub, fontSize: 14, textAlign: 'center', marginBottom: 4 },
+  welcomeSub2:        { color: C.textMuted, fontSize: 12, textAlign: 'center' },
+  msgFlatList:        { flex: 1 },
+  msgList:            { padding: 16, paddingBottom: 12 },
+  msgRow:             { flexDirection: 'row', marginBottom: 14 },
+  msgRowUser:         { justifyContent: 'flex-end' },
+  msgRowBot:          { justifyContent: 'flex-start' },
+  bubble:             { maxWidth: '88%', borderRadius: 18, padding: 12 },
+  bubbleUser:         { backgroundColor: C.primary, borderBottomRightRadius: 4 },
+  bubbleText:         { color: C.text, fontSize: 14, lineHeight: 20 },
+  bubbleTextUser:     { color: '#fff' },
+  msgPhoto:           { width: 200, height: 150, borderRadius: 10, marginBottom: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
+  msgPhotoSmall:      { width: 96, height: 96, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.2)' },
+  msgPhotoGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6, maxWidth: 196 },
+  typingRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+  typingBubble:       { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 16, padding: 10, gap: 8, borderWidth: 1, borderColor: C.cardBorder, flex: 1 },
+  typingText:         { color: C.textMuted, fontSize: 12 },
+  cancelBtn:          { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  cancelText:         { color: '#f87171', fontSize: 12, fontWeight: '700' },
+  inputWrapper:       { backgroundColor: C.card, borderTopWidth: 1, borderColor: C.cardBorder, paddingBottom: 0 },
+  inputBar:           { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
+  iconBtn:            { width: 36, height: 36, borderRadius: 18, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  input:              { flex: 1, backgroundColor: C.inputBg, color: C.text, borderRadius: 20, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 16, paddingVertical: 10, fontSize: 14, maxHeight: 120 },
+  sendBtn:            { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  sendBtnDisabled:    { backgroundColor: '#c4b5fd' },
   filterBar:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, gap: 6 },
   filterChip:         { flexDirection: 'row', alignItems: 'center', backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, gap: 4, flexShrink: 1 },
   filterChipText:     { fontSize: 12, color: C.textSub, flexShrink: 1 },
@@ -1110,44 +1008,30 @@ const s = StyleSheet.create({
   filterOptionSub:    { color: C.textMuted, fontSize: 11, marginTop: 2 },
   filterEmptyText:    { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 24 },
 
-  // ─── Step card viewer ──────────────────────────────────────────────
-  stepViewer:          { marginTop: 4 },
-  stepProgressRow:     { flexDirection: 'row', gap: 4, marginBottom: 6, flexWrap: 'wrap' },
-  stepDot:             { width: 6, height: 6, borderRadius: 3, backgroundColor: C.cardBorder },
-  stepDotActive:       { backgroundColor: C.primary, width: 16 },
-  stepCounter:         { fontSize: 11, color: C.textMuted, marginBottom: 8, fontWeight: '600' },
-  stepCard:            { borderWidth: 1, borderRadius: 12, padding: 12, backgroundColor: C.bg },
-  stepWarningBanner:   { flexDirection: 'row', alignItems: 'center', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 8, alignSelf: 'flex-start' },
-  stepWarningText:     { fontSize: 10, fontWeight: '700' },
-  stepTitle:           { fontSize: 15, fontWeight: '700', color: C.text, marginBottom: 6 },
-  stepDescription:     { fontSize: 13, color: C.text, lineHeight: 19 },
-  stepToolsRow:        { flexDirection: 'row', alignItems: 'center', marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: C.cardBorder },
-  stepToolsText:       { fontSize: 11, color: C.textMuted },
-  stepNavRow:          { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, gap: 8 },
-  stepNavBtn:          { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: 1, borderColor: C.primary, borderRadius: 10, paddingVertical: 8 },
-  stepNavBtnDisabled:  { borderColor: C.cardBorder, opacity: 0.5 },
-  stepNavText:         { fontSize: 12, fontWeight: '700', color: C.primary },
+  machineChip:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6, flexShrink: 1 },
+  machineChipText:    { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
+  handsFreeChip:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: C.primary },
+  handsFreeChipOn:    { backgroundColor: C.primary },
+  handsFreeChipText:  { fontSize: 12, color: C.primary, fontWeight: '700' },
+  handsFreeNotice:    { marginHorizontal: 12, marginTop: 6, color: C.textMuted, fontSize: 12 },
 
-  // ─── View mode toggle ──────────────────────────────────────────────
-  viewToggleRow:       { flexDirection: 'row', gap: 6, marginBottom: 10 },
-  viewToggleBtn:       { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: C.bg },
-  viewToggleBtnActive: { backgroundColor: C.primaryLight },
-  viewToggleText:      { fontSize: 11, color: C.textMuted, fontWeight: '600' },
-  viewToggleTextActive:{ color: C.primary },
+  reportChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#ea580c', backgroundColor: '#fff7ed' },
+  reportChipText:     { fontSize: 12, color: '#ea580c', fontWeight: '700' },
+  reportOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  reportSheet:        { backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 14 },
+  reportHeader:       { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  reportTitle:        { flex: 1, fontSize: 17, fontWeight: '700', color: C.text },
+  reportSub:          { color: C.textMuted, fontSize: 13, lineHeight: 18 },
+  reportInput:        { backgroundColor: C.inputBg, borderWidth: 1, borderColor: C.inputBorder, borderRadius: 12, padding: 12, color: C.text, fontSize: 14, minHeight: 100, textAlignVertical: 'top' },
+  reportSubmitBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#ea580c', borderRadius: 12, paddingVertical: 14 },
+  reportSubmitBtnDisabled: { backgroundColor: '#fdba74' },
+  reportSubmitText:   { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  pendingPhotos:      { marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight, gap: 6 },
+  pendingPhotoStrip:  { gap: 8, alignItems: 'center' },
+  pendingPhotoTile:   { width: 64, height: 64 },
+  pendingPhotoImg:    { width: 64, height: 64, borderRadius: 8 },
+  pendingPhotoRemove: { position: 'absolute', top: -2, right: -2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12 },
+  pendingPhotoAdd:    { width: 64, height: 64, borderRadius: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  pendingPhotoText:   { color: C.primary, fontSize: 12, fontWeight: '600' },
 });
-
-const markdownStyles = {
-  body:         { color: C.text, fontSize: 14, lineHeight: 20 },
-  strong:       { fontWeight: '700' },
-  bullet_list:  { marginVertical: 4 },
-  ordered_list: { marginVertical: 4 },
-  code_inline:  { backgroundColor: '#f3f4f6', borderRadius: 4, paddingHorizontal: 4, fontFamily: 'monospace', fontSize: 12 },
-  fence:        { backgroundColor: '#f3f4f6', borderRadius: 8, padding: 10, fontSize: 12, fontFamily: 'monospace' },
-  heading1:     { fontSize: 18, fontWeight: '700', marginVertical: 6 },
-  heading2:     { fontSize: 16, fontWeight: '700', marginVertical: 4 },
-  table:        { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 8, marginVertical: 4 },
-  thead:        { backgroundColor: C.primaryLight },
-  th:           { padding: 8, fontWeight: '700', fontSize: 12, color: C.primaryText, borderRightWidth: 1, borderColor: C.cardBorder, minWidth: 100 },
-  tr:           { borderBottomWidth: 1, borderColor: C.cardBorder, flexDirection: 'row' },
-  td:           { padding: 8, fontSize: 12, color: C.text, borderRightWidth: 1, borderColor: C.cardBorder, minWidth: 100 },
-};

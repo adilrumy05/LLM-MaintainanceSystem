@@ -9,6 +9,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { C } from '../theme';
 import { useUser } from './_layout';
+import { Ionicons } from '@expo/vector-icons';
 
 // ---------------------------------------------------------------------------
 // Dynamic import for PDF/CSV sharing – falls back gracefully
@@ -358,25 +359,28 @@ export default function Documents() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.header}>
-        <View>
-          <Text selectable style={styles.pageTitle}>RAG Document Library</Text>
-          <Text selectable style={styles.pageSub}>{documents.length} total documents</Text>
-        </View>
-        <TouchableOpacity style={styles.refreshBtn} onPress={handleRefresh}>
-          <Text style={styles.refreshText}>↻</Text>
-        </TouchableOpacity>
-      </View>
+   <View style={styles.header}>
+  <TouchableOpacity onPress={() => router.push('/admin')} style={styles.backBtn}>
+    <Ionicons name="chevron-back" size={22} color={C.primary} />
+  </TouchableOpacity>
+  <View>
+    <Text selectable style={styles.pageTitle}>RAG Document Library</Text>
+    <Text selectable style={styles.pageSub}>{documents.length} total documents</Text>
+  </View>
+  <TouchableOpacity style={styles.refreshBtn} onPress={handleRefresh}>
+    <Text style={styles.refreshText}>↻</Text>
+  </TouchableOpacity>
+</View>
 
-      <View style={styles.searchWrap}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search by file name or group..."
-          placeholderTextColor={C.textMuted}
-          value={search}
-          onChangeText={setSearch}
-        />
-      </View>
+<View style={styles.searchWrap}>
+  <TextInput
+    style={styles.searchInput}
+    placeholder="Search by file name or group..."
+    placeholderTextColor={C.textMuted}
+    value={search}
+    onChangeText={setSearch}
+  />
+</View>
 
       {groups.length > 0 && renderChips()}
 
@@ -659,4 +663,5 @@ const styles = StyleSheet.create({
     color: C.primary,
     fontSize: 11,
   },
+backBtn: { padding: 4 },
 });

@@ -92,8 +92,8 @@ class VectorStore:
     ):
         from qdrant_client import QdrantClient
 
-        self.url     = url     or os.getenv("QDRANT_URL",     "http://localhost:6333")
-        self.api_key = api_key or os.getenv("QDRANT_API_KEY", None)
+        self.url     = url     or os.getenv("QDRANT_URL")
+        self.api_key = api_key or os.getenv("QDRANT_API_KEY")
         self.collection = COLLECTION_NAME
 
         self.client = QdrantClient(

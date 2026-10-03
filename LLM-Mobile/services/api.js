@@ -1,6 +1,9 @@
+// LLM-Mobile\services\api.js
+
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { File } from 'expo-file-system';
 import { db } from '../firebaseConfig';
 
 import {
@@ -52,9 +55,8 @@ const getApiUrl = () => {
 
 export const API_URL = getApiUrl();
 
-console.log('[API] Platform:', Platform.OS);
-console.log('[API] Expo host:', Constants.expoConfig?.hostUri || 'Not detected');
-console.log('[API] Backend URL:', API_URL);
+
+
 
 // ─────────────────────────────────────────────
 // SESSION
@@ -78,7 +80,6 @@ let currentSessionId = generateSessionId();
 // Start a new session and return its id so the caller can store it on a chat.
 export const resetSession = () => {
   currentSessionId = generateSessionId();
-  console.log('[API] New session:', currentSessionId);
   return currentSessionId;
 };
 
@@ -87,7 +88,6 @@ export const resetSession = () => {
 export const setSession = (sessionId) => {
   if (!sessionId) return currentSessionId;
   currentSessionId = sessionId;
-  console.log('[API] Session set:', currentSessionId);
   return currentSessionId;
 };
 
@@ -139,10 +139,53 @@ export const getFilters = async () => {
 };
 
 // ─────────────────────────────────────────────
+// RESPONSE TEXT
+// ─────────────────────────────────────────────
+
+// The backend HTML-escapes every string it returns. Markdown rendering decodes
+// these on screen, but plain Text and text-to-speech do not - a spoken answer
+// would otherwise read "ampersand hash 39" aloud.
+export const decodeEntities = (text) =>
+  typeof text === 'string'
+    ? text
+        .replace(/&#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+    : text;
+
+// ─────────────────────────────────────────────
 // MAIN COPILOT QUERY
 // ─────────────────────────────────────────────
 
-export const submitQuery = async (query, docGroup = null) => {
+/**
+ * @param {string} query
+ * @param {object} [options]
+ * @param {string} [options.docGroup]       manual selected in the filter
+ * @param {string[]} [options.images]      up to 4 JPEGs as raw base64, no data-URL prefix
+ * @param {string} [options.imageBase64]    a single photo (older form of `images`)
+ * @param {string} [options.confirmedModel] machine confirmed in this chat
+ * @param {boolean} [options.voice]         ask for a spoken form of the answer
+ *
+ * Also accepts a document group string as the second argument, the original
+ * signature.
+ *
+ * Failed requests throw an Error carrying `code`, `retryable`, `imageAttached`
+ * and `status` from the server, so the app can offer Retry or Retake.
+ */
+export const submitQuery = async (query, options = {}) => {
+  const opts = options === null || typeof options === 'string' ? { docGroup: options } : options;
+  const {
+    docGroup = null,
+    images: imageList = null,
+    imageBase64: singleImage = null,
+    confirmedModel = null,
+    voice = false,
+  } = opts;
+  const images = imageList?.length ? imageList : singleImage ? [singleImage] : [];
+  const imageBase64 = images.length > 0;
+
   const fullUrl = `${API_URL}/query`;
 
   let authHeader = {};
@@ -175,10 +218,12 @@ export const submitQuery = async (query, docGroup = null) => {
     console.warn('[API] Failed to load auth token:', error);
   }
 
-  console.log('[API] Sending query to:', fullUrl);
-  console.log('[API] Role:', userRole);
-  console.log('[API] Session:', currentSessionId);
-  console.log('[API] Document group:', docGroup || 'ALL');
+
+  if (imageBase64) {
+    const kb = images.reduce((sum, b64) => sum + (b64.length * 3) / 4, 0) / 1024;
+
+  }
+
 
   try {
     const response = await fetchWithTimeout(
@@ -198,6 +243,9 @@ export const submitQuery = async (query, docGroup = null) => {
 
           // Only send when manually selected
           ...(docGroup ? { docGroup } : {}),
+          ...(imageBase64 ? { images } : {}),
+          ...(confirmedModel ? { confirmedModel } : {}),
+          ...(voice ? { voice: true } : {}),
         }),
       },
       120000
@@ -217,17 +265,20 @@ export const submitQuery = async (query, docGroup = null) => {
         (details ? JSON.stringify(details) : null) ||
         `HTTP ${response.status}`;
 
-      throw new Error(message);
+      const err = new Error(decodeEntities(message));
+      err.status = response.status;
+      err.code = errBody?.code || null;
+      err.retryable = Boolean(errBody?.retryable);
+      err.imageAttached = Boolean(errBody?.imageAttached || imageBase64);
+      throw err;
     }
 
     const data = await response.json();
 
-    console.log('[API] Query successful');
+  
 
     if (data?.sources) {
-      console.log(
-        `[API] Received ${data.sources.length} source(s)`
-      );
+
     }
 
     // ─────────────────────────────────────────
@@ -250,6 +301,8 @@ export const submitQuery = async (query, docGroup = null) => {
           userEmail,
           role: userRole,
           sources: data.sources || [],
+          imageAttached: imageBase64,
+          imageCount: images.length,
           createdAt: serverTimestamp(),
         }
       );
@@ -267,9 +320,7 @@ export const submitQuery = async (query, docGroup = null) => {
               data.alert.title ||
               'Maintenance Alert',
             message:
-              `${userRole.toUpperCase()} · ` +
-              `"${query.slice(0, 80)}" — ` +
-              `${data.alert.reason || ''}`,
+            `${data.alert.reason || ''} · Query: ${query.slice(0, 80)}`,
             status: isCritical
               ? 'Requires Immediate Review'
               : 'Pending Review',
@@ -286,11 +337,7 @@ export const submitQuery = async (query, docGroup = null) => {
           }
         );
 
-        console.log(
-          `[ALERT AGENT] ${
-            data.alert.level?.toUpperCase() || 'UNKNOWN'
-          } alert logged`
-        );
+
       }
     } catch (error) {
       // Firebase failure must not break Copilot
@@ -306,9 +353,13 @@ export const submitQuery = async (query, docGroup = null) => {
     if (error?.name === 'AbortError') {
       console.error('[API] Request timed out:', fullUrl);
 
-      throw new Error(
+      const err = new Error(
         'Request timed out. Please check that the backend and retrieval service are running.'
       );
+      err.code = 'timeout';
+      err.retryable = true;
+      err.imageAttached = Boolean(imageBase64);
+      throw err;
     }
 
     console.error('[API] Query failed:', error);
@@ -325,15 +376,30 @@ export const submitQuery = async (query, docGroup = null) => {
 export const transcribeAudio = async (localUri) => {
   const fullUrl = `${API_URL}/transcribe`;
 
-  console.log('[API] Sending audio to:', fullUrl);
+
 
   const formData = new FormData();
 
-  formData.append('audio', {
-    uri: localUri,
-    name: 'recording.m4a',
-    type: 'audio/m4a',
-  });
+  // SDK 57 installs expo/fetch as the global fetch, and its FormData encoder
+  // rejects React Native's { uri, name, type } parts with "Unsupported
+  // FormDataPart implementation". It accepts objects that expose bytes(),
+  // which expo-file-system's File does. The server renames the upload to
+  // audio.m4a before transcription, so the part's filename is not load-bearing.
+  if (Platform.OS === 'web') {
+    formData.append('audio', {
+      uri: localUri,
+      name: 'recording.m4a',
+      type: 'audio/m4a',
+    });
+  } else {
+    const recording = new File(localUri);
+    // Fail with a clear message if the recorder produced nothing, rather than
+    // uploading an empty part and getting an opaque transcription error back.
+    if (!recording.exists || !recording.size) {
+      throw new Error('The recording is empty. Hold the mic a little longer and try again.');
+    }
+    formData.append('audio', recording);
+  }
 
   try {
     const response = await fetchWithTimeout(

@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, FlatList, ScrollView, TouchableOpacity, ActivityIndicator,
-  StyleSheet, LayoutAnimation, Platform, UIManager, TextInput, RefreshControl,
+  StyleSheet, LayoutAnimation, Platform, TextInput, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { collection, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore';
@@ -11,9 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useUser } from './_layout';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const formatTime = (date) => {
@@ -48,12 +46,14 @@ const TYPE_CONFIG = {
   priority: { label: 'Priority', labelColor: '#d97706', bg: '#fffbeb', iconName: 'flag-outline'              },
   share:    { label: 'Info',     labelColor: '#16a34a', bg: '#f0fdf4', iconName: 'information-circle-outline' },
   info:     { label: 'System',   labelColor: '#2563eb', bg: '#eff6ff', iconName: 'search-outline'            },
+  report:   { label: 'Report',   labelColor: '#ea580c', bg: '#fff7ed', iconName: 'bug-outline'               },
 };
 
 const TABS = [
   { key: 'all',      label: 'All',      iconName: 'apps-outline'               },
   { key: 'alert',    label: 'Alerts',   iconName: 'warning-outline'            },
   { key: 'priority', label: 'Priority', iconName: 'flag-outline'               },
+  { key: 'report',   label: 'Reports',  iconName: 'bug-outline'                },
   { key: 'info',     label: 'System',   iconName: 'information-circle-outline' },
 ];
 
