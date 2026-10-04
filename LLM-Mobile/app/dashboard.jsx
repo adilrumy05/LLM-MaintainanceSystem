@@ -1,11 +1,7 @@
 // app/(tabs)/index.js
 
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity, FlatList, Modal,
-  ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,
-  Platform, Image, ScrollView,
-} from 'react-native';
+import {View, Text, TextInput, TouchableOpacity, FlatList, Modal,ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,Platform, Image, ScrollView,} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';

@@ -553,18 +553,93 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     const retrievalData = { context_blocks: merged.context_blocks, sources: merged.sources };
 
     // ── Call 2: cheap structured extraction FROM the finished answer ─────────
-    // Now also given the list of images available across every retrieval
+    // Given the list of reference images available across every retrieval
     // round, so a step that matches one can carry it through to the app.
+    // Also decides which steps should ask the technician for a verification photo.
     let isProcedural = false;
     let steps = [];
 
-    const availableImages = merged.context_blocks
-      .filter((b) => b.chunk_type === 'image' && b.image_url)
-      .map((b) => ({ id: b.chunk_id, page: b.page, caption: (b.text || '').slice(0, 150) }));
+    // Debug: what retrieval actually returned.
+    console.log('\n========== RETRIEVED CONTEXT BLOCKS ==========');
+    console.log(`Total blocks: ${merged.context_blocks.length}`);
+    merged.context_blocks.forEach((b, index) => {
+      console.log(`\nBlock ${index + 1}:`);
+      console.log('  chunk_type:', b.chunk_type);
+      console.log('  chunk_id:', b.chunk_id);
+      console.log('  page:', b.page);
+      console.log('  image_url:', b.image_url || 'NONE');
+      console.log('  text:', (b.text || '').slice(0, 200));
+    });
+    console.log('==============================================\n');
+
+    // ── Build available reference images ─────────────────────────────────────
+    // Images can come from two places:
+    //   1. context_blocks[].image_url      (image chunks returned by retrieval)
+    //   2. sources[].images[].url          (images the retrieval service attaches
+    //                                       to a source from Firebase Storage,
+    //                                       even when no image chunk was returned)
+    // Both are collected here, deduped by URL.
+    const availableImages = [];
+
+    // 1. Images directly returned as image context blocks.
+    for (const b of merged.context_blocks || []) {
+      if (b.chunk_type === 'image' && b.image_url) {
+        availableImages.push({
+          id: b.chunk_id,
+          page: b.page,
+          caption: (b.text || '').slice(0, 150),
+          url: b.image_url,
+          source: 'context_block',
+        });
+      }
+    }
+
+    // 2. Images attached to retrieved sources.
+    for (const src of merged.sources || []) {
+      for (const img of src.images || []) {
+        if (!img?.url) continue;
+
+        // Stable internal id for the source image.
+        const imageId =
+          `source-image-${src.document_group_id || 'doc'}-` +
+          `${src.page || 'page'}-` +
+          Buffer.from(img.url)
+            .toString('base64')
+            .replace(/[^a-zA-Z0-9]/g, '')
+            .slice(-40);
+
+        const alreadyExists = availableImages.some((existing) => existing.url === img.url);
+
+        if (!alreadyExists) {
+          availableImages.push({
+            id: imageId,
+            page: src.page,
+            caption: img.caption || img.description || `Reference image from page ${src.page}`,
+            url: img.url,
+            source: 'source_metadata',
+          });
+        }
+      }
+    }
+
+    console.log('\n========== AVAILABLE REFERENCE IMAGES ==========');
+    console.log(`Found ${availableImages.length} image(s)`);
+    availableImages.forEach((img, index) => {
+      console.log(`Image ${index + 1}:`);
+      console.log('  ID:', img.id);
+      console.log('  Page:', img.page);
+      console.log('  Source:', img.source);
+      console.log('  URL:', img.url);
+      console.log('  Caption:', img.caption);
+    });
+    console.log('===============================================\n');
 
     try {
+      // The model only ever sees id / page / caption — never the URL.
       const stepUserContent = availableImages.length
-        ? `${text}\n\n=== AVAILABLE REFERENCE IMAGES ===\n${JSON.stringify(availableImages)}`
+        ? `${text}\n\n=== AVAILABLE REFERENCE IMAGES ===\n${JSON.stringify(
+            availableImages.map((img) => ({ id: img.id, page: img.page, caption: img.caption }))
+          )}`
         : text;
 
       const stepResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -577,12 +652,41 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
               role: 'system',
               content: `You extract structured step breakdowns from maintenance answers. Given the answer text below, determine if it describes a procedure, troubleshooting flow, checklist, or multi-step task. If so, break it into atomic steps without changing the meaning or adding new information. If it is not procedural, return an empty steps array.
 
-If a list of AVAILABLE REFERENCE IMAGES is provided (each with an id, page, and short caption), set a step's image_id to the id of the one image that clearly illustrates that specific step — e.g. a wiring step matches a schematic image, an installation step matches an installation-diagram image. Only set it when genuinely confident; otherwise use an empty string. Never invent an id that isn't in the list.`,
+If a list of AVAILABLE REFERENCE IMAGES is provided (each with an id, page, and short caption), set a step's image_id to the id of the one image that clearly illustrates that specific step. For example:
+- A wiring step should match a wiring schematic or wiring diagram.
+- An installation step should match an installation diagram.
+- A verification/checking step should match an image that allows the technician to visually verify the required condition.
+Only set image_id when the image genuinely relates to that specific step. If no image clearly applies, use an empty string. Never invent an image_id that is not present in AVAILABLE REFERENCE IMAGES. Do not put image URLs directly into image_id.
+
+TECHNICIAN VERIFICATION PHOTOS (photo_required / photo_instruction):
+These fields are SEPARATE from image_id. image_id is a reference image from the manual. photo_required asks the technician to take their OWN photo as a record of the result.
+
+Be CONSERVATIVE. Set photo_required to true ONLY when the step produces a visible result or condition that a photo can usefully record, for example:
+- a surface, floor, filter, drain or work area has been cleaned or cleared
+- a part has been installed, seated, connected or fitted and its final position is visible
+- a visible condition has been restored or corrected (cover refitted, guard in place, wiring tidy and secured)
+- a visible fault, damage, leak or wear is being checked and should be documented
+
+Set photo_required to false for everything else, including:
+- switching off, isolating or locking out power (LOTO)
+- gathering tools, PPE or materials
+- waiting, timing or cooling-down steps
+- reading a gauge, measuring a value or entering a setting
+- steps whose outcome is not visible
+- general reminders, safety notes or "contact a technician" steps
+
+Most procedures should have only a few photo steps, and many should have none. Never set photo_required to true on most or all steps. When unsure, use false.
+
+When photo_required is true, photo_instruction must be one short sentence saying exactly what the photo should show (for example "Take a photo showing the cleaned filter before it is refitted."). When photo_required is false, photo_instruction must be an empty string.
+
+Do not invent new steps for photos and do not change a step's meaning because of them.`,
             },
             { role: 'user', content: stripTimerMarkers(stepUserContent) },
           ],
           temperature: 0,
-          max_tokens: 1500,
+          // Raised from 1500: each step now carries two extra fields, and a
+          // truncated response would break JSON.parse.
+          max_tokens: 2500,
           response_format: {
             type: 'json_schema',
             json_schema: {
@@ -602,8 +706,18 @@ If a list of AVAILABLE REFERENCE IMAGES is provided (each with an id, page, and 
                         warning_level: { type: 'string', enum: ['none', 'caution', 'critical'] },
                         tools_required: { type: 'array', items: { type: 'string' } },
                         image_id: { type: 'string' },
+                        photo_required: { type: 'boolean' },
+                        photo_instruction: { type: 'string' },
                       },
-                      required: ['title', 'description', 'warning_level', 'tools_required', 'image_id'],
+                      required: [
+                        'title',
+                        'description',
+                        'warning_level',
+                        'tools_required',
+                        'image_id',
+                        'photo_required',
+                        'photo_instruction',
+                      ],
                       additionalProperties: false,
                     },
                   },
@@ -620,25 +734,50 @@ If a list of AVAILABLE REFERENCE IMAGES is provided (each with an id, page, and 
       const parsed = JSON.parse(stepData?.choices?.[0]?.message?.content || '{}');
       isProcedural = !!parsed.is_procedural;
 
-      const imageById = new Map(availableImages.map((img) => [img.id, img]));
-      const imageUrlById = new Map(
-        merged.context_blocks.filter((b) => b.image_url).map((b) => [b.chunk_id, b.image_url])
-      );
+      // Translate the internal image_id to a direct URL here — the client
+      // never needs to know chunk ids exist.
+      const imageUrlById = new Map(availableImages.map((img) => [img.id, img.url]));
 
       steps = Array.isArray(parsed.steps)
         ? parsed.steps.map((st) => {
-            const matched = st.image_id && imageById.has(st.image_id);
+            const imageUrl = st.image_id && imageUrlById.has(st.image_id)
+              ? imageUrlById.get(st.image_id)
+              : null;
+
+            // Normalise the verification-photo fields so the mobile app
+            // always receives a boolean and a string.
+            const photoRequired = st.photo_required === true;
+            let photoInstruction =
+              typeof st.photo_instruction === 'string' ? st.photo_instruction.trim() : '';
+
+            if (!photoRequired) {
+              photoInstruction = '';
+            } else if (!photoInstruction) {
+              photoInstruction = 'Take a photo showing the completed result of this step.';
+            }
+
             return {
               title: st.title,
               description: st.description,
               warning_level: st.warning_level,
               tools_required: st.tools_required,
-              // Translated from the internal image_id to a direct URL here —
-              // the client never needs to know chunk ids exist.
-              image_url: matched ? imageUrlById.get(st.image_id) || null : null,
+              // Manual/reference image: the app only receives the actual URL.
+              image_url: imageUrl,
+              // Technician's own verification photo.
+              photo_required: photoRequired,
+              photo_instruction: photoInstruction,
             };
           })
         : [];
+
+      console.log('\n========== GENERATED PROCEDURE STEPS ==========');
+      steps.forEach((step, index) => {
+        console.log(`Step ${index + 1}: ${step.title}`);
+        console.log('  image_url:', step.image_url || 'NONE');
+        console.log('  photo_required:', step.photo_required ? 'YES' : 'NO');
+        console.log('  photo_instruction:', step.photo_instruction || 'NONE');
+      });
+      console.log('===============================================\n');
     } catch (stepErr) {
       console.error('Step extraction failed, continuing with text-only response:', stepErr);
     }
