@@ -104,6 +104,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       images,
       confirmedModel,
       voice,
+      quote,
     } = req.body;
 
     // One photo or several. Everything below works on the list; `imageBase64`
@@ -208,6 +209,14 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       console.log(`[VISION] model=${visualModel} fault=${visualReading?.faultCode || '-'}`);
     }
 
+    // A reply to a passage from an earlier answer. The backend keeps no chat
+    // history, so the passage travels with the question. It goes into the text
+    // retrieval searches with - otherwise "what does that mean?" retrieves
+    // nothing useful - and into the system prompt below, so the answer
+    // addresses it. The chat's confirmed model and manual filter still scope it.
+    const quoteText = typeof quote?.text === 'string' && quote.text.trim() ? quote.text.trim() : null;
+    if (quoteText) retrievalQuery = `${retrievalQuery}\n\nAbout this passage: "${quoteText}"`;
+
     // ── Step 1: Get RAG context from Python retrieval service ─────────────────
     console.log(`Calling retrieval service for: "${query}"`);
     const retrievalResponse = await fetch(`${RETRIEVAL_SERVICE_URL}/retrieve`, {
@@ -307,13 +316,19 @@ specification, torque figure, tolerance or procedure that is not in the extracts
         ]
       : finalPrompt;
 
+    const quoteRules = quoteText ? `
+
+The user is asking about this passage from an earlier answer: "${quoteText}".
+Treat their question as being about that passage. Answer only from the manual
+extracts above and cite pages as normal; if the extracts do not cover it, say so.` : '';
+
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: imageBase64 ? systemPrompt + visionRules : systemPrompt },
+          { role: 'system', content: (imageBase64 ? systemPrompt + visionRules : systemPrompt) + quoteRules },
           { role: 'user',   content: userContent },
         ],
         temperature: 0.2,

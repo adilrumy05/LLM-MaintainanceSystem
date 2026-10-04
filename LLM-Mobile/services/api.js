@@ -74,18 +74,33 @@ export const resetSession = () => {
 // FETCH WITH TIMEOUT
 // ─────────────────────────────────────────────
 
+// `options.signal` lets the caller cancel. A caller cancel and a timeout both
+// surface as AbortError, so the error is tagged `cancelled` when the caller
+// asked for it - otherwise a user pressing Cancel would be told the server
+// timed out.
 const fetchWithTimeout = (url, options = {}, timeout = 120000) => {
+  const { signal: callerSignal, ...rest } = options;
   const controller = new AbortController();
 
   const timeoutId = setTimeout(() => {
     controller.abort();
   }, timeout);
 
+  const onCallerAbort = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener('abort', onCallerAbort);
+  }
+
   return fetch(url, {
-    ...options,
+    ...rest,
     signal: controller.signal,
+  }).catch((error) => {
+    if (error?.name === 'AbortError' && callerSignal?.aborted) error.cancelled = true;
+    throw error;
   }).finally(() => {
     clearTimeout(timeoutId);
+    callerSignal?.removeEventListener?.('abort', onCallerAbort);
   });
 };
 
@@ -144,6 +159,11 @@ export const decodeEntities = (text) =>
  * @param {string} [options.imageBase64]    a single photo (older form of `images`)
  * @param {string} [options.confirmedModel] machine confirmed in this chat
  * @param {boolean} [options.voice]         ask for a spoken form of the answer
+ * @param {{ text: string, messageId?: string }} [options.quote]
+ *                                          a passage from an earlier answer this
+ *                                          question is about
+ * @param {AbortSignal} [options.signal]    cancels the request; the thrown error
+ *                                          then has `cancelled: true`
  *
  * Also accepts a document group string as the second argument, the original
  * signature.
@@ -159,6 +179,8 @@ export const submitQuery = async (query, options = {}) => {
     imageBase64: singleImage = null,
     confirmedModel = null,
     voice = false,
+    quote = null,
+    signal = undefined,
   } = opts;
   const images = imageList?.length ? imageList : singleImage ? [singleImage] : [];
   const imageBase64 = images.length > 0;
@@ -223,7 +245,9 @@ export const submitQuery = async (query, options = {}) => {
           ...(imageBase64 ? { images } : {}),
           ...(confirmedModel ? { confirmedModel } : {}),
           ...(voice ? { voice: true } : {}),
+          ...(quote?.text ? { quote: { text: quote.text, ...(quote.messageId ? { messageId: String(quote.messageId) } : {}) } } : {}),
         }),
+        signal,
       },
       120000
     );
@@ -327,6 +351,12 @@ export const submitQuery = async (query, options = {}) => {
     return data;
 
   } catch (error) {
+    if (error?.cancelled) {
+      const err = new Error('Request cancelled.');
+      err.code = 'cancelled';
+      err.cancelled = true;
+      throw err;
+    }
     if (error?.name === 'AbortError') {
       console.error('[API] Request timed out:', fullUrl);
 

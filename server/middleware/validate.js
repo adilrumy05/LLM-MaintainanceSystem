@@ -1,5 +1,6 @@
 // middleware/validate.js
 
+const MAX_QUOTE_CHARS = 500;
 const MAX_PHOTOS = 4;
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
 const MAX_TOTAL_PHOTO_BYTES = 8 * 1024 * 1024;
@@ -55,6 +56,24 @@ const validate = (req, res, next) => {
 
   if (voice !== undefined && typeof voice !== 'boolean') {
     return res.status(400).json({ error: "voice must be true or false.", code: "invalid_request" });
+  }
+
+  // Optional passage from an earlier answer that this question is about.
+  const { quote } = req.body;
+  if (quote !== undefined && quote !== null) {
+    if (typeof quote !== 'object' || Array.isArray(quote) ||
+        typeof quote.text !== 'string' || !quote.text.trim()) {
+      return res.status(400).json({ error: "quote must include the quoted text.", code: "invalid_request" });
+    }
+    if (quote.text.length > MAX_QUOTE_CHARS) {
+      return res.status(400).json({
+        error: `The quoted passage is too long. Select at most ${MAX_QUOTE_CHARS} characters.`,
+        code: "invalid_request",
+      });
+    }
+    if (quote.messageId !== undefined && (typeof quote.messageId !== 'string' || quote.messageId.length > 100)) {
+      return res.status(400).json({ error: "quote.messageId must be a string.", code: "invalid_request" });
+    }
   }
 
   // ── Optional photo attachment ──────────────────────────────────────────────

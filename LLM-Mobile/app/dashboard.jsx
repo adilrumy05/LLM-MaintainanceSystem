@@ -20,6 +20,13 @@ import BotMessage from '../components/BotMessage';
 import { actionsForOutcome } from '../utils/chatActions';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import * as Clipboard from 'expo-clipboard';
+import Toast from 'react-native-toast-message';
+import SelectTextSheet from '../components/SelectTextSheet';
+import QuoteChip from '../components/QuoteChip';
+import { FEATURES } from '../constants/featureFlags';
+import { answerForClipboard, toPlainText, toQuote } from '../utils/messageText';
+import { createRequestGuard } from '../utils/requestGuard';
 
 const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
 
@@ -47,8 +54,14 @@ export default function Dashboard() {
   const [handsFreeNotice, setHandsFreeNotice] = useState(null);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportText, setReportText]           = useState('');
+  const [quote, setQuote]                     = useState(null);   // { text, messageId }
+  const [selectFor, setSelectFor]             = useState(null);   // message open in the select sheet
+  const [showNewBelow, setShowNewBelow]       = useState(false);
 
-  const cancelRef       = useRef(false);
+  const requestGuardRef = useRef(null);
+  if (!requestGuardRef.current) requestGuardRef.current = createRequestGuard();
+  const requestGuard    = requestGuardRef.current;
+  const nearBottomRef   = useRef(true);
   const flatListRef     = useRef(null);
   const chatsRef        = useRef(chats);
   const activeChatIdRef = useRef(activeChatId);
@@ -99,7 +112,14 @@ const loadChats = async () => {
   const addMessage = (from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
     const msg = { id: Date.now().toString() + Math.random(), from, text, sources, ...extra };
     setChats(prev => prev.map(c => c.id === chatId ? { ...c, messages: [...c.messages, msg] } : c));
-    requestAnimationFrame(() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80));
+    // Follow the conversation only if the technician is already at the bottom,
+    // or has just sent something. Otherwise leave them where they are reading
+    // and offer a "New answer" shortcut.
+    if (from === 'user' || nearBottomRef.current) {
+      requestAnimationFrame(() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80));
+    } else {
+      setShowNewBelow(true);
+    }
   };
 
   const updateMessage = (messageId, updater, chatId = activeChatIdRef.current) => {
@@ -119,21 +139,23 @@ const loadChats = async () => {
   const markActionsUsed   = (chatId, messageId) => setActionsUsed(chatId, messageId, true);
   const markActionsUnused = (chatId, messageId) => setActionsUsed(chatId, messageId, false);
 
-  const runQuery = async ({ text, photos = [], confirmedModel, docGroup, voice = false }) => {
+  const runQuery = async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null }) => {
     const chatId = activeChatIdRef.current;
     const chat   = chatsRef.current.find(c => c.id === chatId);
     const model  = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
     const group  = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
-    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group };
+    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group, quote: quoted };
     const hasPhotos = photos.length > 0;
 
-    cancelRef.current = false;
+    // Only the latest request may write to the chat; starting one aborts the last.
+    const { id: requestId, signal } = requestGuard.begin();
     setIsProcessing(true);
     try {
       const result = await submitQuery(text, {
         docGroup: group, images: photos.map(p => p.base64), confirmedModel: model, voice,
+        quote: quoted, signal,
       });
-      if (cancelRef.current) return { cancelled: true };
+      if (!requestGuard.isCurrent(requestId)) return { cancelled: true };
 
       if (result.needsInput) {
         addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, hasPhotos) }, chatId);
@@ -154,14 +176,15 @@ const loadChats = async () => {
       }
       return { result };
     } catch (err) {
-      if (cancelRef.current) return { cancelled: true };
+      if (err.cancelled || !requestGuard.isCurrent(requestId)) return { cancelled: true };
       const photoProblem = err.code === 'invalid_image' || err.code === 'image_too_large';
       const actions = hasPhotos && photoProblem ? [{ type: 'retake' }]
         : err.retryable || !err.status ? [{ type: 'retry' }] : [];
       addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`, [], { actions }, chatId);
       return { error: err };
     } finally {
-      setIsProcessing(false);
+      // A stale request finishing late must not clear the spinner of the newer one.
+      if (requestGuard.isCurrent(requestId)) setIsProcessing(false);
     }
   };
 
@@ -170,15 +193,46 @@ const loadChats = async () => {
     const photos = pendingPhotos;
     if ((!typed && !photos.length) || isProcessing) return;
     const queryText = typed || DEFAULT_PHOTO_QUESTION;
+    const quoted    = FEATURES.CHAT_QUOTE && quote?.text ? quote : null;
     setInputValue('');
     setPendingPhotos([]);
+    setQuote(null);
     const raw = await AsyncStorage.getItem('queryHistory');
     const existing = JSON.parse(raw || '[]');
     await AsyncStorage.setItem('queryHistory', JSON.stringify(
       [{ id: Date.now(), text: queryText, timestamp: new Date().toISOString() }, ...existing].slice(0, 50)
     ));
-    addMessage('user', queryText, [], photos.length ? { imageUris: photos.map(p => p.uri) } : {});
-    await runQuery({ text: queryText, photos });
+    addMessage('user', queryText, [], {
+      ...(photos.length ? { imageUris: photos.map(p => p.uri) } : {}),
+      ...(quoted ? { quote: quoted } : {}),
+    });
+    await runQuery({ text: queryText, photos, quote: quoted });
+  };
+
+  // ─── Copy, select and reply ───────────────────────────────────────────────
+  const handleCopyAnswer = async (message) => {
+    try {
+      await Clipboard.setStringAsync(answerForClipboard(message));
+      Toast.show({ type: 'success', text1: 'Answer copied', text2: 'Manual sources are included.' });
+    } catch (e) {
+      Toast.show({ type: 'error', text1: 'Could not copy the answer' });
+    }
+  };
+
+  const handleCopySelection = async (text) => {
+    try {
+      await Clipboard.setStringAsync(text.trim());
+      Toast.show({ type: 'success', text1: 'Copied' });
+      setSelectFor(null);
+    } catch (e) {
+      Toast.show({ type: 'error', text1: 'Could not copy the selection' });
+    }
+  };
+
+  const handleReplyToSelection = (text) => {
+    const trimmed = toQuote(text);
+    if (trimmed) setQuote({ text: trimmed, messageId: selectFor?.id });
+    setSelectFor(null);
   };
 
   const choosePhotoSource = () => new Promise((resolve) => {
@@ -294,7 +348,7 @@ const loadChats = async () => {
   };
 
   const handleCancel = () => {
-    cancelRef.current = true;
+    requestGuard.cancel();
     setIsProcessing(false);
     addMessage('bot', 'Response stopped. You can continue the conversation.');
   };
@@ -303,6 +357,7 @@ const loadChats = async () => {
     const newId = Date.now().toString();
     handsFree.stop();
     setPendingPhotos([]);
+    setQuote(null);
     setChats(prev => [...prev, { id: newId, messages: [], filter: null, confirmedModel: null }]);
     setActiveChatId(newId);
     setShowSidebar(false);
@@ -310,7 +365,7 @@ const loadChats = async () => {
   };
 
   const handleSwitchChat = (id) => {
-    if (id !== activeChatId) { handsFree.stop(); setPendingPhotos([]); }
+    if (id !== activeChatId) { handsFree.stop(); setPendingPhotos([]); setQuote(null); }
     setActiveChatId(id);
     setShowSidebar(false);
   };
@@ -372,10 +427,22 @@ const loadChats = async () => {
                 {messagePhotos(item).map((uri, i) => <PhotoThumb key={i} uri={uri} small />)}
               </View>
             ) : null}
+            {item.quote?.text ? (
+              <View style={s.bubbleQuote}>
+                <Text style={s.bubbleQuoteText} numberOfLines={3}>“{item.quote.text}”</Text>
+              </View>
+            ) : null}
             <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
           </View>
         ) : (
-          <BotMessage item={item} updateMessage={updateMessage} />
+          <BotMessage
+            item={item}
+            updateMessage={updateMessage}
+            onAction={(action) => handleAction(item, action)}
+            actionsDisabled={isProcessing || isPhotoBusy || handsFree.active}
+            onCopy={FEATURES.CHAT_COPY ? handleCopyAnswer : undefined}
+            onSelectText={FEATURES.CHAT_SELECT ? setSelectFor : undefined}
+          />
         )}
       </View>
     );
@@ -551,7 +618,23 @@ const loadChats = async () => {
               directionalLockEnabled
               scrollEventThrottle={16}
               showsVerticalScrollIndicator
+              onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
+                const near = contentOffset.y + layoutMeasurement.height >= contentSize.height - 120;
+                nearBottomRef.current = near;
+                if (near && showNewBelow) setShowNewBelow(false);
+              }}
             />
+          )}
+          {showNewBelow && !isEmpty && (
+            <TouchableOpacity
+              style={s.newBelowPill}
+              onPress={() => { flatListRef.current?.scrollToEnd({ animated: true }); setShowNewBelow(false); }}
+              accessibilityRole="button"
+              accessibilityLabel="Scroll to the new answer"
+            >
+              <Ionicons name="arrow-down" size={14} color="#fff" />
+              <Text style={s.newBelowText}>New answer</Text>
+            </TouchableOpacity>
           )}
           {isProcessing && (
             <View style={s.typingRow}>
@@ -600,6 +683,8 @@ const loadChats = async () => {
               <Text style={s.pendingPhotoText}>{pendingPhotos.length} of {MAX_PHOTOS} photos. Ask about them, or just send.</Text>
             </View>
           )}
+
+          {FEATURES.CHAT_QUOTE && <QuoteChip text={quote?.text} onRemove={() => setQuote(null)} />}
 
           <View style={s.filterBar}>
             <TouchableOpacity style={s.filterChip} onPress={() => setShowFilterPicker(true)}>
@@ -660,6 +745,14 @@ const loadChats = async () => {
           </View>
         </View>
 
+        <SelectTextSheet
+          visible={!!selectFor}
+          text={selectFor ? toPlainText(selectFor.text) : ''}
+          onClose={() => setSelectFor(null)}
+          onCopy={handleCopySelection}
+          onReply={handleReplyToSelection}
+        />
+
       </SafeAreaView>
     </KeyboardAvoidingView>
   );
@@ -702,6 +795,10 @@ const s = StyleSheet.create({
   bubbleUser:         { backgroundColor: C.primary, borderBottomRightRadius: 4 },
   bubbleText:         { color: C.text, fontSize: 14, lineHeight: 20 },
   bubbleTextUser:     { color: '#fff' },
+  bubbleQuote:        { borderLeftWidth: 3, borderColor: 'rgba(255,255,255,0.7)', paddingLeft: 8, marginBottom: 6 },
+  bubbleQuoteText:    { color: 'rgba(255,255,255,0.9)', fontSize: 12, fontStyle: 'italic' },
+  newBelowPill:       { position: 'absolute', bottom: 12, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.primary, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 8, elevation: 3, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
+  newBelowText:       { color: '#fff', fontSize: 12, fontWeight: '700' },
   msgPhoto:           { width: 200, height: 150, borderRadius: 10, marginBottom: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
   msgPhotoSmall:      { width: 96, height: 96, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.2)' },
   msgPhotoGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6, maxWidth: 196 },

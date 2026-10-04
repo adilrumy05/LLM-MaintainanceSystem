@@ -1,5 +1,6 @@
-import { View, ScrollView, StyleSheet } from 'react-native';
+import { View, ScrollView, StyleSheet, Text } from 'react-native';
 import { C } from '../theme';
+import { FEATURES } from './featureFlags';
 
 export const markdownStyles = {
   body:         { color: C.text, fontSize: 14, lineHeight: 20 },
@@ -18,6 +19,17 @@ export const markdownStyles = {
 };
 
 export const makeMarkdownRules = (tableScrollStyle) => ({
+  // Each paragraph renders as its own <Text>, so selection works within a
+  // paragraph but not across paragraphs. Android and web allow selecting part
+  // of a paragraph; iOS only offers "copy the whole paragraph" for <Text>
+  // (facebook/react-native#13938), which is why the "Select text" sheet exists.
+  ...(FEATURES.CHAT_SELECT && {
+    textgroup: (node, children, parent, styles) => (
+      <Text key={node.key} style={styles.textgroup} selectable>
+        {children}
+      </Text>
+    ),
+  }),
   table: (node, children) => (
     <ScrollView key={node.key} horizontal nestedScrollEnabled directionalLockEnabled showsHorizontalScrollIndicator style={tableScrollStyle}>
       <View>{children}</View>
