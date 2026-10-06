@@ -93,6 +93,8 @@ uploads/audio/
 
 # Personal contribution log — never commit
 DEVLOG.txt
+# Local test account credentials — never commit
+Test_account.txt
 
 # Qdrant snapshots — large binaries, transferred out of band
 *.snapshot
@@ -105,3 +107,4 @@ start.sh
 data/
 
 test-results/
+.gstack/

@@ -9,6 +9,7 @@ import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestor
 import { db } from '../firebaseConfig';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
+import { loadUserNameMap, displayUser } from '../utils/userNames';
 import { API_URL } from '../services/api';
 import { useUser } from './_layout';
 
@@ -27,6 +28,10 @@ export default function History() {
   const [modalVisible, setModalVisible]   = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [search, setSearch]               = useState('');
+  // audit_logs stores a uid or an email depending on how the session was
+  // created, so names are resolved from the Users collection rather than shown
+  // raw.
+  const [nameMap, setNameMap]             = useState(new Map());
   const router                            = useRouter();
 
   const hasLoadedRef = useRef(false);
@@ -46,6 +51,7 @@ export default function History() {
       );
       unsubscribe = onSnapshot(q, (snapshot) => {
         setLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+        loadUserNameMap().then(setNameMap).catch(() => {});
         hasLoadedRef.current = true;
         setLoading(false);
       }, (error) => {
@@ -127,6 +133,7 @@ export default function History() {
     const q = search.toLowerCase();
     return logs.filter(log =>
       log.user_id?.toLowerCase().includes(q) ||
+      displayUser(nameMap, log.user_id).toLowerCase().includes(q) ||
       log.log_id?.toLowerCase().includes(q)
     );
   }, [logs, search]);
@@ -143,7 +150,7 @@ export default function History() {
           </View>
         </View>
         <View style={s.cardBody}>
-          <Text style={s.cardDetail}><Text style={s.bold}>User: </Text>{log.user_id}</Text>
+          <Text style={s.cardDetail}><Text style={s.bold}>User: </Text>{displayUser(nameMap, log.user_id)}</Text>
           <Text style={s.cardDetail}><Text style={s.bold}>Messages: </Text>{log.messages?.length || 0}</Text>
           <Text style={s.cardDetail}><Text style={s.bold}>Updated: </Text>{log.last_updated}</Text>
           {log.reviewed_by && <Text style={s.cardDetail}><Text style={s.bold}>Reviewed by: </Text>{log.reviewed_by}</Text>}

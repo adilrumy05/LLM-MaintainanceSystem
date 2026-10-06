@@ -6,6 +6,10 @@ const { logAuditRecord, logTimerEvent } = require('./server/services/auditLogger
 const firebaseAdmin = require('./server/config/firebaseAdmin');
 const { runPriorityAdjustmentAgent } = require('./server/agents/priorityAdjustmentAgent');
 const { generateRepairReport } = require('./server/services/reportGenerator');
+const requireAdmin = require('./server/middleware/requireAdmin');
+// Lazy: firebase-admin/auth depends on ESM-only `jose`, which Jest cannot parse
+// from node_modules. Only the delete-user route needs it.
+const getAuthLazy = () => require('firebase-admin/auth').getAuth();
 const fs = require('fs');
 const path = require('path');
 const sanitize = require('./server/middleware/sanitize');
@@ -843,6 +847,152 @@ Do not invent new steps for photos and do not change a step's meaning because of
       code:  'internal_error',
     });
   }
+});
+
+// Sets another user's password on their behalf. Admin-only, and server-side
+// for the same reason as deletion: the client SDK can only change the password
+// of the account it is currently signed in as. There is no self-service reset
+// in this app, so an administrator doing it for the user is the only path.
+app.patch('/api/users/:uid/password', requireAdmin, async (req, res) => {
+  const { uid } = req.params;
+  const { password } = req.body;
+
+  if (!uid || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) {
+    return res.status(400).json({ error: 'Invalid uid' });
+  }
+  if (typeof password !== 'string' || password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  try {
+    await getAuthLazy().updateUser(uid, { password });
+    // Deliberately not logged or echoed back anywhere.
+    console.log(`[USERS] ${req.caller.email} reset the password for ${uid}`);
+    res.json({ status: 'password_updated', uid });
+  } catch (err) {
+    if (err.code === 'auth/user-not-found') {
+      return res.status(404).json({ error: 'No sign-in account for this user' });
+    }
+    console.error('[USERS] Password update failed:', err.code || err.message);
+    res.status(500).json({ error: 'Could not update the password' });
+  }
+});
+
+// ── Chat session titles ───────────────────────────────────────────────────────
+// Names a conversation from its first exchange, the way chat assistants do.
+// Kept as its own cheap call rather than folded into /api/query: it runs once
+// per chat, not once per message, and a failure here must never cost the user
+// their answer — the client falls back to a truncated first message.
+app.post('/api/chat-title', sanitize, async (req, res) => {
+  const { question, answer } = req.body;
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!question || !String(question).trim()) {
+    return res.status(400).json({ error: 'question is required' });
+  }
+  if (!apiKey) {
+    return res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
+  }
+
+  try {
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: `Title this maintenance conversation in 2 to 5 words, as a technician would label the job in a worklist.
+
+Base the title on the QUESTION. The answer is context only — it is often an
+apology or a "not in the manual" response, and that must not stop you naming a
+perfectly clear question.
+
+Rules:
+- Name the equipment and the task when both appear: "CS-C18DKV compressor restart".
+- Equipment but no clear task: name the equipment: "CS-E12QD3EAW service".
+- Task but no equipment: name the task: "Refrigerant leak check".
+- No trailing punctuation, no quotes, no "How to", no filler like "Assistance with".
+- Use sentence case.
+- Reply exactly "New Chat" ONLY when the question carries no maintenance
+  subject at all, such as a greeting or a test message.
+Reply with the title and nothing else.`,
+          },
+          {
+            role: 'user',
+            content: `Question: ${String(question).slice(0, 500)}\n\nAnswer: ${String(answer || '').slice(0, 500)}`,
+          },
+        ],
+        temperature: 0.3,
+        max_tokens: 20,
+      }),
+    });
+
+    const data = await r.json();
+    if (!r.ok) {
+      return res.status(r.status).json({ error: data?.error?.message || 'Title request failed' });
+    }
+
+    // Trim defensively: the model occasionally wraps the title in quotes or
+    // adds a full stop despite the instruction.
+    const title = String(data?.choices?.[0]?.message?.content || '')
+      .replace(/^["'\s]+|["'.\s]+$/g, '')
+      .slice(0, 60);
+
+    res.json({ title: title || 'New Chat' });
+  } catch (err) {
+    console.error('[TITLE] Failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── User administration ───────────────────────────────────────────────────────
+// Deleting a user has to happen server-side. The client SDK can only remove the
+// Firestore document; it cannot delete another account's Firebase Auth record,
+// because that needs the Admin SDK. Doing only half of it left an orphaned Auth
+// account: login was still blocked (login.jsx checks the Users doc exists), but
+// the email address stayed permanently claimed, so the same person could never
+// be re-added.
+app.delete('/api/users/:uid', requireAdmin, async (req, res) => {
+  const { uid } = req.params;
+
+  if (!uid || !/^[A-Za-z0-9_-]{1,128}$/.test(uid)) {
+    return res.status(400).json({ error: 'Invalid uid' });
+  }
+  if (uid === req.caller.uid) {
+    return res.status(400).json({ error: 'You cannot delete your own account' });
+  }
+
+  const result = { uid, firestore: 'skipped', auth: 'skipped' };
+
+  // Delete the Auth record FIRST. If it succeeds and the Firestore delete then
+  // fails, the leftover document is harmless and visible in the user list, so
+  // it can be retried. The reverse order is what produced the orphan: the
+  // document disappears and the invisible Auth record is left behind.
+  try {
+    await getAuthLazy().deleteUser(uid);
+    result.auth = 'deleted';
+  } catch (err) {
+    if (err.code === 'auth/user-not-found') {
+      // Already gone, or the record only ever existed in Firestore.
+      result.auth = 'not_found';
+    } else {
+      console.error('[USERS] Auth delete failed:', err.code || err.message);
+      return res.status(500).json({ error: 'Could not delete the sign-in account', details: err.code });
+    }
+  }
+
+  try {
+    await firebaseAdmin.db.collection('Users').doc(uid).delete();
+    result.firestore = 'deleted';
+  } catch (err) {
+    console.error('[USERS] Firestore delete failed:', err.message);
+    return res.status(500).json({ error: 'Sign-in account removed, but the user record could not be deleted', ...result });
+  }
+
+  console.log(`[USERS] ${req.caller.email} deleted ${uid} (auth: ${result.auth})`);
+  res.json({ status: 'deleted', ...result });
 });
 
 // ── Procedure timers ──────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 // app/(tabs)/index.js
 
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
-import {View, Text, TextInput, TouchableOpacity, FlatList, Modal,ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,Platform, Image, ScrollView,} from 'react-native';
+import {View, Text, TextInput, TouchableOpacity, FlatList, Modal, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Animated, Dimensions, Easing,} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -14,6 +14,8 @@ import { submitQuery, decodeEntities, getFilters,
          generateReport, logTimerEvent } from '../services/api';
 import { shareReportPdf } from '../services/reportPdf';
 import { extractTimers } from '../services/procedureTimers';
+import { generateChatTitle } from '../services/api';
+import Toast from 'react-native-toast-message';
 import { capturePhotos, MAX_PHOTOS } from '../services/photo';
 import MicButton from '../components/MicButton';
 import HandsFreeBar from '../components/HandsFreeBar';
@@ -63,6 +65,12 @@ export default function Dashboard() {
   const [inputValue, setInputValue]       = useState('');
   const [isProcessing, setIsProcessing]   = useState(false);
   const [showSidebar, setShowSidebar]     = useState(false);
+  // The drawer stays mounted through its closing animation, so it cannot
+  // disappear the instant state flips.
+  const [sidebarMounted, setSidebarMounted] = useState(false);
+  const sidebarX = useRef(new Animated.Value(-Dimensions.get('window').width)).current;
+  const [renameTarget, setRenameTarget]   = useState(null);
+  const [renameText, setRenameText]       = useState('');
   const [loaded, setLoaded]               = useState(false);
   const [allFilters, setAllFilters]       = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
@@ -197,6 +205,18 @@ export default function Dashboard() {
             ? { currentStep: 0, completedSteps: [], overviewOpen: false } : null,
         }, chatId);
         if (result.identifiedModel) updateChat(chatId, { confirmedModel: decodeEntities(result.identifiedModel) });
+
+        // Name the chat from its first exchange, the way chat assistants do.
+        // Fire-and-forget: the conversation must not wait on it, and a failure
+        // just leaves the truncated-first-message fallback in place.
+        const namedChat = chatsRef.current.find(c => c.id === chatId);
+        if (namedChat && !namedChat.aiTitle && !namedChat.customTitle) {
+          generateChatTitle(text, cleanText)
+            .then(title => {
+              if (title && title !== 'New Chat') updateChat(chatId, { aiTitle: title });
+            })
+            .catch(e => console.warn('[title] could not name chat:', e.message));
+        }
       }
       return { result };
     } catch (err) {
@@ -353,8 +373,48 @@ export default function Dashboard() {
     addMessage('bot', 'Response stopped. You can continue the conversation.');
   };
 
+  // Slide the drawer in and out. Unmount only after the close finishes.
+  useEffect(() => {
+    const width = Dimensions.get('window').width;
+    if (showSidebar) {
+      setSidebarMounted(true);
+      Animated.timing(sidebarX, {
+        toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }).start();
+    } else if (sidebarMounted) {
+      Animated.timing(sidebarX, {
+        toValue: -width, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true,
+      }).start(({ finished }) => { if (finished) setSidebarMounted(false); });
+    }
+  }, [showSidebar, sidebarMounted, sidebarX]);
+
+  const closeSidebar = () => setShowSidebar(false);
+
+  const openRename = (chat) => {
+    setRenameText(getChatTitle(chat));
+    setRenameTarget(chat.id);
+  };
+  const cancelRename = () => { setRenameTarget(null); setRenameText(''); };
+  const confirmRename = () => {
+    const name = renameText.trim();
+    if (!name || !renameTarget) return;
+    // customTitle wins over both the AI title and the first-message fallback,
+    // so a manual rename is never overwritten later.
+    setChats(prev => prev.map(c => c.id === renameTarget ? { ...c, customTitle: name } : c));
+    cancelRename();
+  };
+
   const handleNewChat = () => {
     const newId = Date.now().toString();
+    // The screen clears with no other signal that anything happened, which
+    // reads as the app losing the previous conversation.
+    Toast.show({
+      type: 'success',
+      text1: 'New chat started',
+      text2: 'Your previous chat is saved in the menu.',
+      position: 'top',
+      visibilityTime: 2200,
+    });
     handsFree.stop();
     setPendingPhotos([]);
     setChats(prev => [...prev, { id: newId, messages: [], filter: null, confirmedModel: null, sessionId: resetSession() }]);
@@ -374,6 +434,22 @@ export default function Dashboard() {
   };
 
   const handleDeleteChat = (id) => {
+    // Deleting a conversation is unrecoverable, so confirm first. Alert.alert
+    // buttons do not fire on web, hence the split.
+    const chat = chats.find(c => c.id === id);
+    const name = chat ? getChatTitle(chat) : 'this chat';
+    const run = () => doDeleteChat(id);
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete "${name}"? This cannot be undone.`)) run();
+      return;
+    }
+    Alert.alert('Delete chat', `Delete "${name}"? This cannot be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: run },
+    ]);
+  };
+
+  const doDeleteChat = (id) => {
     if (chats.length === 1) {
       setChats([{ id: '1', messages: [], filter: null, sessionId: resetSession() }]);
       setActiveChatId('1');
@@ -454,7 +530,12 @@ export default function Dashboard() {
     ]);
   };
 
+  // Precedence: a manual rename always wins, then the AI-generated title, then
+  // a truncated first message so a chat is never nameless while the title call
+  // is still in flight (or if it failed).
   const getChatTitle = (chat) => {
+    if (chat.customTitle) return chat.customTitle;
+    if (chat.aiTitle) return chat.aiTitle;
     const first = chat.messages.find(m => m.from === 'user');
     return first ? first.text.slice(0, 30) + (first.text.length > 30 ? '...' : '') : 'New Chat';
   };
@@ -512,53 +593,137 @@ export default function Dashboard() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={0}>
       <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
 
-        {showSidebar && (
-          <View style={s.overlay}>
-            <View style={s.sidebar}>
-              <Text style={s.sidebarTitle}>Chats</Text>
-              <TouchableOpacity style={s.newChatBtn} onPress={handleNewChat}>
-                <Ionicons name="add-outline" size={16} color="#fff" />
-                <Text style={s.newChatText}> New Chat</Text>
-              </TouchableOpacity>
+        {/* Full-screen drawer. It was 280px wide with a dimmed strip beside it,
+            which read as an unfinished panel on a phone. Now it covers the
+            screen and slides in, so there is no tap-outside-to-close target —
+            hence the explicit X. */}
+        {sidebarMounted && (
+          <Animated.View style={[s.overlay, { transform: [{ translateX: sidebarX }] }]}>
+            <SafeAreaView style={s.sidebar} edges={['top']}>
+              <View style={s.sidebarHeader}>
+                <View style={s.sidebarTitleRow}>
+                  <Text style={s.sidebarTitle}>Chats</Text>
+                  <TouchableOpacity
+                    onPress={handleNewChat}
+                    style={s.sidebarAdd}
+                    accessibilityLabel="New chat"
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="add" size={22} color={C.primary} />
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  onPress={closeSidebar}
+                  style={s.sidebarClose}
+                  accessibilityLabel="Close chats"
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={24} color={C.text} />
+                </TouchableOpacity>
+              </View>
+
               <FlatList
                 data={[...chats].reverse()}
                 keyExtractor={c => c.id}
+                contentContainerStyle={{ paddingBottom: 8 }}
                 renderItem={({ item }) => (
                   <View style={[s.chatItem, item.id === activeChatId && s.chatItemActive]}>
                     <TouchableOpacity style={{ flex: 1 }} onPress={() => handleSwitchChat(item.id)}>
                       <Text style={s.chatItemText} numberOfLines={1}>{getChatTitle(item)}</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDeleteChat(item.id)}>
+                    <TouchableOpacity
+                      onPress={() => openRename(item)}
+                      style={s.chatItemAction}
+                      accessibilityLabel="Rename chat"
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="pencil-outline" size={15} color={C.textSub} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteChat(item.id)}
+                      style={s.chatItemAction}
+                      accessibilityLabel="Delete chat"
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
                       <Ionicons name="trash-outline" size={16} color={C.red} />
                     </TouchableOpacity>
                   </View>
                 )}
               />
+
               <TouchableOpacity style={s.clearAllBtn} onPress={() => {
+                const wipe = () => {
+                  setChats([{ id: '1', messages: [], filter: null, sessionId: resetSession() }]);
+                  setActiveChatId('1');
+                  closeSidebar();
+                };
                 if (Platform.OS === 'web') {
-                  if (window.confirm('Delete all conversations?')) { setChats([{ id: '1', messages: [] }]); setActiveChatId('1'); setShowSidebar(false); }
+                  if (window.confirm('Delete all conversations? This cannot be undone.')) wipe();
                   return;
                 }
-                Alert.alert('Clear All Chats', 'Delete all conversations?', [
+                Alert.alert('Clear All Chats', 'Delete all conversations? This cannot be undone.', [
                   { text: 'Cancel', style: 'cancel' },
-                  { text: 'Clear All', style: 'destructive', onPress: () => { setChats([{ id: '1', messages: [] }]); setActiveChatId('1'); setShowSidebar(false); } },
+                  { text: 'Clear All', style: 'destructive', onPress: wipe },
                 ]);
               }}>
                 <Ionicons name="trash-outline" size={14} color={C.red} />
                 <Text style={s.clearAllText}> Clear All Chats</Text>
               </TouchableOpacity>
+
               <TouchableOpacity style={s.logoutSidebar} onPress={handleLogout}>
                 <Ionicons name="log-out-outline" size={14} color={C.red} />
                 <Text style={s.logoutSidebarText}> Logout</Text>
               </TouchableOpacity>
-            </View>
-            <TouchableOpacity style={s.overlayBg} onPress={() => setShowSidebar(false)} />
-          </View>
+            </SafeAreaView>
+          </Animated.View>
         )}
+
+        {/* Rename. A modal rather than Alert.prompt, which is iOS-only. */}
+        <Modal
+          visible={!!renameTarget}
+          transparent
+          animationType="fade"
+          onRequestClose={cancelRename}
+        >
+          <View style={s.renameOverlay}>
+            <View style={s.renameCard}>
+              <Text style={s.renameTitle}>Rename chat</Text>
+              <TextInput
+                style={s.renameInput}
+                value={renameText}
+                onChangeText={setRenameText}
+                placeholder="Chat name"
+                placeholderTextColor={C.textMuted}
+                autoFocus
+                maxLength={60}
+                onSubmitEditing={confirmRename}
+                returnKeyType="done"
+              />
+              <View style={s.renameRow}>
+                <TouchableOpacity style={s.renameCancel} onPress={cancelRename}>
+                  <Text style={s.renameCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.renameSave, !renameText.trim() && s.renameSaveDisabled]}
+                  onPress={confirmRename}
+                  disabled={!renameText.trim()}
+                >
+                  <Text style={s.renameSaveText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* ─── Report Issue Modal ───────────────────────────────────── */}
         <Modal visible={showReportModal} animationType="slide" transparent onRequestClose={() => setShowReportModal(false)}>
-          <View style={s.reportOverlay}>
+          {/* The sheet is pinned to the bottom, so the iOS keyboard covered it
+              the moment the field autofocused. KeyboardAvoidingView lifts it;
+              iOS needs 'padding', Android handles it via windowSoftInputMode. */}
+          <KeyboardAvoidingView
+            style={s.reportOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
             <View style={s.reportSheet}>
               <View style={s.reportHeader}>
                 <Ionicons name="bug-outline" size={20} color="#ea580c" />
@@ -586,7 +751,7 @@ export default function Dashboard() {
                 <Text style={s.reportSubmitText}>Submit Report</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* ─── Model Filter Modal ───────────────────────────────────── */}
@@ -940,18 +1105,30 @@ const s = StyleSheet.create({
   rrErrText:      { flex: 1, fontSize: 13, color: C.red, lineHeight: 19 },
 
   safe:               { flex: 1, backgroundColor: C.bg },
-  overlay:            { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: 'row' },
-  overlayBg:          { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sidebar:            { width: 280, backgroundColor: C.card, paddingTop: 50, paddingHorizontal: 16, paddingBottom: 20 },
-  sidebarTitle:       { color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 16 },
-  newChatBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, marginBottom: 16 },
-  newChatText:        { color: '#fff', fontWeight: '700', fontSize: 14 },
+  overlay:            { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100 },
+  sidebar:            { flex: 1, backgroundColor: C.card, paddingHorizontal: 16, paddingBottom: 8 },
+  sidebarHeader:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8, paddingBottom: 10 },
+  sidebarTitleRow:    { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  sidebarAdd:         { padding: 4 },
+  sidebarClose:       { padding: 4, marginRight: -4 },
+  sidebarTitle:       { color: C.text, fontSize: 18, fontWeight: '700' },
+  chatItemAction:     { paddingHorizontal: 6, paddingVertical: 4 },
+  renameOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  renameCard:         { width: '100%', maxWidth: 400, backgroundColor: C.card, borderRadius: 16, padding: 18 },
+  renameTitle:        { color: C.text, fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  renameInput:        { backgroundColor: C.inputBg, borderWidth: 1, borderColor: C.inputBorder, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, color: C.text, fontSize: 14 },
+  renameRow:          { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 14 },
+  renameCancel:       { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
+  renameCancelText:   { color: C.textSub, fontWeight: '600', fontSize: 13 },
+  renameSave:         { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10, backgroundColor: C.primary },
+  renameSaveDisabled: { opacity: 0.5 },
+  renameSaveText:     { color: '#fff', fontWeight: '700', fontSize: 13 },
   chatItem:           { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, marginBottom: 6, backgroundColor: C.bg },
   chatItemActive:     { backgroundColor: C.primaryLight },
   chatItemText:       { color: C.text, fontSize: 13, flex: 1 },
-  clearAllBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 10, marginTop: 8, marginBottom: 8 },
+  clearAllBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 10, marginTop: 'auto', marginBottom: 8 },
   clearAllText:       { color: C.red, fontWeight: '700', fontSize: 12 },
-  logoutSidebar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 'auto', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 12 },
+  logoutSidebar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 12 },
   logoutSidebarText:  { color: C.red, fontWeight: '700', fontSize: 13 },
   header:             { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card },
   menuBtn:            { padding: 6 },
