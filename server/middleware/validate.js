@@ -43,8 +43,12 @@ const validate = (req, res, next) => {
     return res.status(400).json({ error: "category2 must be a string." });
   }
 
-  if (topK !== undefined && topK !== null && (typeof topK !== 'number' || topK <= 0)) {
-    return res.status(400).json({ error: "topK must be a positive number." });
+  if (topK !== undefined && topK !== null && (!Number.isInteger(topK) || topK < 1 || topK > 10)) {
+    return res.status(400).json({ error: "topK must be an integer from 1 to 10.", code: "invalid_request" });
+  }
+
+  if (req.body.detail !== undefined && !['brief', 'standard', 'detailed'].includes(req.body.detail)) {
+    return res.status(400).json({ error: "detail must be brief, standard or detailed.", code: "invalid_request" });
   }
 
   const { confirmedModel, voice } = req.body;

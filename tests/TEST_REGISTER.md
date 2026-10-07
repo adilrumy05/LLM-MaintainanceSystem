@@ -57,6 +57,36 @@ backend (177 tests, 14 suites) and app (16 tests, 5 suites), all passing. Device
 results above are the user's checks, not a simulator or automated device run.
 The temporary selection screen and generated debug-prompt changes were excluded.
 
+## Verified Feature B checkpoint — 2026-10-04
+
+Exact local commit: `14bc965877675020454402d564f09b3554c27824`.
+Codex installed dependencies in a fresh, detached verification checkout using
+the documented root install and mobile clean install (offline cache), then ran:
+
+| Area | Result | Evidence |
+|---|---|---|
+| Backend Jest | 177 tests, 14 suites passed | Exact-checkpoint console output |
+| App jest-expo | 16 tests, 5 suites passed | Exact-checkpoint console output |
+| Expo exports | iOS, Android, web passed | `expo export --platform all`, exit 0 |
+
+No push was performed. The user's B iPhone verification is recorded above.
+
+## Feature A candidate (response detail) — 2026-10-08
+
+Uncommitted, on top of B checkpoint `14bc965`. Run by Adil in the working tree.
+
+| Area | Result | Evidence |
+|---|---|---|
+| Backend Jest | 238 tests, 17 suites passed | Full suite, console output; includes tests/endpoints/query.detail.test.js and tests/unit/responseDetail.test.js |
+| App jest-expo | 52 tests, 11 suites passed | Full suite, console output; APP-A1-1 to APP-A5-1 |
+| Expo exports | iOS, Android, web passed | `expo export`, exit 0 for each platform |
+| Live check | Several rounds through the real backend, local manual database | Results in docs/RESPONSE_DETAIL.md |
+| Feature A iPhone checks | First pass 2026-10-08 found 3 defects (fixed); recheck pending | docs/RESPONSE_DETAIL.md |
+
+The automated tests mock OpenAI and retrieval, so they do not show answer
+quality. The live checks are a handful of questions; Brief answers have not been checked
+line by line against the manual pages.
+
 
 
 \## Test ID format

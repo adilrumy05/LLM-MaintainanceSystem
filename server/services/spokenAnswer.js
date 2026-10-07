@@ -10,6 +10,8 @@
 // answer on screen and says audio is unavailable for that one. Silence is safe;
 // a truncated procedure is not.
 
+const { modelRequest } = require('./answerModel');
+
 const SPOKEN_SCHEMA_NAME = 'spoken_answer';
 
 const SPOKEN_SCHEMA = {
@@ -118,9 +120,7 @@ async function generateSpokenAnswer({ text, apiKey, fetchImpl = fetch }) {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0,
-        max_tokens: 700,
+        ...modelRequest({ temperature: 0, maxTokens: 700 }),
         response_format: SPOKEN_SCHEMA,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },

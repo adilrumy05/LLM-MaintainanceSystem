@@ -27,6 +27,9 @@ import QuoteChip from '../components/QuoteChip';
 import { FEATURES } from '../constants/featureFlags';
 import { answerForClipboard, toPlainText, toQuote } from '../utils/messageText';
 import { createRequestGuard } from '../utils/requestGuard';
+import DetailChip from '../components/DetailChip';
+import usePreferences from '../hooks/usePreferences';
+import { normaliseDetail, answerView, isResponseDetail } from '../utils/responseDetail';
 
 const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
 
@@ -74,6 +77,7 @@ export default function Dashboard() {
   const router                             = useRouter();
   const { role, isJunior, isIntermediate } = useRole();
   const { user, setUser }                  = useUser();
+  const preferences = usePreferences(user);
 
   const activeChat = chats.find(c => c.id === activeChatId);
   const messages   = activeChat?.messages || [];
@@ -139,12 +143,13 @@ const loadChats = async () => {
   const markActionsUsed   = (chatId, messageId) => setActionsUsed(chatId, messageId, true);
   const markActionsUnused = (chatId, messageId) => setActionsUsed(chatId, messageId, false);
 
-  const runQuery = async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null }) => {
+  const runQuery = async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null, detail }) => {
     const chatId = activeChatIdRef.current;
     const chat   = chatsRef.current.find(c => c.id === chatId);
     const model  = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
     const group  = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
-    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group, quote: quoted };
+    const requestedDetail = voice || !FEATURES.EFFORT_LEVELS ? 'standard' : normaliseDetail(detail ?? preferences.detail);
+    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group, quote: quoted, voice, detail: requestedDetail };
     const hasPhotos = photos.length > 0;
 
     // Only the latest request may write to the chat; starting one aborts the last.
@@ -153,7 +158,7 @@ const loadChats = async () => {
     try {
       const result = await submitQuery(text, {
         docGroup: group, images: photos.map(p => p.base64), confirmedModel: model, voice,
-        quote: quoted, signal,
+        quote: quoted, signal, detail: requestedDetail,
       });
       if (!requestGuard.isCurrent(requestId)) return { cancelled: true };
 
@@ -161,6 +166,10 @@ const loadChats = async () => {
         addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, hasPhotos) }, chatId);
       } else {
         addMessage('bot', decodeEntities(result.text), result.sources || [], {
+          detail: requestedDetail,
+          ...(isResponseDetail(result.responseDetail) ? { responseDetail: result.responseDetail } : {}),
+          ...(result.detailFallback ? { detailFallback: result.detailFallback } : {}),
+          ...(typeof result.fullText === 'string' ? { fullText: decodeEntities(result.fullText) } : {}),
           isProcedural: result.isProcedural || false,
           steps: (result.steps || []).map(st => ({
             title: decodeEntities(st.title),
@@ -168,7 +177,7 @@ const loadChats = async () => {
             warningLevel: st.warning_level,
             toolsRequired: st.tools_required || [],
           })),
-          procedureView: (result.isProcedural && result.steps?.length > 0) ? 'procedure' : 'text',
+          procedureView: answerView({ ...result, detail: requestedDetail }, FEATURES.EFFORT_LEVELS),
           procedureState: (result.isProcedural && result.steps?.length > 0)
             ? { currentStep: 0, completedSteps: [], overviewOpen: false } : null,
         }, chatId);
@@ -194,6 +203,7 @@ const loadChats = async () => {
     if ((!typed && !photos.length) || isProcessing) return;
     const queryText = typed || DEFAULT_PHOTO_QUESTION;
     const quoted    = FEATURES.CHAT_QUOTE && quote?.text ? quote : null;
+    const requestedDetail = FEATURES.EFFORT_LEVELS ? preferences.detail : 'standard';
     setInputValue('');
     setPendingPhotos([]);
     setQuote(null);
@@ -206,7 +216,7 @@ const loadChats = async () => {
       ...(photos.length ? { imageUris: photos.map(p => p.uri) } : {}),
       ...(quoted ? { quote: quoted } : {}),
     });
-    await runQuery({ text: queryText, photos, quote: quoted });
+    await runQuery({ text: queryText, photos, quote: quoted, detail: requestedDetail });
   };
 
   // ─── Copy, select and reply ───────────────────────────────────────────────
@@ -290,7 +300,7 @@ const loadChats = async () => {
         const photos = [...kept, ...added].slice(0, MAX_PHOTOS);
         const text   = req?.text || DEFAULT_PHOTO_QUESTION;
         addMessage('user', text, [], { imageUris: photos.map(p => p.uri) });
-        await runQuery({ text, photos, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup });
+        await runQuery({ text, photos, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup, detail: req?.detail, quote: req?.quote });
         return;
       }
       case 'retry': {
@@ -441,7 +451,7 @@ const loadChats = async () => {
             onAction={(action) => handleAction(item, action)}
             actionsDisabled={isProcessing || isPhotoBusy || handsFree.active}
             onCopy={FEATURES.CHAT_COPY ? handleCopyAnswer : undefined}
-            onSelectText={FEATURES.CHAT_SELECT ? setSelectFor : undefined}
+            onSelectText={FEATURES.CHAT_SELECT ? (item, text) => setSelectFor({ ...item, text }) : undefined}
           />
         )}
       </View>
@@ -686,7 +696,8 @@ const loadChats = async () => {
 
           {FEATURES.CHAT_QUOTE && <QuoteChip text={quote?.text} onRemove={() => setQuote(null)} />}
 
-          <View style={s.filterBar}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterBar} style={s.filterScroll} keyboardShouldPersistTaps="handled">
+            {FEATURES.EFFORT_LEVELS && <DetailChip value={preferences.detail} onChange={preferences.setDetail} disabled={!preferences.ready || handsFree.active} />}
             <TouchableOpacity style={s.filterChip} onPress={() => setShowFilterPicker(true)}>
               <Ionicons name="filter-outline" size={13} color={activeChat?.filter ? C.primary : C.textMuted} />
               <Text style={[s.filterChipText, activeChat?.filter && { color: C.primary, fontWeight: '700' }]} numberOfLines={1}>
@@ -719,7 +730,8 @@ const loadChats = async () => {
               <Ionicons name="headset-outline" size={13} color={handsFree.active ? '#fff' : C.primary} />
               <Text style={[s.handsFreeChipText, handsFree.active && { color: '#fff' }]}>Hands-free</Text>
             </TouchableOpacity>
-          </View>
+          </ScrollView>
+          {FEATURES.EFFORT_LEVELS && preferences.error && <Text style={s.preferenceNote}>{preferences.error}</Text>}
 
           <View style={s.inputBar}>
             <TouchableOpacity style={s.iconBtn} onPress={handleAttachPhoto} disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}>
@@ -737,6 +749,8 @@ const loadChats = async () => {
             />
             <TouchableOpacity
               style={[s.sendBtn, ((!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active) && s.sendBtnDisabled]}
+              accessibilityRole="button"
+              accessibilityLabel="Send question"
               onPress={() => handleSend()}
               disabled={(!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active}
             >
@@ -814,6 +828,8 @@ const s = StyleSheet.create({
   sendBtn:            { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   sendBtnDisabled:    { backgroundColor: '#c4b5fd' },
   filterBar:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, gap: 6 },
+  filterScroll:       { flexGrow: 0 },
+  preferenceNote:     { fontSize: 12, color: C.textMuted, marginHorizontal: 12, marginTop: 6 },
   filterChip:         { flexDirection: 'row', alignItems: 'center', backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, gap: 4, flexShrink: 1 },
   filterChipText:     { fontSize: 12, color: C.textSub, flexShrink: 1 },
   filterClearBtn:     { padding: 4 },

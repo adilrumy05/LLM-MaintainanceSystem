@@ -3,6 +3,8 @@ import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File } from 'expo-file-system';
 import { db } from '../firebaseConfig';
+import { FEATURES } from '../constants/featureFlags';
+import { detailRequestFields } from '../utils/responseDetail';
 
 import {
   collection,
@@ -159,6 +161,7 @@ export const decodeEntities = (text) =>
  * @param {string} [options.imageBase64]    a single photo (older form of `images`)
  * @param {string} [options.confirmedModel] machine confirmed in this chat
  * @param {boolean} [options.voice]         ask for a spoken form of the answer
+ * @param {'brief'|'standard'|'detailed'} [options.detail] response detail; ignored for voice
  * @param {{ text: string, messageId?: string }} [options.quote]
  *                                          a passage from an earlier answer this
  *                                          question is about
@@ -179,6 +182,7 @@ export const submitQuery = async (query, options = {}) => {
     imageBase64: singleImage = null,
     confirmedModel = null,
     voice = false,
+    detail = 'standard',
     quote = null,
     signal = undefined,
   } = opts;
@@ -245,6 +249,7 @@ export const submitQuery = async (query, options = {}) => {
           ...(imageBase64 ? { images } : {}),
           ...(confirmedModel ? { confirmedModel } : {}),
           ...(voice ? { voice: true } : {}),
+          ...detailRequestFields({ detail, voice, enabled: FEATURES.EFFORT_LEVELS }),
           ...(quote?.text ? { quote: { text: quote.text, ...(quote.messageId ? { messageId: String(quote.messageId) } : {}) } } : {}),
         }),
         signal,

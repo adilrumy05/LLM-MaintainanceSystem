@@ -1,4 +1,4 @@
-// OpenAI gpt-4o-mini with RAG Server.js
+// OpenAI (model set in server/services/answerModel.js) with RAG Server.js
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -12,6 +12,8 @@ const validate = require('./server/middleware/validate');
 const outputSanitize = require('./server/middleware/outputSanitize');
 const { resolveVisualIntake } = require('./server/services/visionIntake');
 const { generateSpokenAnswer } = require('./server/services/spokenAnswer');
+const { ANSWER_MODEL, modelRequest } = require('./server/services/answerModel');
+const { detailRules, checkBriefFigures, checkBriefKeepsSafety, plainMeasurements, DETAILED_TOP_K } = require('./server/services/responseDetail');
 
 dotenv.config();
 
@@ -105,7 +107,15 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       confirmedModel,
       voice,
       quote,
+      detail,
     } = req.body;
+
+    // How much to explain, not who is asking: the role prompt is unchanged.
+    // Hands-free keeps its own spoken pipeline, and EFFORT_LEVELS_ENABLED=false
+    // switches this off for every client, including older app builds.
+    const detailRequested = voice === true || process.env.EFFORT_LEVELS_ENABLED === 'false'
+      ? 'standard' : detail || 'standard';
+    const retrievalTopK = detailRequested === 'detailed' ? Math.max(DETAILED_TOP_K, topK ?? 5) : topK ?? 5;
 
     // One photo or several. Everything below works on the list; `imageBase64`
     // stays truthy whenever at least one photo was attached.
@@ -218,6 +228,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     if (quoteText) retrievalQuery = `${retrievalQuery}\n\nAbout this passage: "${quoteText}"`;
 
     // ── Step 1: Get RAG context from Python retrieval service ─────────────────
+    const timing = { start: Date.now() };
     console.log(`Calling retrieval service for: "${query}"`);
     const retrievalResponse = await fetch(`${RETRIEVAL_SERVICE_URL}/retrieve`, {
       method: 'POST',
@@ -234,7 +245,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
         // match against the typed text, so it wins.
         model_number: visualModel || matchedModel || (imageBase64 ? null : trustedConfirmedModel) || null,
         date_added: matchedDate || null,
-        top_k: topK,
+        top_k: retrievalTopK,
       }),
     }).catch((err) => {
       console.error('Retrieval service unreachable:', err.message);
@@ -322,33 +333,78 @@ The user is asking about this passage from an earlier answer: "${quoteText}".
 Treat their question as being about that passage. Answer only from the manual
 extracts above and cite pages as normal; if the extracts do not cover it, say so.` : '';
 
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: (imageBase64 ? systemPrompt + visionRules : systemPrompt) + quoteRules },
-          { role: 'user',   content: userContent },
-        ],
-        temperature: 0.2,
-        max_tokens: 2048,
-      }),
-    }).catch((err) => {
-      console.error('OpenAI unreachable:', err.message);
-      return null;
-    });
+    // Standard adds no rules, so its request is exactly what it was before
+    // response detail existed.
+    const askAnswerModel = async (mode) => {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...modelRequest({ temperature: 0.2, maxTokens: 2048 }),
+          messages: [
+            { role: 'system', content: (imageBase64 ? systemPrompt + visionRules : systemPrompt) + quoteRules + detailRules(mode) },
+            { role: 'user',   content: userContent },
+          ],
+        }),
+      }).catch((err) => {
+        console.error('OpenAI unreachable:', err.message);
+        return null;
+      });
+      if (!response) return { unreachable: true };
 
-    if (!openaiResponse) {
+      const body = await response.json().catch(() => null);
+      console.log('OpenAI status:', response.status);
+      if (!response.ok) {
+        console.error('OpenAI error:', JSON.stringify(body, null, 2));
+        return { failed: true };
+      }
+      return { choice: body?.choices?.[0] };
+    };
+
+    timing.answerStart = Date.now();
+    let responseDetail = detailRequested;
+    let detailFallback = null;
+    let briefText = null;
+    let answer;
+
+    // Brief is written alongside the Standard answer, not instead of it, so the
+    // two can be compared and the Standard answer is there to fall back on. The
+    // calls run together, so Brief takes no longer than Standard.
+    //
+    // The Brief answer is shown only if it finished normally, every measurement
+    // and code in it is in the manual text it was written from, and it kept the
+    // measurements and safety items the Standard answer has. Otherwise the
+    // Standard answer is shown with the reason. Brief is never retried.
+    if (responseDetail === 'brief') {
+      const [brief, standard] = await Promise.all([askAnswerModel('brief'), askAnswerModel('standard')]);
+      answer = standard;
+      const draft = brief.choice?.message?.content;
+      const standardText = standard.choice?.message?.content;
+      if (!standard.unreachable && !standard.failed && typeof standardText === 'string') {
+        const finished = brief.choice?.finish_reason === 'stop' && typeof draft === 'string' && draft.trim();
+        const manualText = [retrievalData.prompt, ...(retrievalData.context_blocks || []).map((block) => block?.text)];
+        const figures = finished ? checkBriefFigures(draft, [
+          ...manualText, query, quoteText, visualModel, visualReading?.faultCode,
+        ]) : null;
+        const kept = finished && figures.ok ? checkBriefKeepsSafety(draft, standardText, manualText) : null;
+        if (kept?.ok) {
+          briefText = plainMeasurements(draft);
+        } else {
+          detailFallback = !finished ? 'incomplete' : !figures.ok ? 'unverified_figures' : 'missing_safety_detail';
+          // Figures and item names only, never the answer text.
+          console.info('[DETAIL]', JSON.stringify({ briefFallback: detailFallback, unverified: figures?.missing || [], dropped: kept?.missing || [] }));
+          responseDetail = 'standard';
+        }
+      }
+    } else {
+      answer = await askAnswerModel(responseDetail);
+    }
+
+    if (answer.unreachable) {
       return serviceFailure(res, 503, 'answer_unavailable',
         'Could not reach the answer service. Try again in a moment.', Boolean(imageBase64));
     }
-
-    const data = await openaiResponse.json().catch(() => null);
-    console.log('OpenAI status:', openaiResponse.status);
-
-    if (!openaiResponse.ok) {
-      console.error('OpenAI error:', JSON.stringify(data, null, 2));
+    if (answer.failed) {
       // Never pass the provider's status through: a 401 from OpenAI means OUR key
       // is wrong, not the technician's session, and a 429 is our quota. 502 says
       // an upstream service failed.
@@ -356,27 +412,34 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
         'The answer service failed. Try again in a moment.', Boolean(imageBase64));
     }
 
-    const text = data?.choices?.[0]?.message?.content || 'No response text returned.';
+    // `text` is the answer the technician sees, so the audit record matches the
+    // screen. For a Brief answer, `fullText` is the Standard answer behind it:
+    // the app offers it as the Full view, and guided steps are taken from it.
+    const fullText = plainMeasurements(answer.choice?.message?.content || 'No response text returned.');
+    const text = briefText || fullText;
 
+    timing.answerEnd = Date.now();
     // ── Call 2: cheap structured extraction FROM the finished answer ─────────
     let isProcedural = false;
     let steps = [];
 
-    try {
+    // A Brief answer skips this call. It takes about as long as writing the
+    // answer itself, and skipping it is what makes Brief quicker than the other
+    // levels. The Brief answer is already a short numbered list, and the
+    // Standard answer is still there as the Full view.
+    if (!briefText) try {
       const stepResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          ...modelRequest({ temperature: 0, maxTokens: 1500 }),
           messages: [
             {
               role: 'system',
               content: `You extract structured step breakdowns from maintenance answers. Given the answer text below, determine if it describes a procedure, troubleshooting flow, checklist, or multi-step task. If so, break it into atomic steps without changing the meaning or adding new information. If it is not procedural, return an empty steps array.`,
             },
-            { role: 'user', content: text },
+            { role: 'user', content: fullText },
           ],
-          temperature: 0,
-          max_tokens: 1500,
           response_format: {
             type: 'json_schema',
             json_schema: {
@@ -417,6 +480,7 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
       console.error('Step extraction failed, continuing with text-only response:', stepErr);
     }
 
+    timing.stepsEnd = Date.now();
     // ── Step 3: Fire the Audit Logger (Session Based) ────────────────────────
     try {
       await logAuditRecord(
@@ -456,13 +520,20 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
     }
 
     // ── Step 6: Return answer + sources + alert metadata ──────────────────────
+    // Stage timings in milliseconds; no question or answer text.
+    console.info('[TIMING]', JSON.stringify({ detail: detailRequested, shown: responseDetail, retrievalMs: timing.answerStart - timing.start, answerMs: timing.answerEnd - timing.answerStart, stepsMs: timing.stepsEnd - timing.answerEnd, afterMs: Date.now() - timing.stepsEnd, totalMs: Date.now() - timing.start }));
     res.json({
       text,
+      // The detail this answer was actually written in; `detailFallback` is set
+      // when Brief was asked for and Standard is shown instead.
+      responseDetail,
+      ...(detailFallback ? { detailFallback } : {}),
+      ...(briefText ? { fullText } : {}),
       isProcedural,
       steps,
       sources:        retrievalData.sources,
       context_blocks: retrievalData.context_blocks,
-      reasoning:      'Generated via OpenAI gpt-4o-mini with RAG context',
+      reasoning:      `Generated via OpenAI ${ANSWER_MODEL} with RAG context`,
       alert,
       priorityTask: priorityResult,
       // The model this answer is grounded in, so the app can hold it as the
