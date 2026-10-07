@@ -10,13 +10,33 @@
 //
 // auditLogger.js already imports FieldValue from 'firebase-admin/firestore',
 // so this brings the two into line.
+const fs = require('fs');
+const path = require('path');
 const { initializeApp, cert, getApps } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 
 let db = null;
 
+// The backend moved into backend-node/, so '../../serviceAccountKey.json' now
+// resolves to backend-node/ rather than the repository root where the key
+// actually lives. Try the repo root first, then alongside the backend, which is
+// where a container build would place it.
+const KEY_PATHS = [
+  path.join(__dirname, '..', '..', '..', 'serviceAccountKey.json'),
+  path.join(__dirname, '..', '..', 'serviceAccountKey.json'),
+];
+
+function loadServiceAccount() {
+  for (const candidate of KEY_PATHS) {
+    if (fs.existsSync(candidate)) return require(candidate);
+  }
+  const err = new Error('serviceAccountKey.json not found');
+  err.code = 'MODULE_NOT_FOUND';
+  throw err;
+}
+
 try {
-  const serviceAccount = require('../../serviceAccountKey.json');
+  const serviceAccount = loadServiceAccount();
 
   // Reuse the app if something already initialised it — initialising twice
   // throws, and this module is required from several places.
