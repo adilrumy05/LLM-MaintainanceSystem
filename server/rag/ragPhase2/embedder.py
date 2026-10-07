@@ -50,11 +50,20 @@ def _env(name: str) -> str:
 
 
 def _project_root() -> Path:
-    """Find the project root by locating .env or .git."""
+    """Find the project root by locating a project marker file.
+
+    Markers checked: .env (local dev), .git (local dev), requirements.txt
+    (always present, including in the Railway container where .env and .git
+    are absent).
+    """
     current = Path(__file__).resolve().parent
 
     while current != current.parent:
-        if (current / ".env").is_file() or (current / ".git").exists():
+        if (
+            (current / ".env").is_file()
+            or (current / ".git").exists()
+            or (current / "requirements.txt").is_file()
+        ):
             return current
         current = current.parent
 
