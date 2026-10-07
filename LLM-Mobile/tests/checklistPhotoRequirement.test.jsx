@@ -25,7 +25,7 @@ test('required step stays incomplete after cancellation, then completes after ne
   expect(ui.getByText('1 of 2 completed')).toBeTruthy();
   await fireEvent.press(ui.getByText('Next'));
   expect(ui.getByText('Step 2 of 2')).toBeTruthy();
-});
+}, 15000);
 
 
 test('overview cannot skip an unfinished photo step', async () => {

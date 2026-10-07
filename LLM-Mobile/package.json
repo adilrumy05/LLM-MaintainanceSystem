@@ -11,7 +11,9 @@
   },
   "jest": {
     "preset": "jest-expo",
-    "testMatch": ["<rootDir>/tests/**/*.test.[jt]s?(x)"]
+    "testMatch": [
+      "<rootDir>/tests/**/*.test.[jt]s?(x)"
+    ]
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -60,7 +62,8 @@
     "@expo/ngrok": "^4.1.0",
     "@react-native/jest-preset": "^0.86.3",
     "@testing-library/react-native": "^14.0.1",
-    "react-test-renderer": "19.2.3"
+    "react-test-renderer": "19.2.3",
+    "test-renderer": "^1.2.0"
   },
   "overrides": {
     "react-native-markdown-display": {
