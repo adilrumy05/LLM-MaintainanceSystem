@@ -199,6 +199,8 @@ export default function Dashboard() {
             warningLevel: st.warning_level,
             toolsRequired: st.tools_required || [],
             imageUrl: st.image_url || null,
+            photoRequired: st.photo_required === true,
+            photoInstruction: decodeEntities(st.photo_instruction || ''),
           })),
           procedureView: (result.isProcedural && result.steps?.length > 0) ? 'procedure' : 'text',
           procedureState: (result.isProcedural && result.steps?.length > 0)
