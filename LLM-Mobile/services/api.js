@@ -540,3 +540,79 @@ export const logTimerEvent = async (sessionId, event) => {
   }
   return response.json();
 };
+
+
+// ─────────────────────────────────────────────
+// USER ADMINISTRATION
+// ─────────────────────────────────────────────
+
+// Deletes a user completely: the Firebase Auth account and the Firestore
+// record. This has to go through the backend because the client SDK cannot
+// delete another account's Auth record — only the Admin SDK can. Deleting the
+// Firestore document alone left the email address permanently claimed.
+export const deleteUserCompletely = async (uid) => {
+  if (!uid) throw new Error('No user id supplied.');
+
+  const userJson = await AsyncStorage.getItem('user');
+  const user = userJson ? JSON.parse(userJson) : null;
+  if (!user?.token) throw new Error('Your session has expired. Please sign in again.');
+
+  const response = await fetchWithTimeout(
+    `${API_URL}/users/${encodeURIComponent(uid)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${user.token}` } },
+    20000
+  );
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.error || `Delete failed (HTTP ${response.status})`);
+  return body;
+};
+
+
+// Names a chat from its first exchange. Deliberately forgiving: a failed title
+// must never disturb the conversation, so the caller keeps its fallback.
+export const generateChatTitle = async (question, answer) => {
+  const response = await fetchWithTimeout(
+    `${API_URL}/chat-title`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // Truncated here, not just server-side: the sanitize middleware rejects
+      // any field over 1000 characters with a 400, and a real answer is
+      // routinely longer than that. The title only needs the opening of each.
+      body: JSON.stringify({
+        question: String(question || '').slice(0, 400),
+        answer: String(answer || '').slice(0, 400),
+      }),
+    },
+    15000
+  );
+  if (!response.ok) throw new Error(`Title failed (HTTP ${response.status})`);
+  const data = await response.json();
+  return (data.title || '').trim();
+};
+
+
+// Sets another user's password. Admin-only and server-side: the client SDK can
+// only change the password of the account it is signed in as.
+export const setUserPassword = async (uid, password) => {
+  if (!uid) throw new Error('No user id supplied.');
+  if (!password || password.length < 6) throw new Error('Password must be at least 6 characters.');
+
+  const userJson = await AsyncStorage.getItem('user');
+  const user = userJson ? JSON.parse(userJson) : null;
+  if (!user?.token) throw new Error('Your session has expired. Please sign in again.');
+
+  const response = await fetchWithTimeout(
+    `${API_URL}/users/${encodeURIComponent(uid)}/password`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${user.token}` },
+      body: JSON.stringify({ password }),
+    },
+    20000
+  );
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.error || `Password update failed (HTTP ${response.status})`);
+  return body;
+};

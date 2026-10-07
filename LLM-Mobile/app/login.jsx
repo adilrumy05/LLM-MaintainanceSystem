@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, StyleSheet,
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { auth, db } from '../firebaseConfig';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -16,15 +17,42 @@ const ROLE_MAP = {
   'worker_beginner':     'beginner',
 };
 
+// Firebase auth errors surface as codes like "auth/invalid-credential" with
+// messages such as "Firebase: Error (auth/invalid-credential)." Those mean
+// nothing to a technician and leak which provider we use, so they are mapped to
+// one plain sentence. Wrong email and wrong password deliberately produce the
+// SAME message: distinguishing them tells an attacker which emails are real.
+const friendlyAuthError = (code) => {
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/invalid-login-credentials':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-email':
+      return 'Invalid credentials. Check your email and password and try again.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Contact your administrator.';
+    case 'auth/too-many-requests':
+      return 'Too many failed attempts. Wait a moment and try again.';
+    case 'auth/network-request-failed':
+      return 'Cannot reach the server. Check your connection and try again.';
+    default:
+      return 'Could not sign you in. Please try again.';
+  }
+};
+
 export default function Login() {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading]   = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
   const router    = useRouter();
   const { setUser } = useUser();
 
   const handleSubmit = async () => {
     if (!email || !password) return;
+    setErrorMsg('');
     setLoading(true);
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -33,7 +61,9 @@ export default function Login() {
       // ── Fetch role from Firestore ──────────────────────────────
       const userDoc = await getDoc(doc(db, 'Users', uid));
       if (!userDoc.exists()) {
-        Alert.alert('Error', 'User not found in database.');
+        // Authentication succeeded but there is no Users record — the account
+        // was removed, or was never finished being set up.
+        setErrorMsg('This account is no longer active. Contact your administrator.');
         setLoading(false);
         return;
       }
@@ -54,7 +84,7 @@ export default function Login() {
 
       router.replace(role === 'admin' ? '/admin' : '/dashboard');
     } catch (error) {
-      Alert.alert('Login Failed', error.message);
+      setErrorMsg(friendlyAuthError(error?.code));
     }
     setLoading(false);
   };
@@ -97,6 +127,12 @@ export default function Login() {
                 onChangeText={setPassword}
                 secureTextEntry
               />
+              {!!errorMsg && (
+                <View style={s.errorBox}>
+                  <Ionicons name="alert-circle-outline" size={16} color={C.red} />
+                  <Text style={s.errorText}>{errorMsg}</Text>
+                </View>
+              )}
               <TouchableOpacity
                 style={[s.btn, loading && s.btnDisabled]}
                 onPress={handleSubmit}
@@ -106,6 +142,34 @@ export default function Login() {
                   ? <ActivityIndicator color="#fff" />
                   : <Text style={s.btnText}>Sign In</Text>}
               </TouchableOpacity>
+
+              {/* Accounts are created and reset by an administrator — this is an
+                  internal tool, so there is no self-service password reset to
+                  link to. The panel says who to ask instead. */}
+              <TouchableOpacity
+                style={s.helpLink}
+                onPress={() => setShowHelp(v => !v)}
+                accessibilityLabel="Can't sign in?"
+              >
+                <Text style={s.helpLinkText}>Can't sign in?</Text>
+                <Ionicons
+                  name={showHelp ? 'chevron-up-outline' : 'chevron-down-outline'}
+                  size={14}
+                  color={C.primary}
+                />
+              </TouchableOpacity>
+
+              {showHelp && (
+                <View style={s.helpBox}>
+                  <Text style={s.helpText}>
+                    Accounts for this app are created and managed by your system
+                    administrator.{'\n'}{'\n'}
+                    If you have forgotten your password, or cannot remember which
+                    email address your account uses, contact your administrator to
+                    have it reset. Passwords cannot be changed from this screen.
+                  </Text>
+                </View>
+              )}
             </View>
             <Text style={s.footer}>Secured with Role-Based Access Control</Text>
           </View>
@@ -116,6 +180,13 @@ export default function Login() {
 }
 
 const s = StyleSheet.create({
+  errorBox:     { flexDirection: 'row', alignItems: 'flex-start', gap: 7, backgroundColor: C.redBg, borderRadius: 10, padding: 11, marginBottom: 14 },
+  errorText:    { flex: 1, color: C.red, fontSize: 13, lineHeight: 18 },
+  helpLink:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 14, paddingVertical: 6 },
+  helpLinkText: { color: C.primary, fontSize: 13, fontWeight: '600' },
+  helpBox:      { backgroundColor: C.bg, borderRadius: 10, padding: 12, marginTop: 4 },
+  helpText:     { color: C.textSub, fontSize: 12.5, lineHeight: 18 },
+
   safe:          { flex: 1, backgroundColor: C.bg },
   scrollContent: { flexGrow: 1 },
   container:     { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 40 },
