@@ -9,8 +9,37 @@
 // minutes before restarting" and "the unit has a 3-minute restart delay"
 // contain the same tokens; only the model has the context to tell an
 // instruction from a specification.
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+
+// expo-notifications is loaded LAZILY, never at module scope.
+//
+// On Android in Expo Go, importing it throws from SDK 53 onward: the remote
+// push functionality it registers was removed from the Go client. That error
+// escapes during module evaluation, and because dashboard.jsx imports
+// extractTimers from this file, the whole route fails to evaluate — expo-router
+// then reports it as "./dashboard.jsx is missing the required default export",
+// which points nowhere near the real cause.
+//
+// extractTimers is pure string handling and has no business dragging a native
+// module into the bundle. Only the three scheduling functions below need it,
+// and each already tolerates it being unavailable.
+let notificationsModule;
+let notificationsUnavailable = false;
+
+function getNotifications() {
+  if (notificationsUnavailable) return null;
+  if (!notificationsModule) {
+    try {
+      notificationsModule = require('expo-notifications');
+    } catch (e) {
+      notificationsUnavailable = true;
+      console.warn('[timers] notifications unavailable:', e?.message);
+      return null;
+    }
+  }
+  return notificationsModule;
+}
 
 const MARKER = /\[\[TIMER:(\d{1,5})\|([^\]|]{0,60})\]\]/g;
 
@@ -62,6 +91,8 @@ let permissionGranted = false;
 export async function ensureNotificationPermission() {
   if (permissionChecked) return permissionGranted;
   permissionChecked = true;
+  const Notifications = getNotifications();
+  if (!Notifications) { permissionGranted = false; return false; }
   try {
     const existing = await Notifications.getPermissionsAsync();
     let status = existing.status;
@@ -83,6 +114,8 @@ export async function ensureNotificationPermission() {
 export async function scheduleTimerNotification(seconds, label) {
   const granted = await ensureNotificationPermission();
   if (!granted) return null;
+  const Notifications = getNotifications();
+  if (!Notifications) return null;
   try {
     return await Notifications.scheduleNotificationAsync({
       content: {
@@ -104,6 +137,8 @@ export async function scheduleTimerNotification(seconds, label) {
 
 export async function cancelTimerNotification(identifier) {
   if (!identifier) return;
+  const Notifications = getNotifications();
+  if (!Notifications) return;
   try {
     await Notifications.cancelScheduledNotificationAsync(identifier);
   } catch (e) {
@@ -118,6 +153,13 @@ export const formatRemaining = (totalSeconds) => {
   return `${m}:${String(r).padStart(2, '0')}`;
 };
 
-// Web has no scheduled-notification path here, so the UI can warn that the
-// countdown only runs while the tab is open.
-export const backgroundAlertsSupported = Platform.OS !== 'web';
+// Where a scheduled alert can actually survive the app being backgrounded, so
+// the UI can say the countdown only runs while the app is open rather than
+// promising an alert that will never arrive.
+//
+// Not web: no scheduling path here at all.
+// Not Android in Expo Go: the notification module is unavailable there, so the
+// countdown is on-screen only until the team installs a development build.
+const isExpoGo = Constants.executionEnvironment === 'storeClient';
+export const backgroundAlertsSupported =
+  Platform.OS !== 'web' && !(Platform.OS === 'android' && isExpoGo);
