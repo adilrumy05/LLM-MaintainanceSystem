@@ -20,7 +20,7 @@ export default function ProcedureViewer({ steps, state, onChange }) {
 
   const patchState = (patch) => onChange({ ...safeState, ...patch });
 
-  // ── Technician verification photos (separate from the reference image) ──
+  // Technician verification photos (separate from the reference image)
   // Stored per step index. Kept in the parent's state (stepPhotos) so it
   // survives re-renders, with a local mirror as a fallback in case the parent
   // does not persist unknown keys. Only the file uri is kept, never base64.
@@ -42,7 +42,7 @@ export default function ProcedureViewer({ steps, state, onChange }) {
     const stepIndex = current;
     setCapturing(true);
     try {
-      const [photo] = await capturePhotos('camera', { limit: 1 });
+      const [photo] = await capturePhotos('camera', { limit: 1, cameraOnly: true });
       if (!photo) return; // user cancelled
       const record = {
         uri: photo.uri,
@@ -71,7 +71,17 @@ export default function ProcedureViewer({ steps, state, onChange }) {
     patchState({ completedSteps: nextCompleted });
   };
 
-  const goToStep = (index) => patchState({ currentStep: index, overviewOpen: false });
+  const goToStep = (index) => {
+    if (capturing) return;
+    const unfinished = steps.findIndex((candidate, candidateIndex) =>
+      (candidate.photoRequired ?? candidate.photo_required) === true &&
+      !completedSteps.includes(candidateIndex));
+    if (unfinished >= 0 && index > unfinished) {
+      Alert.alert('Photo required', `Complete step ${unfinished + 1} and take its required photo before continuing.`);
+      return;
+    }
+    patchState({ currentStep: index, overviewOpen: false });
+  };
 
   return (
     <View style={s.stepViewer}>
@@ -241,7 +251,7 @@ export default function ProcedureViewer({ steps, state, onChange }) {
             photoBlocksCompletion && s.stepCompleteActionDisabled,
           ]}
           onPress={toggleCurrentStep}
-          disabled={photoBlocksCompletion}
+          disabled={photoBlocksCompletion || capturing}
           activeOpacity={0.8}
         >
           <View
@@ -296,7 +306,7 @@ export default function ProcedureViewer({ steps, state, onChange }) {
               currentStep: Math.max(0, current - 1),
             })
           }
-          disabled={isFirst}
+          disabled={isFirst || capturing}
         >
           <Ionicons
             name="chevron-back-outline"
@@ -321,14 +331,9 @@ export default function ProcedureViewer({ steps, state, onChange }) {
               s.stepNavBtnDisabled,
           ]}
           onPress={() =>
-            patchState({
-              currentStep: Math.min(
-                steps.length - 1,
-                current + 1
-              ),
-            })
+            goToStep(Math.min(steps.length - 1, current + 1))
           }
-          disabled={!currentCompleted || isLast}
+          disabled={!currentCompleted || isLast || capturing}
         >
           <Text
             style={[

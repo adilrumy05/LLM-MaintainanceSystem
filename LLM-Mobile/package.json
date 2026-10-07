@@ -10,7 +10,8 @@
     "test": "jest --watchAll=false"
   },
   "jest": {
-    "preset": "jest-expo"
+    "preset": "jest-expo",
+    "testMatch": ["<rootDir>/tests/**/*.test.[jt]s?(x)"]
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
