@@ -119,6 +119,8 @@ const fetchWithTimeout = (url, options = {}, timeout = 120000) => {
 
 export const getFilters = async () => {
   const fullUrl = `${API_URL}/documents`;
+  console.log('[API] Fetching filters from:', fullUrl);   // ← ADD THIS
+  console.log('[API] EXPO_PUBLIC_API_URL =', process.env.EXPO_PUBLIC_API_URL);  // ← AND THIS
 
   try {
     const response = await fetchWithTimeout(
