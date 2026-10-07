@@ -5,7 +5,10 @@ const OpenAI = require('openai');
 const { toFile } = require('openai');
 const fs = require('fs');
 const router = express.Router();
-const upload = multer({ dest: 'uploads/audio/' });
+const path = require('path');
+const upload = multer({
+  dest: path.join(__dirname, '..', '..', 'uploads', 'audio'),
+});
 
 // Built on first use, not at import time.
 //
