@@ -121,4 +121,6 @@ __pycache__/
 *.pyc
 
 # Shared secrets
+
+LLM-Mobile/package-lock.json
 .env
