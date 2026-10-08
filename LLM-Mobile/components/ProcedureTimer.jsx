@@ -21,12 +21,17 @@ import {
   backgroundAlertsSupported,
 } from '../services/procedureTimers';
 
-export default function ProcedureTimer({ timer, onComplete }) {
-  const [endsAt, setEndsAt]       = useState(null);   // ms epoch, null = idle
+// `persisted` / `onPersist` are optional. Supplied, the running state lives in
+// the parent and the countdown survives this component unmounting — which it
+// does constantly now that timers sit inside step cards, because only the
+// current step is rendered. Without them the component keeps its own state, as
+// it did when timers were listed under the message.
+export default function ProcedureTimer({ timer, onComplete, persisted, onPersist }) {
+  const [endsAt, setEndsAt]       = useState(persisted?.endsAt ?? null); // ms epoch, null = idle
   const [remaining, setRemaining] = useState(timer.seconds);
-  const [done, setDone]           = useState(false);
-  const notifIdRef                = useRef(null);
-  const firedRef                  = useRef(false);
+  const [done, setDone]           = useState(persisted?.done ?? false);
+  const notifIdRef                = useRef(persisted?.notifId ?? null);
+  const firedRef                  = useRef(persisted?.done ?? false);
 
   useEffect(() => {
     if (!endsAt) return;
@@ -38,6 +43,7 @@ export default function ProcedureTimer({ timer, onComplete }) {
           firedRef.current = true;
           setDone(true);
           setEndsAt(null);
+          onPersist?.({ endsAt: null, notifId: null, done: true });
           onComplete?.({ ...timer, completedAt: new Date().toISOString() });
         }
       } else {
@@ -51,7 +57,15 @@ export default function ProcedureTimer({ timer, onComplete }) {
 
   // Cancel the scheduled notification if this message scrolls out of existence
   // mid-wait, so a stale alert cannot fire for a timer nobody is watching.
-  useEffect(() => () => { cancelTimerNotification(notifIdRef.current); }, []);
+  //
+  // NOT when the state is persisted: there, unmounting is routine — the
+  // technician moved to another step while the wait runs — and the alert is
+  // the entire point of the feature. Cancelling it there would silently break
+  // exactly the long waits this exists for.
+  useEffect(() => {
+    if (onPersist) return undefined;
+    return () => { cancelTimerNotification(notifIdRef.current); };
+  }, [onPersist]);
 
   const start = async () => {
     firedRef.current = false;
@@ -62,7 +76,9 @@ export default function ProcedureTimer({ timer, onComplete }) {
       const msg = 'Notifications are off, so the alert will only appear while this screen is open. Enable notifications to be alerted with the app in the background.';
       Platform.OS === 'web' ? console.warn(msg) : Alert.alert('Procedure timer', msg);
     }
-    setEndsAt(Date.now() + timer.seconds * 1000);
+    const ends = Date.now() + timer.seconds * 1000;
+    setEndsAt(ends);
+    onPersist?.({ endsAt: ends, notifId: id, done: false });
   };
 
   const cancel = async () => {
@@ -72,6 +88,7 @@ export default function ProcedureTimer({ timer, onComplete }) {
     setRemaining(timer.seconds);
     setDone(false);
     firedRef.current = false;
+    onPersist?.(null);
   };
 
   const running = !!endsAt;

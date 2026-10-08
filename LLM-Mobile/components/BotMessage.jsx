@@ -21,6 +21,17 @@ export default function BotMessage({ item, updateMessage, onTimerComplete }) {
   const setProcedureState = (nextState) =>
     updateMessage(item.id, m => ({ ...m, procedureState: nextState }));
 
+  // Timers belong ON the step that mandates the wait, so in procedure view the
+  // step cards own them. The loose box below is kept for Full Text, and as a
+  // fallback for the case where the answer carried a marker but the extractor
+  // failed to attach it to any step — losing the timer entirely would be worse
+  // than showing it detached.
+  const stepsOwnTimers = hasSteps && item.steps.some(
+    st => (Number(st.timerSeconds ?? st.timer_seconds) || 0) > 0
+  );
+  const showLooseTimers =
+    item.timers?.length > 0 && !(viewMode === 'procedure' && stepsOwnTimers);
+
   return (
     <View style={s.bubbleBot}>
       {hasSteps && (
@@ -37,13 +48,18 @@ export default function BotMessage({ item, updateMessage, onTimerComplete }) {
       )}
 
       {hasSteps && viewMode === 'procedure'
-        ? <ProcedureViewer steps={item.steps} state={procedureState} onChange={setProcedureState} />
+        ? <ProcedureViewer
+            steps={item.steps}
+            state={procedureState}
+            onChange={setProcedureState}
+            onTimerComplete={onTimerComplete}
+          />
         : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{item.text}</Markdown>
       }
 
-      {/* Timers sit outside the Procedure/Full Text toggle: a mandated wait
-          applies to the job regardless of how the answer is being read. */}
-      {item.timers?.length > 0 && (
+      {/* Full Text has no step cards to host a countdown, so the timers are
+          listed here instead. */}
+      {showLooseTimers && (
         <View style={s.timersBox}>
           {item.timers.map((t) => (
             <ProcedureTimer key={t.id} timer={t} onComplete={onTimerComplete} />

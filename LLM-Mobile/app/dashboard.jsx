@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import {View, Text, TextInput, TouchableOpacity, FlatList, Modal, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Animated, Dimensions, Easing,} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -80,6 +80,13 @@ export default function Dashboard() {
   const [handsFreeNotice, setHandsFreeNotice] = useState(null);
   // Repair report (distinct from the Report Issue modal above)
   const [repairReport, setRepairReport]       = useState(null);
+  const [repairChecklist, setRepairChecklist] = useState([]);
+  // SafeAreaView inside a react-native Modal does not reliably receive the
+  // device insets on iOS — the modal sits outside the provider's view tree, so
+  // the top inset can come back as 0 and the header ends up under the notch.
+  // Reading the insets directly and flooring them fixes both that and the
+  // race where they resolve a frame after the modal mounts.
+  const insets = useSafeAreaInsets();
   const [repairReportBusy, setRepairReportBusy]   = useState(false);
   const [repairReportError, setRepairReportError] = useState(null);
   const [sharingRepairPdf, setSharingRepairPdf]   = useState(false);
@@ -201,6 +208,10 @@ export default function Dashboard() {
             imageUrl: st.image_url || null,
             photoRequired: st.photo_required === true,
             photoInstruction: decodeEntities(st.photo_instruction || ''),
+            // A wait the technician must observe before leaving THIS step, so
+            // the countdown can sit on the step rather than under the message.
+            timerSeconds: Number(st.timer_seconds) > 0 ? Number(st.timer_seconds) : 0,
+            timerLabel: decodeEntities(st.timer_label || ''),
           })),
           procedureView: (result.isProcedural && result.steps?.length > 0) ? 'procedure' : 'text',
           procedureState: (result.isProcedural && result.steps?.length > 0)
@@ -482,6 +493,32 @@ export default function Dashboard() {
     Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Procedure timer', msg);
   }, []);
 
+  // What the technician actually worked through, flattened across every
+  // procedural answer in this chat. The backend report is written from the
+  // transcript and cannot know any of this — completion ticks and verification
+  // photos live only in the client's procedure state — so it is collected here
+  // and handed to the PDF builder.
+  const collectChecklist = (chat) => {
+    if (!chat?.messages?.length) return [];
+    const out = [];
+    for (const m of chat.messages) {
+      if (m.from !== 'bot' || !m.isProcedural || !m.steps?.length) continue;
+      const st        = m.procedureState || {};
+      const completed = Array.isArray(st.completedSteps) ? st.completedSteps : [];
+      const photos    = st.stepPhotos || {};
+      m.steps.forEach((step, i) => {
+        out.push({
+          title:         step.title || `Step ${i + 1}`,
+          completed:     completed.includes(i),
+          photoRequired: step.photoRequired === true,
+          photoUri:      photos[i]?.uri || null,
+          timerSeconds:  Number(step.timerSeconds) || 0,
+        });
+      });
+    }
+    return out;
+  };
+
   // Summarises THIS chat's session. Each chat owns its sessionId, so the
   // report covers one job rather than everything since app launch.
   const handleGenerateRepairReport = async () => {
@@ -495,6 +532,9 @@ export default function Dashboard() {
     setRepairReportBusy(true);
     setRepairReportError(null);
     setRepairReport(null);
+    // Snapshot the checklist now, so the preview and the exported PDF describe
+    // the same state even if the technician keeps ticking steps afterwards.
+    setRepairChecklist(collectChecklist(chat));
     try {
       setRepairReport(await generateReport(chat.sessionId));
     } catch (e) {
@@ -507,7 +547,7 @@ export default function Dashboard() {
     if (!repairReport || sharingRepairPdf) return;
     setSharingRepairPdf(true);
     try {
-      const { shared } = await shareReportPdf(repairReport);
+      const { shared } = await shareReportPdf(repairReport, repairChecklist);
       if (!shared) {
         const msg = 'Sharing is not available on this platform. The report is saved and viewable here.';
         Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Export', msg);
@@ -763,7 +803,12 @@ export default function Dashboard() {
           animationType="slide"
           onRequestClose={closeRepairReport}
         >
-          <SafeAreaView style={s.rrSheet} edges={['top', 'bottom']}>
+          <View
+            style={[
+              s.rrSheet,
+              { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom },
+            ]}
+          >
             <View style={s.rrHead}>
               <Text style={s.rrHeadTitle}>Repair Report</Text>
               <TouchableOpacity onPress={closeRepairReport} accessibilityLabel="Close report">
@@ -800,6 +845,52 @@ export default function Dashboard() {
                   <RepairSection label="Outcome" text={repairReport.report?.outcome} />
                   <RepairSection label="Follow-up" text={repairReport.report?.follow_up} />
 
+                  {repairChecklist.length > 0 && (
+                    <>
+                      <Text style={s.rrSectionLabel}>Work Checklist</Text>
+                      <Text style={s.rrEmpty}>
+                        {repairChecklist.filter(st => st.completed).length} of {repairChecklist.length} steps marked complete.
+                      </Text>
+                      {repairChecklist.map((st, i) => (
+                        <View key={i} style={s.rrChkRow}>
+                          <Ionicons
+                            name={st.completed ? 'checkmark-circle' : 'ellipse-outline'}
+                            size={15}
+                            color={st.completed ? C.green : C.textMuted}
+                          />
+                          <Text style={s.rrChkText}>{st.title}</Text>
+                          {st.timerSeconds > 0 && (
+                            <Text style={s.rrChkTag}>wait {Math.round(st.timerSeconds / 60)} min</Text>
+                          )}
+                          {st.photoRequired && (
+                            <Ionicons
+                              name={st.photoUri ? 'camera' : 'camera-outline'}
+                              size={13}
+                              color={st.photoUri ? C.green : C.red}
+                            />
+                          )}
+                        </View>
+                      ))}
+                    </>
+                  )}
+
+                  {repairChecklist.some(st => st.photoUri) && (
+                    <>
+                      <Text style={s.rrSectionLabel}>Photo Evidence</Text>
+                      <View style={s.rrShots}>
+                        {repairChecklist.filter(st => st.photoUri).map((st, i) => (
+                          <View key={i} style={s.rrShot}>
+                            <Image source={{ uri: st.photoUri }} style={s.rrShotImg} resizeMode="cover" />
+                            <Text style={s.rrShotCap} numberOfLines={2}>{st.title}</Text>
+                          </View>
+                        ))}
+                      </View>
+                      <Text style={s.rrEmpty}>
+                        Photos are a record of what you saw. They do not confirm the work was done correctly.
+                      </Text>
+                    </>
+                  )}
+
                   <Text style={s.rrSectionLabel}>Manual Sources Cited</Text>
                   {(repairReport.sources || []).length === 0
                     ? <Text style={s.rrEmpty}>No manual sources cited</Text>
@@ -835,7 +926,7 @@ export default function Dashboard() {
                 </View>
               </>
             ) : null}
-          </SafeAreaView>
+          </View>
         </Modal>
 
         <Modal visible={showFilterPicker} animationType="slide" onRequestClose={() => setShowFilterPicker(false)}>
@@ -1099,6 +1190,13 @@ const s = StyleSheet.create({
   rrSafetyItem:   { fontSize: 13, color: C.orange, lineHeight: 19, marginBottom: 2 },
   rrSource:       { fontSize: 13, color: C.text, marginBottom: 3 },
   rrFoot:         { fontSize: 11, color: C.textMuted, lineHeight: 16, marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.cardBorder },
+  rrChkRow:       { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: C.cardBorder },
+  rrChkText:      { flex: 1, fontSize: 12, color: C.text, lineHeight: 17 },
+  rrChkTag:       { fontSize: 9, fontWeight: '700', color: C.primary, backgroundColor: '#f1f0fb', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3, overflow: 'hidden' },
+  rrShots:        { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  rrShot:         { width: '47%' },
+  rrShotImg:      { width: '100%', height: 110, borderRadius: 8, backgroundColor: C.cardBorder },
+  rrShotCap:      { fontSize: 10, color: C.textSub, marginTop: 3, lineHeight: 13 },
   rrActions:      { padding: 16, borderTopWidth: 1, borderTopColor: C.cardBorder, backgroundColor: C.card },
   rrShareBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14 },
   rrShareText:    { color: '#fff', fontWeight: '700', fontSize: 14 },

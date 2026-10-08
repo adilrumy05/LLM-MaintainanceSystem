@@ -111,12 +111,14 @@ Use whole seconds. Never more than 3 markers in one response.`;
 
 const DEFAULT_SYSTEM_PROMPT = `You are a maintenance assistant. Give a clear, safe, step-by-step response to technical inspection and maintenance tasks. Base all guidance strictly on the retrieved manual content provided.`;
 
-// The step extractor (Call 2 below) must never see timer markers. It rewrites
-// the answer into step titles and descriptions, and any marker it copied
-// through would render as literal "[[TIMER:180|...]]" inside a step card —
-// where the client's marker sweep does not reach, since that only cleans the
-// narrative text. Strip them from what Call 2 reads; the narrative response
-// still carries the markers for the client to turn into timers.
+// Timer markers must never reach a step card. A marker copied into a title or
+// description renders as literal "[[TIMER:180|...]]", where the client's marker
+// sweep does not reach — that one only cleans the narrative text.
+//
+// The step extractor (Call 2 below) now READS the markers, because they are
+// what tells it which step owns the wait, so this is applied to its OUTPUT
+// fields instead of its input. The instruction not to copy them is the first
+// line of defence; this is the one that actually holds.
 const stripTimerMarkers = (str) =>
   typeof str === 'string' ? str.replace(/[ \t]*\[\[\s*TIMER\b[^\]]{0,80}\]\][ \t]*\n?/gi, '') : str;
 
@@ -683,9 +685,22 @@ Most procedures should have only a few photo steps, and many should have none. N
 
 When photo_required is true, photo_instruction must be one short sentence saying exactly what the photo should show (for example "Take a photo showing the cleaned filter before it is refitted."). When photo_required is false, photo_instruction must be an empty string.
 
-Do not invent new steps for photos and do not change a step's meaning because of them.`,
+Do not invent new steps for photos and do not change a step's meaning because of them.
+
+PROCEDURE TIMERS (timer_seconds / timer_label):
+The answer text may contain markers of the form [[TIMER:<seconds>|<label>]]. Each marker belongs to the step it FOLLOWS — it is the mandated wait the technician must observe before moving on from that step.
+
+For the step a marker follows, set timer_seconds to the number in the marker and timer_label to its label. For every other step, set timer_seconds to 0 and timer_label to an empty string.
+
+NEVER copy the marker text, the brackets, or the word TIMER into title or description. The marker is metadata, not prose. The step's own wording should already describe the wait, and must be left as it is.
+
+If a marker sits between two steps, it belongs to the EARLIER one — the wait happens after completing that step. If no marker is present, every step gets timer_seconds 0.`,
             },
-            { role: 'user', content: stripTimerMarkers(stepUserContent) },
+            // Markers are deliberately LEFT IN here: the extractor needs them to
+            // know which step owns the wait. They are stripped from the step
+            // fields afterwards, below, so a model that ignores the instruction
+            // above still cannot leak marker syntax into the UI.
+            { role: 'user', content: stepUserContent },
           ],
           temperature: 0,
           // Raised from 1500: each step now carries two extra fields, and a
@@ -712,6 +727,11 @@ Do not invent new steps for photos and do not change a step's meaning because of
                         image_id: { type: 'string' },
                         photo_required: { type: 'boolean' },
                         photo_instruction: { type: 'string' },
+                        // 0 means "no wait on this step". A nullable union would
+                        // work too, but strict mode is fussier about those than
+                        // it is about a sentinel.
+                        timer_seconds: { type: 'integer' },
+                        timer_label: { type: 'string' },
                       },
                       required: [
                         'title',
@@ -721,6 +741,8 @@ Do not invent new steps for photos and do not change a step's meaning because of
                         'image_id',
                         'photo_required',
                         'photo_instruction',
+                        'timer_seconds',
+                        'timer_label',
                       ],
                       additionalProperties: false,
                     },
@@ -760,9 +782,25 @@ Do not invent new steps for photos and do not change a step's meaning because of
               photoInstruction = 'Take a photo showing the completed result of this step.';
             }
 
+            // Same bounds the client applies to free-text markers: anything
+            // outside 5s..2h is a model slip, not a real procedure wait.
+            const rawSeconds = Number(st.timer_seconds);
+            const timerSeconds =
+              Number.isFinite(rawSeconds) && rawSeconds >= 5 && rawSeconds <= 7200
+                ? Math.round(rawSeconds)
+                : 0;
+            const timerLabel = timerSeconds
+              ? (typeof st.timer_label === 'string' && st.timer_label.trim()
+                  ? st.timer_label.trim().slice(0, 60)
+                  : 'Procedure wait')
+              : '';
+
             return {
-              title: st.title,
-              description: st.description,
+              // Stripped defensively. The extractor is told not to copy marker
+              // text into these fields, but it sees the markers now, so this is
+              // the guarantee rather than the instruction.
+              title: stripTimerMarkers(st.title),
+              description: stripTimerMarkers(st.description),
               warning_level: st.warning_level,
               tools_required: st.tools_required,
               // Manual/reference image: the app only receives the actual URL.
@@ -770,6 +808,9 @@ Do not invent new steps for photos and do not change a step's meaning because of
               // Technician's own verification photo.
               photo_required: photoRequired,
               photo_instruction: photoInstruction,
+              // Mandated wait owned by THIS step. 0 = none.
+              timer_seconds: timerSeconds,
+              timer_label: timerLabel,
             };
           })
         : [];
@@ -780,6 +821,7 @@ Do not invent new steps for photos and do not change a step's meaning because of
         console.log('  image_url:', step.image_url || 'NONE');
         console.log('  photo_required:', step.photo_required ? 'YES' : 'NO');
         console.log('  photo_instruction:', step.photo_instruction || 'NONE');
+        console.log('  timer:', step.timer_seconds ? `${step.timer_seconds}s "${step.timer_label}"` : 'NONE');
       });
       console.log('===============================================\n');
     } catch (stepErr) {

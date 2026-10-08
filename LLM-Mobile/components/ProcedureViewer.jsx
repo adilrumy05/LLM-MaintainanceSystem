@@ -4,8 +4,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { WARNING_COLORS } from '../constants/warningColors';
 import { capturePhotos } from '../services/photo';
+import ProcedureTimer from './ProcedureTimer';
 
-export default function ProcedureViewer({ steps, state, onChange }) {
+export default function ProcedureViewer({ steps, state, onChange, onTimerComplete }) {
   const safeState = state || { currentStep: 0, completedSteps: [], overviewOpen: false };
   const current = Math.min(Math.max(safeState.currentStep || 0, 0), Math.max(steps.length - 1, 0));
   const completedSteps = Array.isArray(safeState.completedSteps) ? safeState.completedSteps : [];
@@ -36,6 +37,18 @@ export default function ProcedureViewer({ steps, state, onChange }) {
   const currentPhoto = stepPhotos[current] || null;
   const hasPhoto = !!currentPhoto?.uri;
   const photoBlocksCompletion = photoRequired && !hasPhoto && !currentCompleted;
+
+  // The wait this step mandates, if any. Keyed by step index so each step's
+  // countdown is a separate component instance and switching steps mid-wait
+  // does not hand one step's remaining time to another.
+  const timerSeconds = Number(step.timerSeconds ?? step.timer_seconds) || 0;
+  const stepTimer = timerSeconds > 0
+    ? {
+        id: `step-${current}`,
+        seconds: timerSeconds,
+        label: step.timerLabel || step.timer_label || 'Procedure wait',
+      }
+    : null;
 
   const handleTakePhoto = async () => {
     if (capturing) return;
@@ -241,6 +254,37 @@ export default function ProcedureViewer({ steps, state, onChange }) {
             <Text style={s.photoDisclaimer}>
               The photo is kept as a record only. It does not confirm the work was done correctly.
             </Text>
+          </View>
+        )}
+
+        {stepTimer && (
+          <View style={s.timerBox}>
+            <View style={s.timerBadgeRow}>
+              <View style={s.timerBadge}>
+                <Ionicons name="hourglass-outline" size={12} color="#b45309" />
+                <Text style={s.timerBadgeText}>MANDATED WAIT</Text>
+              </View>
+            </View>
+
+            <Text style={s.timerHint}>
+              Start the timer when you reach this point. The alert fires even if
+              you lock the phone.
+            </Text>
+
+            <ProcedureTimer
+              key={stepTimer.id}
+              timer={stepTimer}
+              onComplete={onTimerComplete}
+              // Held in the procedure state, so walking ahead to read the next
+              // step does not reset a wait that is already running.
+              persisted={(safeState.timerState || {})[current]}
+              onPersist={(next) => {
+                const all = { ...(safeState.timerState || {}) };
+                if (next) all[current] = next;
+                else delete all[current];
+                patchState({ timerState: all });
+              }}
+            />
           </View>
         )}
 
@@ -463,6 +507,10 @@ export default function ProcedureViewer({ steps, state, onChange }) {
                   {overviewStep.title}
                 </Text>
 
+                {(Number(overviewStep.timerSeconds ?? overviewStep.timer_seconds) || 0) > 0 && (
+                  <Ionicons name="hourglass-outline" size={13} color="#b45309" />
+                )}
+
                 {(overviewStep.photoRequired ?? overviewStep.photo_required) === true && (
                   <Ionicons
                     name={stepPhotos[index]?.uri ? 'camera' : 'camera-outline'}
@@ -524,6 +572,11 @@ const s = StyleSheet.create({
   photoButton:              { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, minHeight: 40, borderRadius: 10, backgroundColor: '#0369a1', paddingVertical: 9 },
   photoButtonText:          { fontSize: 12, fontWeight: '800', color: '#fff' },
   photoDisclaimer:          { fontSize: 9, lineHeight: 13, color: '#6b7280', marginTop: 7 },
+  timerBox:                 { marginTop: 13, padding: 11, borderWidth: 1, borderColor: '#fde68a', borderRadius: 11, backgroundColor: '#fffbeb' },
+  timerBadgeRow:            { flexDirection: 'row', marginBottom: 6 },
+  timerBadge:               { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: '#fef3c7' },
+  timerBadgeText:           { fontSize: 9, fontWeight: '800', letterSpacing: 0.5, color: '#b45309' },
+  timerHint:                { fontSize: 11, lineHeight: 16, color: '#92400e', marginBottom: 2 },
   stepCheckbox:             { width: 23, height: 23, borderRadius: 7, borderWidth: 2, borderColor: '#7c3aed', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   stepCheckboxChecked:      { backgroundColor: '#16a34a', borderColor: '#16a34a' },
   stepCompleteActionTitle:  { fontSize: 11, fontWeight: '800' },

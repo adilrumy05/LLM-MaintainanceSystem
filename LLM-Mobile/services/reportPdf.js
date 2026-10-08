@@ -7,6 +7,76 @@
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { File, Paths } from 'expo-file-system';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+
+// Verification photos come off the camera at full sensor resolution — several
+// megabytes each. Embedded raw as base64 they would push a routine report into
+// tens of megabytes, which WhatsApp refuses and Mail chokes on. 820px wide at
+// moderate compression is still comfortably legible at the ~85mm the grid
+// prints them, and keeps a six-photo report to roughly a megabyte.
+const PHOTO_WIDTH = 820;
+const PHOTO_COMPRESS = 0.5;
+
+// A hard ceiling regardless of how many steps asked for a photo. A report that
+// will not send is worse than one with a note saying some photos were omitted.
+const MAX_PHOTOS = 8;
+
+// Returns a data: URI, or null when the photo cannot be read. A missing photo
+// must never fail the export — the rest of the report is still worth having.
+async function photoAsDataUri(uri) {
+  if (!uri) return null;
+  try {
+    const rendered = await ImageManipulator.manipulate(uri)
+      .resize({ width: PHOTO_WIDTH })
+      .renderAsync();
+    const out = await rendered.saveAsync({
+      compress: PHOTO_COMPRESS,
+      format: SaveFormat.JPEG,
+      base64: true,
+    });
+    return out?.base64 ? `data:image/jpeg;base64,${out.base64}` : null;
+  } catch (e) {
+    console.warn('[reportPdf] Could not embed photo:', e?.message);
+    return null;
+  }
+}
+
+// Turns the raw checklist handed over by the dashboard into something the HTML
+// builder can render synchronously: photos already encoded, counts resolved.
+export async function prepareEvidence(checklist) {
+  const steps = Array.isArray(checklist) ? checklist : [];
+  if (!steps.length) return null;
+
+  let embedded = 0;
+  let overLimit = 0;
+  let failed = 0;
+
+  const prepared = [];
+  for (const st of steps) {
+    let dataUri = null;
+    if (st.photoUri) {
+      if (embedded >= MAX_PHOTOS) {
+        // Counted separately from a read failure. Telling the reader a photo
+        // was dropped for size when it actually failed to load would send them
+        // looking for the wrong thing.
+        overLimit++;
+      } else {
+        dataUri = await photoAsDataUri(st.photoUri);
+        if (dataUri) embedded++;
+        else failed++;
+      }
+    }
+    prepared.push({ ...st, photoDataUri: dataUri });
+  }
+
+  return {
+    steps: prepared,
+    completedCount: prepared.filter((st) => st.completed).length,
+    photoCount: embedded,
+    photosOverLimit: overLimit,
+    photosFailed: failed,
+  };
+}
 
 // Every value below is interpolated into an HTML document, so it must be
 // escaped. /api/report intentionally skips the outputSanitize middleware (it
@@ -26,7 +96,7 @@ const listOrEmpty = (items, emptyText) =>
     : `<p class="muted">${esc(emptyText)}</p>`;
 
 // A4 with generous margins, sized to stay on one page for a typical job.
-export function buildReportHtml(record) {
+export function buildReportHtml(record, evidence = null) {
   const r = record?.report || {};
   const sources = record?.sources || [];
 
@@ -83,6 +153,31 @@ export function buildReportHtml(record) {
   td.pg { width: 130px; color: #5b6472; }
   .foot { margin-top: 11px; padding-top: 6px; border-top: 1px solid #e6e8ee;
           font-size: 7.5pt; color: #8a92a0; }
+  .chk-summary { font-size: 8.5pt; color: #5b6472; margin-bottom: 4px; }
+  table.chk td { vertical-align: top; }
+  td.chk-no, th.chk-no { width: 20px; color: #8a92a0; }
+  td.chk-st, th.chk-st { width: 86px; text-align: right; white-space: nowrap; }
+  td.chk-st.done { color: #15803d; font-weight: 600; }
+  td.chk-st.todo { color: #9a3412; }
+  .chk-tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px;
+             font-size: 7pt; background: #f1f0fb; color: #6d5bbd; vertical-align: 1px; }
+  .chk-tag.ok { background: #eefaf0; color: #15803d; }
+  .chk-tag.miss { background: #fdf1ec; color: #9a3412; }
+  /* Photos run two to a row. Each figure is kept whole across a page break —
+     a caption stranded from its image is worse than a short page. */
+  .shots { display: flex; flex-wrap: wrap; gap: 7px; }
+  .shot { width: calc(50% - 4px); margin: 0; page-break-inside: avoid;
+          break-inside: avoid; }
+  /* width + auto height, nothing else. The photo keeps its own proportions.
+     Not cropped, because cropping an evidence photo can remove the very detail
+     it was taken to record. No max-height either: capping the height letterboxes
+     the landscape shots a phone actually produces, wasting most of the width on
+     grey — the aspect ratio has to give somewhere, and a taller figure is the
+     cheaper cost. */
+  .shot img { width: 100%; height: auto; border-radius: 4px;
+              border: 1px solid #e6e8ee; display: block; }
+  .shot figcaption { font-size: 7.5pt; color: #5b6472; margin-top: 2px;
+                     line-height: 1.25; }
 </style></head><body>
   <div class="head">
     <div class="brand">Maintenance Copilot &middot; Repair Report</div>
@@ -122,6 +217,67 @@ export function buildReportHtml(record) {
   <h2>Follow-up</h2>
   <p>${esc(r.follow_up)}</p>
 
+  ${
+    evidence && evidence.steps.length
+      ? `<h2>Work Checklist</h2>
+         <p class="chk-summary">${esc(evidence.completedCount)} of ${esc(
+          evidence.steps.length
+        )} steps marked complete by the technician.</p>
+         <table class="chk">
+           <thead><tr><th class="chk-no">#</th><th>Step</th><th class="chk-st">Status</th></tr></thead>
+           <tbody>${evidence.steps
+             .map(
+               (st, i) =>
+                 `<tr><td class="chk-no">${i + 1}</td><td>${esc(st.title)}${
+                   st.timerSeconds
+                     ? `<span class="chk-tag">wait ${Math.round(
+                         st.timerSeconds / 60
+                       )} min</span>`
+                     : ''
+                 }${
+                   st.photoRequired
+                     ? `<span class="chk-tag ${st.photoDataUri ? 'ok' : 'miss'}">${
+                         st.photoDataUri ? 'photo on file' : 'photo missing'
+                       }</span>`
+                     : ''
+                 }</td><td class="chk-st ${st.completed ? 'done' : 'todo'}">${
+                   st.completed ? 'Complete' : 'Not completed'
+                 }</td></tr>`
+             )
+             .join('')}</tbody>
+         </table>`
+      : ''
+  }
+
+  ${
+    evidence && evidence.photoCount
+      ? `<h2>Photo Evidence</h2>
+         <div class="shots">${evidence.steps
+           .filter((st) => st.photoDataUri)
+           .map(
+             (st, i) =>
+               `<figure class="shot"><img src="${st.photoDataUri}" alt="" />
+                <figcaption>${esc(st.title)}</figcaption></figure>`
+           )
+           .join('')}</div>
+         ${
+           evidence.photosOverLimit
+             ? `<p class="muted">${esc(
+                 evidence.photosOverLimit
+               )} further photo(s) were captured but left out, to keep the file small enough to send.</p>`
+             : ''
+         }
+         ${
+           evidence.photosFailed
+             ? `<p class="muted">${esc(
+                 evidence.photosFailed
+               )} photo(s) could not be read from the device and are missing from this report.</p>`
+             : ''
+         }
+         <p class="muted">Photos are a record of what the technician saw. They do not confirm the work was performed correctly.</p>`
+      : ''
+  }
+
   <h2>Manual Sources Cited</h2>
   <table>
     <thead><tr><th>Document</th><th>Page</th><th>Type</th></tr></thead>
@@ -151,8 +307,9 @@ function safeFilename(record) {
 // printToFileAsync writes to a cache path with a random name. Renaming gives
 // the share sheet a meaningful filename instead of something like
 // "3f9a1c2e-....pdf", which is what the recipient actually sees in WhatsApp.
-export async function createReportPdf(record) {
-  const html = buildReportHtml(record);
+export async function createReportPdf(record, checklist = null) {
+  const evidence = await prepareEvidence(checklist);
+  const html = buildReportHtml(record, evidence);
   const { uri } = await Print.printToFileAsync({ html, base64: false });
 
   try {
@@ -171,8 +328,8 @@ export async function createReportPdf(record) {
 
 // Generate + hand to the OS share sheet. Returns false when sharing is
 // unavailable (notably web), so the caller can fall back to the preview.
-export async function shareReportPdf(record) {
-  const uri = await createReportPdf(record);
+export async function shareReportPdf(record, checklist = null) {
+  const uri = await createReportPdf(record, checklist);
 
   if (!(await Sharing.isAvailableAsync())) {
     return { shared: false, uri };
