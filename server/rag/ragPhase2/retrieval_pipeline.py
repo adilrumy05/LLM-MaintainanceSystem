@@ -107,37 +107,6 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-# ── Env helpers ───────────────────────────────────────────────────────────────
-
-def _env_int(name: str, default: int) -> int:
-    val = os.getenv(name)
-    if val is None:
-        return default
-    try:
-        return int(val)
-    except ValueError:
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    val = os.getenv(name)
-    if val is None:
-        return default
-    try:
-        return float(val)
-    except ValueError:
-        return default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    val = os.getenv(name, "").lower()
-    if val in ("1", "true", "yes"):
-        return True
-    if val in ("0", "false", "no"):
-        return False
-    return default
-
-
 # ── Result dataclass ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -228,14 +197,16 @@ class RetrievalPipeline:
     filtering when available, and returns a RetrievalResult.
     """
 
+
+
     def __init__(self):
         # Lazy imports so heavy models are only loaded on first retrieve()
         self._embedder      = None
         self._vector_store  = None
 
-        self.top_k            = _env_int("RETRIEVAL_TOP_K")
-        self.score_min        = _env_float("RETRIEVAL_SCORE_MIN")
-        self.hydrate_parents  = _env_bool("RETRIEVAL_HYDRATE_PARENTS", True)
+        self.top_k           = int(os.getenv("RETRIEVAL_TOP_K"))
+        self.score_min       = float(os.getenv("RETRIEVAL_SCORE_MIN"))
+        self.hydrate_parents = os.getenv("RETRIEVAL_HYDRATE_PARENTS", "true").lower() in ("1", "true", "yes")
 
         print(
             f"RetrievalPipeline ready:\n"
