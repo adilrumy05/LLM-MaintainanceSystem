@@ -52,6 +52,7 @@ const PROMPT_FILE_PATH = path.join(__dirname, 'latest_prompt.txt');
 // this is intentionally small and hard-capped rather than open-ended.
 const MAX_RETRIEVAL_ROUNDS = parseInt(process.env.MAX_RETRIEVAL_ROUNDS || '2', 10);
 const ANSWER_MODEL = process.env.ANSWER_MODEL || 'gpt-6-luna';
+const DEFAULT_TOP_K = parseInt(process.env.RETRIEVAL_TOP_K || '10', 10);
 
 const ROLE_SYSTEM_PROMPTS = {
   beginner: `You are a Guidance Helper for a junior maintenance technician.
@@ -314,7 +315,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       classification,
       category1,
       category2,
-      topK = 5,
+      topK = DEFAULT_TOP_K,
       imageBase64: singleImage,
       images,
       confirmedModel,
