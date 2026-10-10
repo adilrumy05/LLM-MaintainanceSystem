@@ -275,7 +275,7 @@ Before answering, judge whether the context above is actually enough to fully an
         { role: 'system', content: fullSystemPrompt },
         { role: 'user', content: userContent },
       ],
-      reasoning:{"effort": "high"},
+      reasoning_effort: 'high',
       max_completion_tokens: 8192,
       response_format: {
         type: 'json_schema',
@@ -702,7 +702,7 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
             // above still cannot leak marker syntax into the UI.
             { role: 'user', content: stepUserContent },
           ],
-          reasoning: {"effort": "medium"},
+          reasoning_effort: 'medium',
           // Raised from 1500: each step now carries two extra fields, and a
           // truncated response would break JSON.parse.
           max_completion_tokens: 6144,
@@ -966,7 +966,7 @@ Reply with the title and nothing else.`,
             content: `Question: ${String(question).slice(0, 500)}\n\nAnswer: ${String(answer || '').slice(0, 500)}`,
           },
         ],
-        reasoning: {"effort": "low"},
+        reasoning_effort: 'low',
         max_completion_tokens: 100,
       }),
     });
