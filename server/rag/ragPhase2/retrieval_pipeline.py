@@ -233,8 +233,8 @@ class RetrievalPipeline:
         self._embedder      = None
         self._vector_store  = None
 
-        self.top_k            = _env_int("RETRIEVAL_TOP_K",   5)
-        self.score_min        = _env_float("RETRIEVAL_SCORE_MIN", 0.0)
+        self.top_k            = _env_int("RETRIEVAL_TOP_K")
+        self.score_min        = _env_float("RETRIEVAL_SCORE_MIN")
         self.hydrate_parents  = _env_bool("RETRIEVAL_HYDRATE_PARENTS", True)
 
         print(

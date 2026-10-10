@@ -315,7 +315,6 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       classification,
       category1,
       category2,
-      topK = DEFAULT_TOP_K,
       imageBase64: singleImage,
       images,
       confirmedModel,
@@ -440,7 +439,6 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       // match against the typed text, so it wins.
       model_number: visualModel || matchedModel || (imageBase64 ? null : trustedConfirmedModel) || null,
       date_added: matchedDate || null,
-      top_k: topK,
     };
 
     console.log(`Calling retrieval service for: "${query}"`);

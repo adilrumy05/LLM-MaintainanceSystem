@@ -1,6 +1,7 @@
 # server\rag\retrieval\retrieval_service.py
 import sys
 from pathlib import Path
+import os
 from dotenv import load_dotenv
 
 # Project root — allows imports like "from server...."
@@ -35,7 +36,6 @@ class RetrievalRequest(BaseModel):
     category_level_1: Optional[str] = None
     category_level_2: Optional[str] = None
     model_number: Optional[str] = None
-    top_k: int = 5
     # Optional override. Leave unset to get the pipeline's default, which now
     # includes "image" — VLM-described figures/graphs/schematics/flowcharts/
     # installation steps are searchable by default. Pass e.g. ["image"] to
@@ -81,7 +81,6 @@ async def retrieve(request: RetrievalRequest):
             category_level_1=request.category_level_1,
             category_level_2=request.category_level_2,
             model_number=request.model_number,
-            top_k=request.top_k,
             chunk_types=request.chunk_types,
         )
 
