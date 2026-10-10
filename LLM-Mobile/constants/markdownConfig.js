@@ -1,4 +1,4 @@
-import { View, ScrollView, StyleSheet, Text } from 'react-native';
+import { View, ScrollView, StyleSheet, Text, Platform } from 'react-native';
 import { C } from '../theme';
 import { FEATURES } from './featureFlags';
 
@@ -18,12 +18,18 @@ export const markdownStyles = {
   td:           { padding: 8, fontSize: 12, color: C.text, borderRightWidth: 1, borderColor: C.cardBorder, minWidth: 100 },
 };
 
+// Whether answer paragraphs are selectable in place. Not on iOS, for two
+// reasons. A selectable <Text> there only offers "copy the whole paragraph"
+// (facebook/react-native#13938), so it adds little. And with it on, the iPhone
+// sometimes did not draw the last line of a wrapped list item: the space was
+// reserved but the text was missing. Selectable text is the suspected cause,
+// not a confirmed one. iOS uses the "Select text" sheet and the Copy button.
+export const selectsInline = (os = Platform.OS) => FEATURES.CHAT_SELECT && os !== 'ios';
+
 export const makeMarkdownRules = (tableScrollStyle) => ({
   // Each paragraph renders as its own <Text>, so selection works within a
-  // paragraph but not across paragraphs. Android and web allow selecting part
-  // of a paragraph; iOS only offers "copy the whole paragraph" for <Text>
-  // (facebook/react-native#13938), which is why the "Select text" sheet exists.
-  ...(FEATURES.CHAT_SELECT && {
+  // paragraph but not across paragraphs.
+  ...(selectsInline() && {
     textgroup: (node, children, parent, styles) => (
       <Text key={node.key} style={styles.textgroup} selectable>
         {children}

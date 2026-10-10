@@ -89,6 +89,7 @@ const plain = text => text
   .replace(/\\times\b/g, '×')
   .replace(/\\text\{([^}]*)\}/g, '$1')
   .replace(/\^\{?2\}?/g, '²')
+  .replace(/\\,/g, ' ')
   .replace(/[\\$]/g, '');
 const CODE = /\b(?=[A-Z0-9-]*\d)(?=[A-Z0-9-]*[A-Z])[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g;
 const ALIASES = { mm2: 'mm²', sec: 'second', min: 'minute', hr: 'hour', hrs: 'hour', ohm: 'ω' };

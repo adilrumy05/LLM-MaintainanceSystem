@@ -89,6 +89,21 @@ line by line against the manual pages.
 
 
 
+## Animation feasibility test and display fix — 2026-10-08
+
+Uncommitted, on top of checkpoint `04fc15d`. Run by Adil in the working tree.
+
+| Area | Result | Evidence |
+|---|---|---|
+| Backend Jest | 305 tests, 18 suites passed | Full suite, console output; 66 are tests/unit/animationSpike.test.js |
+| App jest-expo | 55 tests, 12 suites passed | Full suite, console output; APP-B2-3 to APP-B2-5 are new |
+| Animation test, live | 12 questions x 2 models, 4 runs, $1.06 of a $5 cap | docs/ANIMATION_SPIKE.md |
+| Animation test, human review | Pending: two reviewers | Review sheet linked from docs/ANIMATION_SPIKE.md |
+| Cut-off answer text on iPhone | Fix made, not yet checked on the phone | LLM-Mobile/constants/markdownConfig.js |
+
+The animation tests call no model; they check the rules that decide what may be
+shown. The live runs are recorded in spikes/animation/results/.
+
 \## Test ID format
 
 

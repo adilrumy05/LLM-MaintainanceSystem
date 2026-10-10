@@ -45,6 +45,12 @@ describe('Brief figure check', () => {
     expect(checkBriefFigures('For 3.0 HP units use 2.5 mm² cable.', ingested).missing).toEqual(['3.0 hp']);
   });
 
+  // Found while building the animation spike: page 56 writes "1.5 \\, \\text{mm}^2".
+  test('reads a measurement through a LaTeX thin space', () => {
+    const ingested = ['sheathed $4 \\times 1.5 \\, \\text{mm}^2$ (1.0 \\~ 1.5HP) flexible cord'];
+    expect(checkBriefFigures('Use 4 × 1.5 mm² cable for 1.5 HP units.', ingested).ok).toBe(true);
+  });
+
   test('a figure the user typed in the question counts as known', () => {
     expect(checkBriefFigures('The manual does not list a 12 V supply.', [...MANUAL, 'is it a 12 V supply?']).ok).toBe(true);
   });
