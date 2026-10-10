@@ -51,6 +51,7 @@ const PROMPT_FILE_PATH = path.join(__dirname, 'latest_prompt.txt');
 // extra round costs one more /retrieve call plus one more Call-1 LLM call, so
 // this is intentionally small and hard-capped rather than open-ended.
 const MAX_RETRIEVAL_ROUNDS = parseInt(process.env.MAX_RETRIEVAL_ROUNDS || '2', 10);
+const ANSWER_MODEL = process.env.ANSWER_MODEL || 'gpt-6-luna';
 
 const ROLE_SYSTEM_PROMPTS = {
   beginner: `You are a Guidance Helper for a junior maintenance technician.
@@ -268,13 +269,13 @@ Before answering, judge whether the context above is actually enough to fully an
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model: ANSWER_MODEL,
       messages: [
         { role: 'system', content: fullSystemPrompt },
         { role: 'user', content: userContent },
       ],
-      temperature: 0.2,
-      max_tokens: 2048,
+      reasoning:{"effort": "high"},
+      max_completion_tokens: 8192,
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -652,7 +653,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: ANSWER_MODEL,
           messages: [
             {
               role: 'system',
@@ -702,10 +703,10 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
             // above still cannot leak marker syntax into the UI.
             { role: 'user', content: stepUserContent },
           ],
-          temperature: 0,
+          reasoning: {"effort": "medium"},
           // Raised from 1500: each step now carries two extra fields, and a
           // truncated response would break JSON.parse.
-          max_tokens: 2500,
+          max_completion_tokens: 6144,
           response_format: {
             type: 'json_schema',
             json_schema: {
@@ -941,7 +942,7 @@ app.post('/api/chat-title', sanitize, async (req, res) => {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: ANSWER_MODEL,
         messages: [
           {
             role: 'system',
@@ -966,8 +967,8 @@ Reply with the title and nothing else.`,
             content: `Question: ${String(question).slice(0, 500)}\n\nAnswer: ${String(answer || '').slice(0, 500)}`,
           },
         ],
-        temperature: 0.3,
-        max_tokens: 20,
+        reasoning: {"effort": "low"},
+        max_completion_tokens: 100,
       }),
     });
 
