@@ -30,8 +30,7 @@ import QuoteChip from '../components/QuoteChip';
 import { FEATURES } from '../constants/featureFlags';
 import { answerForClipboard, toPlainText, toQuote } from '../utils/messageText';
 import { createRequestGuard } from '../utils/requestGuard';
-import DetailChip from '../components/DetailChip';
-import AnimateChip from '../components/AnimateChip';
+import ChatOptionsSheet from '../components/ChatOptionsSheet';
 import usePreferences from '../hooks/usePreferences';
 import { normaliseDetail, answerView, isResponseDetail } from '../utils/responseDetail';
 
@@ -101,6 +100,7 @@ export default function Dashboard() {
   const [repairReportError, setRepairReportError] = useState(null);
   const [sharingRepairPdf, setSharingRepairPdf]   = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   const [reportText, setReportText]           = useState('');
   const [quote, setQuote]                     = useState(null);   // { text, messageId }
   const [selectFor, setSelectFor]             = useState(null);   // message open in the select sheet
@@ -745,6 +745,11 @@ export default function Dashboard() {
     );
   }, [handleAction, isProcessing, isPhotoBusy, handsFreeActive, updateMessage, handleCopyAnswer, handleTimerComplete, animating, requestAnimation, cancelAnimation]);
 
+  // Shown above the message box only when they differ from the defaults.
+  const animateOn = FEATURES.ANIMATIONS && preferences.animate;
+  const detailShown = FEATURES.EFFORT_LEVELS && preferences.detail !== 'standard'
+    ? preferences.detail.charAt(0).toUpperCase() + preferences.detail.slice(1) : null;
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={0}>
       <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
@@ -1220,43 +1225,47 @@ export default function Dashboard() {
 
           {FEATURES.CHAT_QUOTE && <QuoteChip text={quote?.text} onRemove={() => setQuote(null)} />}
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterBar} style={s.filterScroll} keyboardShouldPersistTaps="handled">
-            {FEATURES.EFFORT_LEVELS && <DetailChip value={preferences.detail} onChange={preferences.setDetail} disabled={!preferences.ready || handsFree.active} />}
-            {FEATURES.ANIMATIONS && <AnimateChip value={preferences.animate} introSeen={preferences.animateIntroSeen} onChange={preferences.setAnimate} disabled={!preferences.ready || handsFree.active} />}
-            <TouchableOpacity style={s.filterChip} onPress={() => setShowFilterPicker(true)}>
-              <Ionicons name="filter-outline" size={13} color={activeChat?.filter ? C.primary : C.textMuted} />
-              <Text style={[s.filterChipText, activeChat?.filter && { color: C.primary, fontWeight: '700' }]} numberOfLines={1}>
-                {activeChat?.filter ? activeChat.filter.label : 'All models (no filter)'}
-              </Text>
-            </TouchableOpacity>
-            {activeChat?.filter && (
-              <TouchableOpacity onPress={() => handleSelectFilter(null)} style={s.filterClearBtn}>
-                <Ionicons name="close-circle" size={16} color={C.textMuted} />
+          {/* One button for every setting, then what is set for the next
+              question where it differs from the defaults. */}
+          {(
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterBar} style={s.filterScroll} keyboardShouldPersistTaps="handled">
+              <TouchableOpacity style={s.optionsBtn} onPress={() => setShowOptions(true)} accessibilityRole="button" accessibilityLabel="Chat options">
+                <Ionicons name="options-outline" size={14} color={C.primary} />
+                <Text style={s.optionsBtnText}>Options</Text>
               </TouchableOpacity>
-            )}
-            {activeChat?.confirmedModel && (
-              <View style={s.machineChip}>
-                <Ionicons name="hardware-chip-outline" size={13} color={C.primary} />
-                <Text style={s.machineChipText} numberOfLines={1}>{activeChat.confirmedModel}</Text>
-                <TouchableOpacity onPress={() => updateChat(activeChatId, { confirmedModel: null })}>
-                  <Ionicons name="close-circle" size={15} color={C.textMuted} />
+              {animateOn && (
+                <TouchableOpacity style={s.filterChip} onPress={() => setShowOptions(true)} accessibilityRole="button" accessibilityLabel="Animations are on. Open chat options">
+                  <Ionicons name="film" size={13} color={C.primary} />
+                  <Text style={s.stateChipText}>Animate on</Text>
                 </TouchableOpacity>
-              </View>
-            )}
-            <TouchableOpacity style={s.reportChip} onPress={() => setShowReportModal(true)}>
-              <Ionicons name="bug-outline" size={13} color="#ea580c" />
-              <Text style={s.reportChipText}>Report</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.handsFreeChip, handsFree.active && s.handsFreeChipOn]}
-              onPress={toggleHandsFree}
-              disabled={!handsFree.active && (isProcessing || isPhotoBusy)}
-            >
-              <Ionicons name="headset-outline" size={13} color={handsFree.active ? '#fff' : C.primary} />
-              <Text style={[s.handsFreeChipText, handsFree.active && { color: '#fff' }]}>Hands-free</Text>
-            </TouchableOpacity>
-          </ScrollView>
-          {FEATURES.EFFORT_LEVELS && preferences.error && <Text style={s.preferenceNote}>{preferences.error}</Text>}
+              )}
+              {detailShown && (
+                <TouchableOpacity style={s.filterChip} onPress={() => setShowOptions(true)} accessibilityRole="button" accessibilityLabel={`Response detail: ${detailShown}. Open chat options`}>
+                  <Ionicons name="options-outline" size={13} color={C.primary} />
+                  <Text style={s.stateChipText}>{detailShown}</Text>
+                </TouchableOpacity>
+              )}
+              {activeChat?.filter && (
+                <View style={s.filterChip}>
+                  <Ionicons name="filter-outline" size={13} color={C.primary} />
+                  <Text style={s.stateChipText} numberOfLines={1}>{activeChat.filter.label}</Text>
+                  <TouchableOpacity onPress={() => handleSelectFilter(null)} accessibilityRole="button" accessibilityLabel="Clear manual filter">
+                    <Ionicons name="close-circle" size={15} color={C.textMuted} />
+                  </TouchableOpacity>
+                </View>
+              )}
+              {activeChat?.confirmedModel && (
+                <View style={s.machineChip}>
+                  <Ionicons name="hardware-chip-outline" size={13} color={C.primary} />
+                  <Text style={s.machineChipText} numberOfLines={1}>{activeChat.confirmedModel}</Text>
+                  <TouchableOpacity onPress={() => updateChat(activeChatId, { confirmedModel: null })}>
+                    <Ionicons name="close-circle" size={15} color={C.textMuted} />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </ScrollView>
+          )}
+          {preferences.error && (FEATURES.EFFORT_LEVELS || FEATURES.ANIMATIONS) && <Text style={s.preferenceNote}>{preferences.error}</Text>}
 
           <View style={s.inputBar}>
             <TouchableOpacity style={s.iconBtn} onPress={handleAttachPhoto} disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}>
@@ -1283,6 +1292,17 @@ export default function Dashboard() {
             </TouchableOpacity>
           </View>
         </View>
+
+        <ChatOptionsSheet
+          visible={showOptions}
+          onClose={() => setShowOptions(false)}
+          animate={FEATURES.ANIMATIONS ? { value: preferences.animate, onChange: preferences.setAnimate } : null}
+          detail={FEATURES.EFFORT_LEVELS ? { value: preferences.detail, onChange: preferences.setDetail } : null}
+          settingsDisabled={!preferences.ready || handsFree.active}
+          filter={{ label: activeChat?.filter?.label || null, onOpen: () => setShowFilterPicker(true), onClear: () => handleSelectFilter(null) }}
+          handsFree={{ active: handsFree.active, disabled: !handsFree.active && (isProcessing || isPhotoBusy), onToggle: toggleHandsFree }}
+          onReport={() => setShowReportModal(true)}
+        />
 
         <SelectTextSheet
           visible={!!selectFor}
@@ -1418,8 +1438,9 @@ const s = StyleSheet.create({
   filterScroll:       { flexGrow: 0 },
   preferenceNote:     { fontSize: 12, color: C.textMuted, marginHorizontal: 12, marginTop: 6 },
   filterChip:         { flexDirection: 'row', alignItems: 'center', backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, gap: 4, flexShrink: 1 },
-  filterChipText:     { fontSize: 12, color: C.textSub, flexShrink: 1 },
-  filterClearBtn:     { padding: 4 },
+  optionsBtn:         { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 14, borderWidth: 1, borderColor: C.primary, paddingHorizontal: 10, paddingVertical: 5 },
+  optionsBtnText:     { fontSize: 12, color: C.primary, fontWeight: '700' },
+  stateChipText:      { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
   filterModalHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderColor: C.cardBorder },
   filterModalTitle:   { fontSize: 17, fontWeight: '700', color: C.text },
   filterSearchBar:    { flexDirection: 'row', alignItems: 'center', margin: 12, backgroundColor: C.inputBg, borderRadius: 12, borderWidth: 1, borderColor: C.inputBorder, paddingHorizontal: 12, gap: 8 },
@@ -1433,13 +1454,8 @@ const s = StyleSheet.create({
 
   machineChip:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6, flexShrink: 1 },
   machineChipText:    { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
-  handsFreeChip:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: C.primary },
-  handsFreeChipOn:    { backgroundColor: C.primary },
-  handsFreeChipText:  { fontSize: 12, color: C.primary, fontWeight: '700' },
   handsFreeNotice:    { marginHorizontal: 12, marginTop: 6, color: C.textMuted, fontSize: 12 },
 
-  reportChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#ea580c', backgroundColor: '#fff7ed' },
-  reportChipText:     { fontSize: 12, color: '#ea580c', fontWeight: '700' },
   reportOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   reportSheet:        { backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 14 },
   reportHeader:       { flexDirection: 'row', alignItems: 'center', gap: 10 },
