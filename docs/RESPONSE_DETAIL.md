@@ -328,3 +328,21 @@ Detailed answered the servicing-safety question where Standard could not.
 Four questions were still not answered at Standard: what the filters do,
 drain-hose installation, error H11 and servicing safety. A new comparison sheet
 with seven questions was made from this run.
+
+## Switched on, 11 Oct 2026
+
+Standard and Detailed are on (`EFFORT_LEVELS: true`); Brief stays hidden. The
+choice is made in Chat options, the button at the left of the message box.
+
+Before switching on, the seven answered Detailed answers from the 11 Oct run
+were checked line by line against the manual passages they were written from.
+Every figure, part number and step was found in the passages. Two wording
+points, neither a wrong fact:
+
+- **Servicing safety:** "switch off the power supply and unplug" is the
+  manual's instruction for an emergency or abnormal condition (p. 28), which
+  the answer presents as a step before servicing.
+- **Airflow:** the up-and-down inner vane is called "the vertical vane" once.
+
+Whether Detailed is more useful than Standard has not been judged by
+teammates; Adil decided to let user testing answer that.

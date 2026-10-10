@@ -43,10 +43,11 @@ animation can only be drawn from passages the answer itself used.
 
 ## In the app
 
-- **Animate chip** beside the message box, off by default and remembered per
-  user. The first time it is turned on, a notice explains that an animation
-  may not be produced, that drawings are schematic, and that each one costs a
-  few cents.
+- **Animate switch** in Chat options (the button at the left of the message
+  box), off by default and remembered per user. Under the switch, always
+  shown, is the notice: an animation may not be produced, drawings are
+  schematic, and each one costs a few cents. While it is on, an "Animate on"
+  chip sits above the message box.
 - **Animation card** under a step-by-step answer: being made (with Cancel),
   ready (the player), not available (with what the manual text lacks), or
   failed (with Retry). An animation left unfinished when the app closed shows
@@ -92,10 +93,10 @@ ANIMATION_DAILY_USD=1
   - `utils/animationScene.js`: what is drawn for a step, from the checked facts.
   - `components/animation/Parts.jsx`, `Stage.jsx`, `Player.jsx`: the drawing
     (`react-native-svg`) and the player.
-  - `components/AnimationCard.jsx`, `components/AnimateChip.jsx`.
+  - `components/AnimationCard.jsx`, `components/ChatOptionsSheet.jsx`.
   - `services/api.js`: `animateAnswer()`.
   - Tests: `tests/animationScene.test.js`, `AnimationCard.test.js`,
-    `AnimateChip.test.js`, `api.animate.test.js`, `dashboard.animate.test.js`.
+    `ChatOptionsSheet.test.js`, `api.animate.test.js`, `dashboard.animate.test.js`.
 - Backend tests: `tests/unit/animationChecks.test.js`, `tests/unit/animationPipeline.test.js`,
   `tests/endpoints/animate.test.js`.
 - `spikes/animation/run.js` still runs the 12 test questions through the same

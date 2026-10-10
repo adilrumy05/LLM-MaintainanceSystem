@@ -41,7 +41,9 @@ const savedMessage = () => {
 async function openWith(prefs) {
   AsyncStorage.getItem.mockImplementation(key => Promise.resolve(key === 'prefs_u1' && prefs ? JSON.stringify(prefs) : null));
   await render(<Dashboard />);
+  await fireEvent.press(screen.getByLabelText('Chat options'));
   await waitFor(() => expect(screen.getByRole('switch').props.accessibilityState.disabled).toBe(false));
+  await fireEvent.press(screen.getByLabelText('Done'));
 }
 async function ask() {
   await fireEvent.changeText(screen.getByPlaceholderText('Ask a maintenance question...'), 'How do I connect the cable?');
@@ -54,26 +56,28 @@ afterAll(() => { FEATURES.ANIMATIONS = false; });
 test('the toggle is not shown while the feature is switched off', async () => {
   FEATURES.ANIMATIONS = false;
   await render(<Dashboard />);
-  await waitFor(() => expect(screen.getByPlaceholderText('Ask a maintenance question...')).toBeTruthy());
+  await fireEvent.press(screen.getByLabelText('Chat options'));
+  expect(screen.getByText('Manual filter')).toBeTruthy();
   expect(screen.queryByRole('switch')).toBeNull();
 });
 
 test('off by default: the question is asked without animate and nothing is requested', async () => {
   await openWith(null);
-  expect(screen.getByText('Animate: off')).toBeTruthy();
+  expect(screen.queryByText('Animate on')).toBeNull();
   await ask();
   await waitFor(() => expect(submitQuery).toHaveBeenCalled());
   expect(submitQuery.mock.calls[0][1].animate).toBe(false);
   expect(animateAnswer).not.toHaveBeenCalled();
 });
 
-test('turning it on shows the notice once, then answers with steps get an animation that is saved with the message', async () => {
+test('turned on in Chat options, under its notice; then answers with steps get an animation that is saved with the message', async () => {
   animateAnswer.mockResolvedValue({ status: 'ready', animation });
   await openWith(null);
-  await fireEvent.press(screen.getByRole('switch'));
+  await fireEvent.press(screen.getByLabelText('Chat options'));
   expect(screen.getByText(/An animation may not be produced/)).toBeTruthy();
-  await fireEvent.press(screen.getByLabelText('Turn on animations'));
-  expect(screen.getByText('Animate: on')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('switch'));
+  await fireEvent.press(screen.getByLabelText('Done'));
+  expect(screen.getByText('Animate on')).toBeTruthy();
   await ask();
   await waitFor(() => expect(animateAnswer).toHaveBeenCalledWith(REF, expect.objectContaining({ signal: expect.anything() })));
   expect(submitQuery.mock.calls[0][1].animate).toBe(true);
