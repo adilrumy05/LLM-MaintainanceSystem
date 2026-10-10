@@ -20,7 +20,7 @@ text as before. The switch is `SHOW_EXPLANATIONS` in `spikes/animation/scene.js`
 
 ## What was built
 
-Code in `spikes/animation/`, tests in `tests/unit/animationSpike.test.js`.
+Code in `spikes/animation/`, tests in `backend-node/tests/unit/animationSpike.test.js`.
 
 | Stage | Who does it | What stops a mistake |
 |---|---|---|

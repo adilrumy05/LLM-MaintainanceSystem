@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { doc, setDoc } from "firebase/firestore";
 import { db, auth } from "../firebaseConfig";
 import { createUserWithEmailAndPassword } from "firebase/auth";
+import { setUserPassword } from "../services/api";
 import { useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import { useUser } from "./_layout";
 
@@ -64,15 +65,28 @@ export default function UserFormScreen() {
     try {
       if (existingUser) {
         await setDoc(doc(db, "Users", existingUser.id), { username, email, role_id: role }, { merge: true });
-        // ── FIX: router.back() correctly returns to usermanagement ───────────
-        // router.replace('/usermanagement') was navigating to admin because
-        // usermanagement is a hidden tab (href: null) — replace doesn't stack.
+
+        // A filled password field on an edit means "reset this user's password".
+        // Goes through the backend: the client SDK can only change the password
+        // of the account it is signed in as.
+        if (password.trim()) {
+          if (password.trim().length < 6) {
+            const msg = "Password must be at least 6 characters.";
+            Platform.OS === "web" ? window.alert(msg) : Alert.alert("Password", msg);
+            return;
+          }
+          await setUserPassword(existingUser.id, password.trim());
+        }
+        // usermanagement is a hidden tab (href: null), so it never enters the
+        // tab navigator's history. router.back() therefore unwinds to the first
+        // tab (/dashboard) instead of returning here, which is where every exit
+        // from this screen used to land. Navigate explicitly instead.
         if (Platform.OS === "web") {
           window.alert("User updated successfully!");
         } else {
           Alert.alert("Success", "User updated successfully!");
         }
-        router.back();
+        router.replace('/usermanagement');
       } else {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const uid = userCredential.user.uid;
@@ -88,7 +102,7 @@ export default function UserFormScreen() {
         } else {
           Alert.alert("Success", "User created successfully!");
         }
-        router.back();
+        router.replace('/usermanagement');
       }
     } catch (error) {
       if (Platform.OS === "web") {
@@ -111,7 +125,7 @@ export default function UserFormScreen() {
       >
         {/* Top Bar */}
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/usermanagement')}>
             <Ionicons name="chevron-back" size={18} color="#7c3aed" />
           </TouchableOpacity>
           <View style={styles.topCenter}>
@@ -162,23 +176,32 @@ export default function UserFormScreen() {
             )}
           </View>
 
-          {/* Password — create only */}
-          {!isEditing && (
-            <View style={styles.fieldGroup}>
-              <Text style={styles.fieldLabel}>Password</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="lock-closed-outline" size={15} color="#7c3aed" style={styles.inputIcon} />
-                <TextInput
-                  placeholder="Enter password"
-                  placeholderTextColor="#c4b5fd"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                  style={styles.input}
-                />
-              </View>
+          {/* Password. On create it is required. On edit it is optional — leaving
+              it blank keeps the current password; filling it resets the user's
+              password on their behalf, since this app has no self-service reset. */}
+          <View style={styles.fieldGroup}>
+            <Text style={styles.fieldLabel}>
+              {isEditing ? "New password (optional)" : "Password"}
+            </Text>
+            <View style={styles.inputWrapper}>
+              <Ionicons name="lock-closed-outline" size={15} color="#7c3aed" style={styles.inputIcon} />
+              <TextInput
+                placeholder={isEditing ? "Leave blank to keep current" : "Enter password"}
+                placeholderTextColor="#c4b5fd"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                style={styles.input}
+              />
             </View>
-          )}
+            {isEditing && (
+              <Text style={styles.fieldHint}>
+                Minimum 6 characters. The user is not notified — tell them the new
+                password yourself.
+              </Text>
+            )}
+          </View>
 
           <View style={styles.divider} />
 
@@ -213,7 +236,7 @@ export default function UserFormScreen() {
         </TouchableOpacity>
 
         {/* Cancel */}
-        <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()} activeOpacity={0.75}>
+        <TouchableOpacity style={styles.cancelBtn} onPress={() => router.replace('/usermanagement')} activeOpacity={0.75}>
           <Text style={styles.cancelBtnText}>Cancel</Text>
         </TouchableOpacity>
 
@@ -232,6 +255,7 @@ const styles = StyleSheet.create({
   topLabel:            { fontSize: 10, color: "#7c3aed", letterSpacing: 1.2, fontWeight: "700" },
   topTitle:            { fontSize: 18, fontWeight: "700", color: "#1e1b4b" },
   card:                { backgroundColor: "#ffffff", borderRadius: 16, padding: 16, borderWidth: 1, borderColor: "#ede9fe", marginBottom: 16, elevation: 1 },
+  fieldHint:           { color: "#8b5cf6", fontSize: 11, lineHeight: 15, marginTop: 6 },
   fieldGroup:          { marginBottom: 14 },
   fieldLabel:          { fontSize: 11, color: "#7c3aed", letterSpacing: 0.8, marginBottom: 8, textTransform: "uppercase", fontWeight: "700" },
   inputWrapper:        { flexDirection: "row", alignItems: "center", backgroundColor: "#f5f3ff", borderRadius: 10, borderWidth: 1, borderColor: "#ddd6fe", paddingHorizontal: 12, height: 48 },

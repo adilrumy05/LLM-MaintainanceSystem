@@ -1,17 +1,21 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity, FlatList, Modal,
-  ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView,
-  Platform, Image, ScrollView,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+// app/(tabs)/index.js
+
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
+import {View, Text, TextInput, TouchableOpacity, FlatList, Modal, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Animated, Dimensions, Easing,} from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
 import { useRole } from '../hooks/useRole';
 import { useUser } from './_layout';
-import { submitQuery, decodeEntities, getFilters } from '../services/api';
+import { submitQuery, decodeEntities, getFilters,
+         resetSession, setSession, getSession,
+         generateReport, logTimerEvent } from '../services/api';
+import { shareReportPdf } from '../services/reportPdf';
+import { extractTimers } from '../services/procedureTimers';
+import { generateChatTitle } from '../services/api';
+import Toast from 'react-native-toast-message';
 import { capturePhotos, MAX_PHOTOS } from '../services/photo';
 import MicButton from '../components/MicButton';
 import HandsFreeBar from '../components/HandsFreeBar';
@@ -21,7 +25,6 @@ import { actionsForOutcome } from '../utils/chatActions';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import * as Clipboard from 'expo-clipboard';
-import Toast from 'react-native-toast-message';
 import SelectTextSheet from '../components/SelectTextSheet';
 import QuoteChip from '../components/QuoteChip';
 import { FEATURES } from '../constants/featureFlags';
@@ -33,28 +36,69 @@ import { normaliseDetail, answerView, isResponseDetail } from '../utils/response
 
 const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
 
-function PhotoThumb({ uri, small }) {
+// ─── Module-scope helpers still needed by Dashboard ────────────────────
+
+const messagePhotos = (item) =>
+  item.imageUris || (item.imageUri ? [item.imageUri] : []);
+
+const choosePhotoSource = () => new Promise((resolve) => {
+  if (Platform.OS === 'web') { resolve('library'); return; }
+  Alert.alert('Add a photo', 'Photograph a nameplate, a fault display, or a part.', [
+    { text: 'Take photo',          onPress: () => resolve('camera') },
+    { text: 'Choose from library', onPress: () => resolve('library') },
+    { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+  ], { cancelable: true, onDismiss: () => resolve(null) });
+});
+
+const PhotoThumb = memo(function PhotoThumb({ uri, small }) {
   const [failed, setFailed] = useState(false);
   if (!uri || failed) return null;
-  return <Image source={{ uri }} style={small ? s.msgPhotoSmall : s.msgPhoto} resizeMode="cover" onError={() => setFailed(true)} />;
-}
-
-const messagePhotos = (item) => item.imageUris || (item.imageUri ? [item.imageUri] : []);
+  return (
+    <Image
+      source={{ uri }}
+      style={small ? s.msgPhotoSmall : s.msgPhoto}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+    />
+  );
+});
 
 export default function Dashboard() {
-  const newChatId = Date.now().toString();
-  const [chats, setChats]               = useState([{ id: newChatId, messages: [] }]);
-  const [activeChatId, setActiveChatId] = useState(newChatId);
-  const [inputValue, setInputValue]     = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [showSidebar, setShowSidebar]   = useState(false);
-  const [loaded, setLoaded]             = useState(false);
-  const [allFilters, setAllFilters]     = useState(null);
+  const [chats, setChats]                 = useState(() => {
+    const id = Date.now().toString();
+    // One chat == one audit session == one job. Without this each chat would
+    // append into the same audit_logs document.
+    return [{ id, messages: [], sessionId: getSession() }];
+  });
+  const [activeChatId, setActiveChatId]   = useState(() => chats[0].id);
+  const [inputValue, setInputValue]       = useState('');
+  const [isProcessing, setIsProcessing]   = useState(false);
+  const [showSidebar, setShowSidebar]     = useState(false);
+  // The drawer stays mounted through its closing animation, so it cannot
+  // disappear the instant state flips.
+  const [sidebarMounted, setSidebarMounted] = useState(false);
+  const sidebarX = useRef(new Animated.Value(-Dimensions.get('window').width)).current;
+  const [renameTarget, setRenameTarget]   = useState(null);
+  const [renameText, setRenameText]       = useState('');
+  const [loaded, setLoaded]               = useState(false);
+  const [allFilters, setAllFilters]       = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [filterSearchText, setFilterSearchText] = useState('');
-  const [pendingPhotos, setPendingPhotos]   = useState([]);
-  const [isPhotoBusy, setIsPhotoBusy]       = useState(false);
+  const [pendingPhotos, setPendingPhotos] = useState([]);
+  const [isPhotoBusy, setIsPhotoBusy]     = useState(false);
   const [handsFreeNotice, setHandsFreeNotice] = useState(null);
+  // Repair report (distinct from the Report Issue modal above)
+  const [repairReport, setRepairReport]       = useState(null);
+  const [repairChecklist, setRepairChecklist] = useState([]);
+  // SafeAreaView inside a react-native Modal does not reliably receive the
+  // device insets on iOS — the modal sits outside the provider's view tree, so
+  // the top inset can come back as 0 and the header ends up under the notch.
+  // Reading the insets directly and flooring them fixes both that and the
+  // race where they resolve a frame after the modal mounts.
+  const insets = useSafeAreaInsets();
+  const [repairReportBusy, setRepairReportBusy]   = useState(false);
+  const [repairReportError, setRepairReportError] = useState(null);
+  const [sharingRepairPdf, setSharingRepairPdf]   = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportText, setReportText]           = useState('');
   const [quote, setQuote]                     = useState(null);   // { text, messageId }
@@ -80,40 +124,47 @@ export default function Dashboard() {
   const preferences = usePreferences(user);
 
   const activeChat = chats.find(c => c.id === activeChatId);
-  const messages   = activeChat?.messages || [];
+  const messages   = useMemo(() => activeChat?.messages || [], [activeChat]);
   const isEmpty    = messages.length === 0;
 
   useEffect(() => {
     if (!role) return;
-const loadChats = async () => {
-  try {
-    const raw = await AsyncStorage.getItem(`chats_${role}`);
-    if (raw) {
-      const saved = JSON.parse(raw);
-      if (saved.length > 0) {
-        const newId = Date.now().toString();
-        const freshChat = { id: newId, messages: [], filter: null, confirmedModel: null };
-        const updatedChats = [freshChat, ...saved.map(c => ({ ...c, filter: c.filter || null }))];
-        setChats(updatedChats);
-        setActiveChatId(newId);
-      }
-    }
-  } catch (e) { console.log('Error loading chats:', e); }
-  setLoaded(true);
-};
+    const loadChats = async () => {
+      try {
+        const raw = await AsyncStorage.getItem(`chats_${role}`);
+        if (raw) {
+          const saved = JSON.parse(raw);
+          if (saved.length > 0) {
+            const newId = Date.now().toString();
+            const freshChat = { id: newId, messages: [], filter: null, confirmedModel: null, sessionId: resetSession() };
+            // Chats saved before sessionId tracking get one each, rather than
+            // all continuing to share the module-level session.
+            const updatedChats = [freshChat, ...saved.map(c => ({
+              ...c, filter: c.filter || null, sessionId: c.sessionId || resetSession(),
+            }))];
+            setChats(updatedChats);
+            setActiveChatId(newId);
+            setSession(freshChat.sessionId);
+          }
+        }
+      } catch (e) { console.log('Error loading chats:', e); }
+      setLoaded(true);
+    };
     loadChats();
   }, [role]);
 
   useEffect(() => {
     if (!role || !loaded) return;
-    AsyncStorage.setItem(`chats_${role}`, JSON.stringify(chats)).catch(e => console.log('Error saving chats:', e));
+    AsyncStorage.setItem(`chats_${role}`, JSON.stringify(chats))
+      .catch(e => console.log('Error saving chats:', e));
   }, [chats, role, loaded]);
 
   useEffect(() => {
     getFilters().then(setAllFilters).catch(e => console.log('Error loading filters:', e));
   }, []);
 
-  const addMessage = (from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
+  // ─── Chat mutation callbacks ────────────────────────────────────────
+  const addMessage = useCallback((from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
     const msg = { id: Date.now().toString() + Math.random(), from, text, sources, ...extra };
     setChats(prev => prev.map(c => c.id === chatId ? { ...c, messages: [...c.messages, msg] } : c));
     // Follow the conversation only if the technician is already at the bottom,
@@ -124,26 +175,29 @@ const loadChats = async () => {
     } else {
       setShowNewBelow(true);
     }
-  };
+  }, []);
 
-  const updateMessage = (messageId, updater, chatId = activeChatIdRef.current) => {
+  // Kept so the external BotMessage can persist step state
+  const updateMessage = useCallback((messageId, updater, chatId = activeChatIdRef.current) => {
     setChats(prev => prev.map(c => {
       if (c.id !== chatId) return c;
       return { ...c, messages: c.messages.map(m => m.id === messageId ? updater(m) : m) };
     }));
-  };
+  }, []);
 
-  const updateChat = (chatId, patch) =>
-    setChats(prev => prev.map(c => (c.id === chatId ? { ...c, ...patch } : c)));
+  const updateChat = useCallback((chatId, patch) =>
+    setChats(prev => prev.map(c => (c.id === chatId ? { ...c, ...patch } : c))), []);
 
-  const setActionsUsed = (chatId, messageId, used) =>
+  const setActionsUsed = useCallback((chatId, messageId, used) =>
     setChats(prev => prev.map(c => (c.id !== chatId ? c : {
-      ...c, messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
-    })));
-  const markActionsUsed   = (chatId, messageId) => setActionsUsed(chatId, messageId, true);
-  const markActionsUnused = (chatId, messageId) => setActionsUsed(chatId, messageId, false);
+      ...c,
+      messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
+    }))), []);
 
-  const runQuery = async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null, detail }) => {
+  const markActionsUsed   = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, true),  [setActionsUsed]);
+  const markActionsUnused = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, false), [setActionsUsed]);
+
+  const runQuery = useCallback(async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null, detail }) => {
     const chatId = activeChatIdRef.current;
     const chat   = chatsRef.current.find(c => c.id === chatId);
     const model  = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
@@ -165,23 +219,47 @@ const loadChats = async () => {
       if (result.needsInput) {
         addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, hasPhotos) }, chatId);
       } else {
-        addMessage('bot', decodeEntities(result.text), result.sources || [], {
+        // Decode entities first, then strip [[TIMER:...]] markers: order matters,
+        // or the markers can be missed. Markers never reach the renderer,
+        // AsyncStorage, or a later repair report.
+        const { cleanText, timers } = extractTimers(decodeEntities(result.text));
+        addMessage('bot', cleanText, result.sources || [], {
+          timers,
           detail: requestedDetail,
           ...(isResponseDetail(result.responseDetail) ? { responseDetail: result.responseDetail } : {}),
           ...(result.detailFallback ? { detailFallback: result.detailFallback } : {}),
-          ...(typeof result.fullText === 'string' ? { fullText: decodeEntities(result.fullText) } : {}),
+          ...(typeof result.fullText === 'string' ? { fullText: extractTimers(decodeEntities(result.fullText)).cleanText } : {}),
           isProcedural: result.isProcedural || false,
           steps: (result.steps || []).map(st => ({
             title: decodeEntities(st.title),
             description: decodeEntities(st.description),
             warningLevel: st.warning_level,
             toolsRequired: st.tools_required || [],
+            imageUrl: st.image_url || null,
+            photoRequired: st.photo_required === true,
+            photoInstruction: decodeEntities(st.photo_instruction || ''),
+            // A wait the technician must observe before leaving THIS step, so
+            // the countdown can sit on the step rather than under the message.
+            timerSeconds: Number(st.timer_seconds) > 0 ? Number(st.timer_seconds) : 0,
+            timerLabel: decodeEntities(st.timer_label || ''),
           })),
           procedureView: answerView({ ...result, detail: requestedDetail }, FEATURES.EFFORT_LEVELS),
           procedureState: (result.isProcedural && result.steps?.length > 0)
             ? { currentStep: 0, completedSteps: [], overviewOpen: false } : null,
         }, chatId);
         if (result.identifiedModel) updateChat(chatId, { confirmedModel: decodeEntities(result.identifiedModel) });
+
+        // Name the chat from its first exchange, the way chat assistants do.
+        // Fire-and-forget: the conversation must not wait on it, and a failure
+        // just leaves the truncated-first-message fallback in place.
+        const namedChat = chatsRef.current.find(c => c.id === chatId);
+        if (namedChat && !namedChat.aiTitle && !namedChat.customTitle) {
+          generateChatTitle(text, cleanText)
+            .then(title => {
+              if (title && title !== 'New Chat') updateChat(chatId, { aiTitle: title });
+            })
+            .catch(e => console.warn('[title] could not name chat:', e.message));
+        }
       }
       return { result };
     } catch (err) {
@@ -195,7 +273,7 @@ const loadChats = async () => {
       // A stale request finishing late must not clear the spinner of the newer one.
       if (requestGuard.isCurrent(requestId)) setIsProcessing(false);
     }
-  };
+  }, [addMessage, updateChat, requestGuard, preferences.detail]);
 
   const handleSend = async (overrideText) => {
     const typed  = (overrideText || inputValue).trim();
@@ -220,14 +298,14 @@ const loadChats = async () => {
   };
 
   // ─── Copy, select and reply ───────────────────────────────────────────────
-  const handleCopyAnswer = async (message) => {
+  const handleCopyAnswer = useCallback(async (message) => {
     try {
       await Clipboard.setStringAsync(answerForClipboard(message));
       Toast.show({ type: 'success', text1: 'Answer copied', text2: 'Manual sources are included.' });
     } catch (e) {
       Toast.show({ type: 'error', text1: 'Could not copy the answer' });
     }
-  };
+  }, []);
 
   const handleCopySelection = async (text) => {
     try {
@@ -245,16 +323,7 @@ const loadChats = async () => {
     setSelectFor(null);
   };
 
-  const choosePhotoSource = () => new Promise((resolve) => {
-    if (Platform.OS === 'web') { resolve('library'); return; }
-    Alert.alert('Add a photo', 'Photograph a nameplate, a fault display, or a part.', [
-      { text: 'Take photo',           onPress: () => resolve('camera') },
-      { text: 'Choose from library',  onPress: () => resolve('library') },
-      { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
-    ], { cancelable: true, onDismiss: () => resolve(null) });
-  });
-
-  const getPhotos = async (limit) => {
+  const getPhotos = useCallback(async (limit) => {
     if (limit < 1) { Alert.alert('Photos', `You can attach up to ${MAX_PHOTOS} photos to one question.`); return []; }
     const source = await choosePhotoSource();
     if (!source) return [];
@@ -262,7 +331,7 @@ const loadChats = async () => {
     try { return await capturePhotos(source, { limit }); }
     catch (e) { Alert.alert('Photo', e.message || 'Could not get the photo.'); return []; }
     finally { setIsPhotoBusy(false); }
-  };
+  }, []);
 
   const handleAttachPhoto = async () => {
     const added = await getPhotos(MAX_PHOTOS - pendingPhotos.length);
@@ -272,7 +341,7 @@ const loadChats = async () => {
   const removePendingPhoto = (index) =>
     setPendingPhotos(prev => prev.filter((_, i) => i !== index));
 
-  const handleAction = async (message, action) => {
+  const handleAction = useCallback(async (message, action) => {
     const chatId = activeChatIdRef.current;
     const req    = lastRequestRef.current[chatId];
     markActionsUsed(chatId, message.id);
@@ -310,7 +379,7 @@ const loadChats = async () => {
       }
       default:
     }
-  };
+  }, [markActionsUsed, markActionsUnused, updateChat, addMessage, runQuery, getPhotos]);
 
   const askHandsFree = async (text) => {
     addMessage('user', text);
@@ -329,6 +398,7 @@ const loadChats = async () => {
   };
 
   const handsFree        = useHandsFree({ ask: askHandsFree, onNotice: showHandsFreeNotice });
+  const handsFreeActive  = handsFree.active;
   const handsFreeStopRef = useRef(handsFree.stop);
   handsFreeStopRef.current = handsFree.stop;
 
@@ -339,20 +409,36 @@ const loadChats = async () => {
     else handsFree.start();
   };
 
+  const prettifyFilterLabel = (id) => {
+    if (!id) return '';
+    const parts = id.split('_');
+    const model = parts.pop();
+    const rest = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+    return `${rest} ${model}`;
+  };
+
   const filterOptions = (allFilters?.document_group_ids || []).map((id, idx) => ({
-    id, label: id.split('_').map((p, i, a) => i === a.length - 1 ? p : p.charAt(0).toUpperCase() + p.slice(1)).join(' '),
+    id,
+    label: prettifyFilterLabel(id),
     filename: allFilters?.filenames?.[idx] || '',
   }));
 
   const filteredOptions = filterOptions.filter(opt => {
     const q = filterSearchText.trim().toLowerCase();
     if (!q) return true;
-    return opt.label.toLowerCase().includes(q) || opt.id.toLowerCase().includes(q) || opt.filename.toLowerCase().includes(q);
+    return (
+      opt.label.toLowerCase().includes(q) ||
+      opt.id.toLowerCase().includes(q) ||
+      opt.filename.toLowerCase().includes(q)
+    );
   });
 
   const handleSelectFilter = (opt) => {
-    setChats(prev => prev.map(c => c.id === activeChatId
-      ? { ...c, filter: opt || null, confirmedModel: (c.filter?.id === opt?.id) ? c.confirmedModel : null } : c));
+    setChats(prev => prev.map(c =>
+      c.id === activeChatId
+        ? { ...c, filter: opt || null, confirmedModel: (c.filter?.id === opt?.id) ? c.confirmedModel : null }
+        : c
+    ));
     setShowFilterPicker(false);
     setFilterSearchText('');
   };
@@ -363,12 +449,52 @@ const loadChats = async () => {
     addMessage('bot', 'Response stopped. You can continue the conversation.');
   };
 
+  // Slide the drawer in and out. Unmount only after the close finishes.
+  useEffect(() => {
+    const width = Dimensions.get('window').width;
+    if (showSidebar) {
+      setSidebarMounted(true);
+      Animated.timing(sidebarX, {
+        toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }).start();
+    } else if (sidebarMounted) {
+      Animated.timing(sidebarX, {
+        toValue: -width, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true,
+      }).start(({ finished }) => { if (finished) setSidebarMounted(false); });
+    }
+  }, [showSidebar, sidebarMounted, sidebarX]);
+
+  const closeSidebar = () => setShowSidebar(false);
+
+  const openRename = (chat) => {
+    setRenameText(getChatTitle(chat));
+    setRenameTarget(chat.id);
+  };
+  const cancelRename = () => { setRenameTarget(null); setRenameText(''); };
+  const confirmRename = () => {
+    const name = renameText.trim();
+    if (!name || !renameTarget) return;
+    // customTitle wins over both the AI title and the first-message fallback,
+    // so a manual rename is never overwritten later.
+    setChats(prev => prev.map(c => c.id === renameTarget ? { ...c, customTitle: name } : c));
+    cancelRename();
+  };
+
   const handleNewChat = () => {
     const newId = Date.now().toString();
+    // The screen clears with no other signal that anything happened, which
+    // reads as the app losing the previous conversation.
+    Toast.show({
+      type: 'success',
+      text1: 'New chat started',
+      text2: 'Your previous chat is saved in the menu.',
+      position: 'top',
+      visibilityTime: 2200,
+    });
     handsFree.stop();
     setPendingPhotos([]);
     setQuote(null);
-    setChats(prev => [...prev, { id: newId, messages: [], filter: null, confirmedModel: null }]);
+    setChats(prev => [...prev, { id: newId, messages: [], filter: null, confirmedModel: null, sessionId: resetSession() }]);
     setActiveChatId(newId);
     setShowSidebar(false);
     setInputValue('');
@@ -376,17 +502,128 @@ const loadChats = async () => {
 
   const handleSwitchChat = (id) => {
     if (id !== activeChatId) { handsFree.stop(); setPendingPhotos([]); setQuote(null); }
+    // Re-point the API at this chat's session so its messages land in its own
+    // audit_logs document.
+    const target = chats.find(c => c.id === id);
+    if (target?.sessionId) setSession(target.sessionId);
     setActiveChatId(id);
     setShowSidebar(false);
   };
 
   const handleDeleteChat = (id) => {
-    if (chats.length === 1) { setChats([{ id: '1', messages: [], filter: null }]); setActiveChatId('1'); setShowSidebar(false); return; }
+    // Deleting a conversation is unrecoverable, so confirm first. Alert.alert
+    // buttons do not fire on web, hence the split.
+    const chat = chats.find(c => c.id === id);
+    const name = chat ? getChatTitle(chat) : 'this chat';
+    const run = () => doDeleteChat(id);
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete "${name}"? This cannot be undone.`)) run();
+      return;
+    }
+    Alert.alert('Delete chat', `Delete "${name}"? This cannot be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: run },
+    ]);
+  };
+
+  const doDeleteChat = (id) => {
+    if (chats.length === 1) {
+      setChats([{ id: '1', messages: [], filter: null, sessionId: resetSession() }]);
+      setActiveChatId('1');
+      setShowSidebar(false);
+      return;
+    }
     const remaining = chats.filter(c => c.id !== id);
     setChats(remaining);
-    if (activeChatId === id) setActiveChatId(remaining[0].id);
+    if (activeChatId === id) {
+      setActiveChatId(remaining[0].id);
+      if (remaining[0].sessionId) setSession(remaining[0].sessionId);
+    }
     setShowSidebar(false);
   };
+
+  // A completed wait is evidence the procedure was followed, so it is recorded
+  // against the session rather than being only a UI convenience.
+  const handleTimerComplete = useCallback((doneTimer) => {
+    const sessionId = chatsRef.current.find(c => c.id === activeChatIdRef.current)?.sessionId;
+    if (sessionId) {
+      logTimerEvent(sessionId, {
+        label: doneTimer.label,
+        seconds: doneTimer.seconds,
+        completed_at: doneTimer.completedAt,
+      }).catch(e => console.warn('[timers] could not record:', e.message));
+    }
+    const msg = `${doneTimer.label} — wait complete. You can continue.`;
+    Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Procedure timer', msg);
+  }, []);
+
+  // What the technician actually worked through, flattened across every
+  // procedural answer in this chat. The backend report is written from the
+  // transcript and cannot know any of this — completion ticks and verification
+  // photos live only in the client's procedure state — so it is collected here
+  // and handed to the PDF builder.
+  const collectChecklist = (chat) => {
+    if (!chat?.messages?.length) return [];
+    const out = [];
+    for (const m of chat.messages) {
+      if (m.from !== 'bot' || !m.isProcedural || !m.steps?.length) continue;
+      const st        = m.procedureState || {};
+      const completed = Array.isArray(st.completedSteps) ? st.completedSteps : [];
+      const photos    = st.stepPhotos || {};
+      m.steps.forEach((step, i) => {
+        out.push({
+          title:         step.title || `Step ${i + 1}`,
+          completed:     completed.includes(i),
+          photoRequired: step.photoRequired === true,
+          photoUri:      photos[i]?.uri || null,
+          timerSeconds:  Number(step.timerSeconds) || 0,
+        });
+      });
+    }
+    return out;
+  };
+
+  // Summarises THIS chat's session. Each chat owns its sessionId, so the
+  // report covers one job rather than everything since app launch.
+  const handleGenerateRepairReport = async () => {
+    if (repairReportBusy) return;
+    const chat = chats.find(c => c.id === activeChatId);
+    if (!chat?.messages?.length) return;
+    if (!chat?.sessionId) {
+      setRepairReportError('This chat has no session yet. Send a message first.');
+      return;
+    }
+    setRepairReportBusy(true);
+    setRepairReportError(null);
+    setRepairReport(null);
+    // Snapshot the checklist now, so the preview and the exported PDF describe
+    // the same state even if the technician keeps ticking steps afterwards.
+    setRepairChecklist(collectChecklist(chat));
+    try {
+      setRepairReport(await generateReport(chat.sessionId));
+    } catch (e) {
+      setRepairReportError(e.message || 'Could not generate the report.');
+    }
+    setRepairReportBusy(false);
+  };
+
+  const handleShareRepairPdf = async () => {
+    if (!repairReport || sharingRepairPdf) return;
+    setSharingRepairPdf(true);
+    try {
+      const { shared } = await shareReportPdf(repairReport, repairChecklist);
+      if (!shared) {
+        const msg = 'Sharing is not available on this platform. The report is saved and viewable here.';
+        Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Export', msg);
+      }
+    } catch (e) {
+      const msg = e.message || 'Could not create the PDF.';
+      Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Export failed', msg);
+    }
+    setSharingRepairPdf(false);
+  };
+
+  const closeRepairReport = () => { setRepairReport(null); setRepairReportError(null); };
 
   const handleLogout = () => {
     if (Platform.OS === 'web') {
@@ -399,7 +636,12 @@ const loadChats = async () => {
     ]);
   };
 
+  // Precedence: a manual rename always wins, then the AI-generated title, then
+  // a truncated first message so a chat is never nameless while the title call
+  // is still in flight (or if it failed).
   const getChatTitle = (chat) => {
+    if (chat.customTitle) return chat.customTitle;
+    if (chat.aiTitle) return chat.aiTitle;
     const first = chat.messages.find(m => m.from === 'user');
     return first ? first.text.slice(0, 30) + (first.text.length > 30 ? '...' : '') : 'New Chat';
   };
@@ -425,8 +667,9 @@ const loadChats = async () => {
     }
   };
 
-  const renderMessage = ({ item }) => {
+  const renderMessage = useCallback(({ item }) => {
     const isUser = item.from === 'user';
+    const disabled = isProcessing || isPhotoBusy || handsFreeActive;
     return (
       <View style={[s.msgRow, isUser ? s.msgRowUser : s.msgRowBot]}>
         {isUser ? (
@@ -449,67 +692,151 @@ const loadChats = async () => {
             item={item}
             updateMessage={updateMessage}
             onAction={(action) => handleAction(item, action)}
-            actionsDisabled={isProcessing || isPhotoBusy || handsFree.active}
+            actionsDisabled={disabled}
             onCopy={FEATURES.CHAT_COPY ? handleCopyAnswer : undefined}
-            onSelectText={FEATURES.CHAT_SELECT ? (item, text) => setSelectFor({ ...item, text }) : undefined}
+            onSelectText={FEATURES.CHAT_SELECT ? (message, text) => setSelectFor({ ...message, text }) : undefined}
+            onTimerComplete={handleTimerComplete}
           />
         )}
       </View>
     );
-  };
+  }, [handleAction, isProcessing, isPhotoBusy, handsFreeActive, updateMessage, handleCopyAnswer, handleTimerComplete]);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={0}>
       <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
 
-        {/* ─── Sidebar ─────────────────────────────────────────────── */}
-        {showSidebar && (
-          <View style={s.overlay}>
-            <View style={s.sidebar}>
-              <Text style={s.sidebarTitle}>Chats</Text>
-              <TouchableOpacity style={s.newChatBtn} onPress={handleNewChat}>
-                <Ionicons name="add-outline" size={16} color="#fff" />
-                <Text style={s.newChatText}> New Chat</Text>
-              </TouchableOpacity>
+        {/* Full-screen drawer. It was 280px wide with a dimmed strip beside it,
+            which read as an unfinished panel on a phone. Now it covers the
+            screen and slides in, so there is no tap-outside-to-close target —
+            hence the explicit X. */}
+        {sidebarMounted && (
+          <Animated.View style={[s.overlay, { transform: [{ translateX: sidebarX }] }]}>
+            <SafeAreaView style={s.sidebar} edges={['top']}>
+              <View style={s.sidebarHeader}>
+                <View style={s.sidebarTitleRow}>
+                  <Text style={s.sidebarTitle}>Chats</Text>
+                  <TouchableOpacity
+                    onPress={handleNewChat}
+                    style={s.sidebarAdd}
+                    accessibilityLabel="New chat"
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="add" size={22} color={C.primary} />
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  onPress={closeSidebar}
+                  style={s.sidebarClose}
+                  accessibilityLabel="Close chats"
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close" size={24} color={C.text} />
+                </TouchableOpacity>
+              </View>
+
               <FlatList
                 data={[...chats].reverse()}
                 keyExtractor={c => c.id}
+                contentContainerStyle={{ paddingBottom: 8 }}
                 renderItem={({ item }) => (
                   <View style={[s.chatItem, item.id === activeChatId && s.chatItemActive]}>
                     <TouchableOpacity style={{ flex: 1 }} onPress={() => handleSwitchChat(item.id)}>
                       <Text style={s.chatItemText} numberOfLines={1}>{getChatTitle(item)}</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDeleteChat(item.id)}>
+                    <TouchableOpacity
+                      onPress={() => openRename(item)}
+                      style={s.chatItemAction}
+                      accessibilityLabel="Rename chat"
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="pencil-outline" size={15} color={C.textSub} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteChat(item.id)}
+                      style={s.chatItemAction}
+                      accessibilityLabel="Delete chat"
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
                       <Ionicons name="trash-outline" size={16} color={C.red} />
                     </TouchableOpacity>
                   </View>
                 )}
               />
+
               <TouchableOpacity style={s.clearAllBtn} onPress={() => {
+                const wipe = () => {
+                  setChats([{ id: '1', messages: [], filter: null, sessionId: resetSession() }]);
+                  setActiveChatId('1');
+                  closeSidebar();
+                };
                 if (Platform.OS === 'web') {
-                  if (window.confirm('Delete all conversations?')) { setChats([{ id: '1', messages: [] }]); setActiveChatId('1'); setShowSidebar(false); }
+                  if (window.confirm('Delete all conversations? This cannot be undone.')) wipe();
                   return;
                 }
-                Alert.alert('Clear All Chats', 'Delete all conversations?', [
+                Alert.alert('Clear All Chats', 'Delete all conversations? This cannot be undone.', [
                   { text: 'Cancel', style: 'cancel' },
-                  { text: 'Clear All', style: 'destructive', onPress: () => { setChats([{ id: '1', messages: [] }]); setActiveChatId('1'); setShowSidebar(false); } },
+                  { text: 'Clear All', style: 'destructive', onPress: wipe },
                 ]);
               }}>
                 <Ionicons name="trash-outline" size={14} color={C.red} />
                 <Text style={s.clearAllText}> Clear All Chats</Text>
               </TouchableOpacity>
+
               <TouchableOpacity style={s.logoutSidebar} onPress={handleLogout}>
                 <Ionicons name="log-out-outline" size={14} color={C.red} />
                 <Text style={s.logoutSidebarText}> Logout</Text>
               </TouchableOpacity>
-            </View>
-            <TouchableOpacity style={s.overlayBg} onPress={() => setShowSidebar(false)} />
-          </View>
+            </SafeAreaView>
+          </Animated.View>
         )}
+
+        {/* Rename. A modal rather than Alert.prompt, which is iOS-only. */}
+        <Modal
+          visible={!!renameTarget}
+          transparent
+          animationType="fade"
+          onRequestClose={cancelRename}
+        >
+          <View style={s.renameOverlay}>
+            <View style={s.renameCard}>
+              <Text style={s.renameTitle}>Rename chat</Text>
+              <TextInput
+                style={s.renameInput}
+                value={renameText}
+                onChangeText={setRenameText}
+                placeholder="Chat name"
+                placeholderTextColor={C.textMuted}
+                autoFocus
+                maxLength={60}
+                onSubmitEditing={confirmRename}
+                returnKeyType="done"
+              />
+              <View style={s.renameRow}>
+                <TouchableOpacity style={s.renameCancel} onPress={cancelRename}>
+                  <Text style={s.renameCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.renameSave, !renameText.trim() && s.renameSaveDisabled]}
+                  onPress={confirmRename}
+                  disabled={!renameText.trim()}
+                >
+                  <Text style={s.renameSaveText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* ─── Report Issue Modal ───────────────────────────────────── */}
         <Modal visible={showReportModal} animationType="slide" transparent onRequestClose={() => setShowReportModal(false)}>
-          <View style={s.reportOverlay}>
+          {/* The sheet is pinned to the bottom, so the iOS keyboard covered it
+              the moment the field autofocused. KeyboardAvoidingView lifts it;
+              iOS needs 'padding', Android handles it via windowSoftInputMode. */}
+          <KeyboardAvoidingView
+            style={s.reportOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
             <View style={s.reportSheet}>
               <View style={s.reportHeader}>
                 <Ionicons name="bug-outline" size={20} color="#ea580c" />
@@ -537,10 +864,142 @@ const loadChats = async () => {
                 <Text style={s.reportSubmitText}>Submit Report</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         {/* ─── Model Filter Modal ───────────────────────────────────── */}
+        {/* Repair report preview (distinct from the Report Issue modal above) */}
+        <Modal
+          visible={!!repairReport || !!repairReportError}
+          animationType="slide"
+          onRequestClose={closeRepairReport}
+        >
+          <View
+            style={[
+              s.rrSheet,
+              { paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom },
+            ]}
+          >
+            <View style={s.rrHead}>
+              <Text style={s.rrHeadTitle}>Repair Report</Text>
+              <TouchableOpacity onPress={closeRepairReport} accessibilityLabel="Close report">
+                <Ionicons name="close" size={24} color={C.text} />
+              </TouchableOpacity>
+            </View>
+
+            {repairReportError ? (
+              <View style={s.rrErrBox}>
+                <Ionicons name="alert-circle-outline" size={20} color={C.red} />
+                <Text style={s.rrErrText}>{repairReportError}</Text>
+              </View>
+            ) : repairReport ? (
+              <>
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={s.rrBody}>
+                  <Text style={s.rrTitle}>{repairReport.report?.title}</Text>
+                  <View style={s.rrMetaRow}>
+                    <Text style={s.rrMeta}>{repairReport.report?.equipment}</Text>
+                    <Text style={s.rrMetaDim}>{repairReport.generated_at}</Text>
+                  </View>
+
+                  <RepairSection label="Problem Reported" text={repairReport.report?.problem_reported} />
+                  <RepairSection label="Diagnosis" text={repairReport.report?.diagnosis} />
+                  <RepairSection label="Actions Taken" items={repairReport.report?.actions_taken} empty="No actions recorded" />
+                  <RepairSection label="Parts Replaced" items={repairReport.report?.parts_replaced} empty="No parts recorded" />
+                  {!!repairReport.report?.safety_notes?.length && (
+                    <View style={s.rrSafety}>
+                      <Text style={s.rrSectionLabel}>Safety Notes</Text>
+                      {repairReport.report.safety_notes.map((n, i) => (
+                        <Text key={i} style={s.rrSafetyItem}>• {n}</Text>
+                      ))}
+                    </View>
+                  )}
+                  <RepairSection label="Outcome" text={repairReport.report?.outcome} />
+                  <RepairSection label="Follow-up" text={repairReport.report?.follow_up} />
+
+                  {repairChecklist.length > 0 && (
+                    <>
+                      <Text style={s.rrSectionLabel}>Work Checklist</Text>
+                      <Text style={s.rrEmpty}>
+                        {repairChecklist.filter(st => st.completed).length} of {repairChecklist.length} steps marked complete.
+                      </Text>
+                      {repairChecklist.map((st, i) => (
+                        <View key={i} style={s.rrChkRow}>
+                          <Ionicons
+                            name={st.completed ? 'checkmark-circle' : 'ellipse-outline'}
+                            size={15}
+                            color={st.completed ? C.green : C.textMuted}
+                          />
+                          <Text style={s.rrChkText}>{st.title}</Text>
+                          {st.timerSeconds > 0 && (
+                            <Text style={s.rrChkTag}>wait {Math.round(st.timerSeconds / 60)} min</Text>
+                          )}
+                          {st.photoRequired && (
+                            <Ionicons
+                              name={st.photoUri ? 'camera' : 'camera-outline'}
+                              size={13}
+                              color={st.photoUri ? C.green : C.red}
+                            />
+                          )}
+                        </View>
+                      ))}
+                    </>
+                  )}
+
+                  {repairChecklist.some(st => st.photoUri) && (
+                    <>
+                      <Text style={s.rrSectionLabel}>Photo Evidence</Text>
+                      <View style={s.rrShots}>
+                        {repairChecklist.filter(st => st.photoUri).map((st, i) => (
+                          <View key={i} style={s.rrShot}>
+                            <Image source={{ uri: st.photoUri }} style={s.rrShotImg} resizeMode="cover" />
+                            <Text style={s.rrShotCap} numberOfLines={2}>{st.title}</Text>
+                          </View>
+                        ))}
+                      </View>
+                      <Text style={s.rrEmpty}>
+                        Photos are a record of what you saw. They do not confirm the work was done correctly.
+                      </Text>
+                    </>
+                  )}
+
+                  <Text style={s.rrSectionLabel}>Manual Sources Cited</Text>
+                  {(repairReport.sources || []).length === 0
+                    ? <Text style={s.rrEmpty}>No manual sources cited</Text>
+                    : Object.entries(
+                        (repairReport.sources || []).reduce((acc, src) => {
+                          const k = src.filename || 'Unknown';
+                          (acc[k] = acc[k] || []).push(src.page);
+                          return acc;
+                        }, {})
+                      ).map(([file, pages]) => (
+                        <Text key={file} style={s.rrSource}>
+                          {file} <Text style={s.rrMetaDim}>p. {pages.filter(x => x != null).join(', ') || '—'}</Text>
+                        </Text>
+                      ))}
+
+                  <Text style={s.rrFoot}>
+                    Summarised from {repairReport.exchange_count} logged exchange(s). Stored in Firestore as
+                    repair_reports/{repairReport.session_id}. Verify against the cited pages before acting.
+                  </Text>
+                </ScrollView>
+
+                <View style={s.rrActions}>
+                  <TouchableOpacity
+                    style={[s.rrShareBtn, sharingRepairPdf && s.rrBtnDisabled]}
+                    onPress={handleShareRepairPdf}
+                    disabled={sharingRepairPdf}
+                  >
+                    {sharingRepairPdf
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <><Ionicons name="share-outline" size={18} color="#fff" />
+                          <Text style={s.rrShareText}>  Export PDF</Text></>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+          </View>
+        </Modal>
+
         <Modal visible={showFilterPicker} animationType="slide" onRequestClose={() => setShowFilterPicker(false)}>
           <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
             <View style={s.filterModalHeader}>
@@ -551,7 +1010,14 @@ const loadChats = async () => {
             </View>
             <View style={s.filterSearchBar}>
               <Ionicons name="search-outline" size={16} color={C.textMuted} />
-              <TextInput style={s.filterSearchInput} placeholder="Search model number, brand..." placeholderTextColor={C.textMuted} value={filterSearchText} onChangeText={setFilterSearchText} autoFocus />
+              <TextInput
+                style={s.filterSearchInput}
+                placeholder="Search model number, brand..."
+                placeholderTextColor={C.textMuted}
+                value={filterSearchText}
+                onChangeText={setFilterSearchText}
+                autoFocus
+              />
             </View>
             <TouchableOpacity style={s.filterAllOption} onPress={() => handleSelectFilter(null)}>
               <Ionicons name="layers-outline" size={16} color={C.primary} />
@@ -584,12 +1050,22 @@ const loadChats = async () => {
             <Text style={s.headerTitle}>Maintenance Copilot</Text>
             <Text style={s.headerRole}>{role?.toUpperCase()} ACCESS</Text>
           </View>
+          <TouchableOpacity
+            style={s.newChatIconBtn}
+            onPress={handleGenerateRepairReport}
+            disabled={!activeChat?.messages?.length || repairReportBusy}
+            accessibilityLabel="Generate repair report"
+          >
+            {repairReportBusy
+              ? <ActivityIndicator size="small" color={C.primary} />
+              : <Ionicons name="document-text-outline" size={21}
+                  color={activeChat?.messages?.length ? C.text : C.textMuted} />}
+          </TouchableOpacity>
           <TouchableOpacity style={s.newChatIconBtn} onPress={handleNewChat}>
             <Ionicons name="create-outline" size={22} color={C.text} />
           </TouchableOpacity>
         </View>
 
-        {/* ─── Role banners ────────────────────────────────────────── */}
         {isJunior && (
           <View style={[s.banner, { borderColor: C.blue, backgroundColor: C.blueBg }]}>
             <Ionicons name="bulb-outline" size={13} color={C.blue} />
@@ -633,6 +1109,11 @@ const loadChats = async () => {
                 nearBottomRef.current = near;
                 if (near && showNewBelow) setShowNewBelow(false);
               }}
+              removeClippedSubviews
+              maxToRenderPerBatch={5}
+              updateCellsBatchingPeriod={50}
+              windowSize={5}
+              initialNumToRender={5}
             />
           )}
           {showNewBelow && !isEmpty && (
@@ -772,20 +1253,82 @@ const loadChats = async () => {
   );
 }
 
+// ─── Styles ────────────────────────────────────────────────────────────
+// Styles that belong to the external BotMessage component (step viewer,
+// view toggle, sources, action chips, markdown, tableScroll) live in
+// ../components/BotMessage.js — not here.
+
+// One repair-report section: paragraph or bullet list, mirroring the PDF.
+function RepairSection({ label, text, items, empty }) {
+  return (
+    <>
+      <Text style={s.rrSectionLabel}>{label}</Text>
+      {items
+        ? (items.length
+            ? items.map((it, i) => <Text key={i} style={s.rrItem}>• {it}</Text>)
+            : <Text style={s.rrEmpty}>{empty}</Text>)
+        : <Text style={s.rrText}>{text}</Text>}
+    </>
+  );
+}
+
 const s = StyleSheet.create({
+  // ── Repair report ──
+  rrSheet:        { flex: 1, backgroundColor: C.bg },
+  rrHead:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.cardBorder },
+  rrHeadTitle:    { fontSize: 16, fontWeight: '700', color: C.text },
+  rrBody:         { padding: 16, paddingBottom: 28 },
+  rrTitle:        { fontSize: 18, fontWeight: '700', color: C.text, lineHeight: 24 },
+  rrMetaRow:      { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4, marginBottom: 6 },
+  rrMeta:         { fontSize: 12, color: C.textSub, fontWeight: '600' },
+  rrMetaDim:      { fontSize: 12, color: C.textMuted },
+  rrSectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', color: C.primary, marginTop: 16, marginBottom: 5 },
+  rrText:         { fontSize: 14, color: C.text, lineHeight: 20 },
+  rrItem:         { fontSize: 14, color: C.text, lineHeight: 20, marginBottom: 2 },
+  rrEmpty:        { fontSize: 13, color: C.textMuted, fontStyle: 'italic' },
+  rrSafety:       { backgroundColor: C.orangeBg, borderLeftWidth: 3, borderLeftColor: C.orange, borderRadius: 8, padding: 10, marginTop: 6 },
+  rrSafetyItem:   { fontSize: 13, color: C.orange, lineHeight: 19, marginBottom: 2 },
+  rrSource:       { fontSize: 13, color: C.text, marginBottom: 3 },
+  rrFoot:         { fontSize: 11, color: C.textMuted, lineHeight: 16, marginTop: 20, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.cardBorder },
+  rrChkRow:       { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: C.cardBorder },
+  rrChkText:      { flex: 1, fontSize: 12, color: C.text, lineHeight: 17 },
+  rrChkTag:       { fontSize: 9, fontWeight: '700', color: C.primary, backgroundColor: '#f1f0fb', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3, overflow: 'hidden' },
+  rrShots:        { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  rrShot:         { width: '47%' },
+  rrShotImg:      { width: '100%', height: 110, borderRadius: 8, backgroundColor: C.cardBorder },
+  rrShotCap:      { fontSize: 10, color: C.textSub, marginTop: 3, lineHeight: 13 },
+  rrActions:      { padding: 16, borderTopWidth: 1, borderTopColor: C.cardBorder, backgroundColor: C.card },
+  rrShareBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14 },
+  rrShareText:    { color: '#fff', fontWeight: '700', fontSize: 14 },
+  rrBtnDisabled:  { opacity: 0.6 },
+  rrErrBox:       { flexDirection: 'row', alignItems: 'flex-start', gap: 8, margin: 16, padding: 14, backgroundColor: C.redBg, borderRadius: 12 },
+  rrErrText:      { flex: 1, fontSize: 13, color: C.red, lineHeight: 19 },
+
   safe:               { flex: 1, backgroundColor: C.bg },
-  overlay:            { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, flexDirection: 'row' },
-  overlayBg:          { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sidebar:            { width: 280, backgroundColor: C.card, paddingTop: 50, paddingHorizontal: 16, paddingBottom: 20 },
-  sidebarTitle:       { color: C.text, fontSize: 18, fontWeight: '700', marginBottom: 16 },
-  newChatBtn:         { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.primary, borderRadius: 12, paddingVertical: 12, marginBottom: 16 },
-  newChatText:        { color: '#fff', fontWeight: '700', fontSize: 14 },
+  overlay:            { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100 },
+  sidebar:            { flex: 1, backgroundColor: C.card, paddingHorizontal: 16, paddingBottom: 8 },
+  sidebarHeader:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8, paddingBottom: 10 },
+  sidebarTitleRow:    { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  sidebarAdd:         { padding: 4 },
+  sidebarClose:       { padding: 4, marginRight: -4 },
+  sidebarTitle:       { color: C.text, fontSize: 18, fontWeight: '700' },
+  chatItemAction:     { paddingHorizontal: 6, paddingVertical: 4 },
+  renameOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  renameCard:         { width: '100%', maxWidth: 400, backgroundColor: C.card, borderRadius: 16, padding: 18 },
+  renameTitle:        { color: C.text, fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  renameInput:        { backgroundColor: C.inputBg, borderWidth: 1, borderColor: C.inputBorder, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, color: C.text, fontSize: 14 },
+  renameRow:          { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 14 },
+  renameCancel:       { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
+  renameCancelText:   { color: C.textSub, fontWeight: '600', fontSize: 13 },
+  renameSave:         { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10, backgroundColor: C.primary },
+  renameSaveDisabled: { opacity: 0.5 },
+  renameSaveText:     { color: '#fff', fontWeight: '700', fontSize: 13 },
   chatItem:           { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, marginBottom: 6, backgroundColor: C.bg },
   chatItemActive:     { backgroundColor: C.primaryLight },
   chatItemText:       { color: C.text, fontSize: 13, flex: 1 },
-  clearAllBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 10, marginTop: 8, marginBottom: 8 },
+  clearAllBtn:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 10, marginTop: 'auto', marginBottom: 8 },
   clearAllText:       { color: C.red, fontWeight: '700', fontSize: 12 },
-  logoutSidebar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 'auto', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 12 },
+  logoutSidebar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fecaca', backgroundColor: C.redBg, borderRadius: 10, paddingVertical: 12 },
   logoutSidebarText:  { color: C.red, fontWeight: '700', fontSize: 13 },
   header:             { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: C.cardBorder, backgroundColor: C.card },
   menuBtn:            { padding: 6 },
@@ -843,19 +1386,14 @@ const s = StyleSheet.create({
   filterOptionLabel:  { color: C.text, fontSize: 14, fontWeight: '600' },
   filterOptionSub:    { color: C.textMuted, fontSize: 11, marginTop: 2 },
   filterEmptyText:    { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 24 },
+
   machineChip:        { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 6, flexShrink: 1 },
   machineChipText:    { fontSize: 12, color: C.primary, fontWeight: '700', flexShrink: 1 },
   handsFreeChip:      { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: C.primary },
   handsFreeChipOn:    { backgroundColor: C.primary },
   handsFreeChipText:  { fontSize: 12, color: C.primary, fontWeight: '700' },
   handsFreeNotice:    { marginHorizontal: 12, marginTop: 6, color: C.textMuted, fontSize: 12 },
-  pendingPhotos:      { marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight, gap: 6 },
-  pendingPhotoStrip:  { gap: 8, alignItems: 'center' },
-  pendingPhotoTile:   { width: 64, height: 64 },
-  pendingPhotoImg:    { width: 64, height: 64, borderRadius: 8 },
-  pendingPhotoRemove: { position: 'absolute', top: -2, right: -2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12 },
-  pendingPhotoAdd:    { width: 64, height: 64, borderRadius: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: C.primary, alignItems: 'center', justifyContent: 'center' },
-  pendingPhotoText:   { color: C.primary, fontSize: 12, fontWeight: '600' },
+
   reportChip:         { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#ea580c', backgroundColor: '#fff7ed' },
   reportChipText:     { fontSize: 12, color: '#ea580c', fontWeight: '700' },
   reportOverlay:      { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
@@ -867,4 +1405,12 @@ const s = StyleSheet.create({
   reportSubmitBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#ea580c', borderRadius: 12, paddingVertical: 14 },
   reportSubmitBtnDisabled: { backgroundColor: '#fdba74' },
   reportSubmitText:   { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+  pendingPhotos:      { marginHorizontal: 12, marginTop: 8, padding: 8, borderRadius: 12, backgroundColor: C.primaryLight, gap: 6 },
+  pendingPhotoStrip:  { gap: 8, alignItems: 'center' },
+  pendingPhotoTile:   { width: 64, height: 64 },
+  pendingPhotoImg:    { width: 64, height: 64, borderRadius: 8 },
+  pendingPhotoRemove: { position: 'absolute', top: -2, right: -2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 12 },
+  pendingPhotoAdd:    { width: 64, height: 64, borderRadius: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  pendingPhotoText:   { color: C.primary, fontSize: 12, fontWeight: '600' },
 });

@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 jest.mock('../services/api', () => ({ decodeEntities: text => text }));
 import BotMessage from '../components/BotMessage';
+import { FEATURES } from '../constants/featureFlags';
+
+// Response detail is switched off until it passes its live checks; these tests turn it on.
+beforeEach(() => { FEATURES.EFFORT_LEVELS = true; });
+afterAll(() => { FEATURES.EFFORT_LEVELS = false; });
 
 const base = { id: 'm', text: 'Short answer.', responseDetail: 'brief', isProcedural: true, sources: [],
   steps: [{ title: 'First step', description: 'First description.', warningLevel: 'none', toolsRequired: [] }] };

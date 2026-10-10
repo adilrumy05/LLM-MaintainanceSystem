@@ -4,7 +4,8 @@ import {
   FlatList, Alert, SafeAreaView, Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { collection, getDocs, deleteDoc, doc } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
+import { deleteUserCompletely } from "../services/api";
 import { db } from "../firebaseConfig";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useUser } from "./_layout";
@@ -69,7 +70,10 @@ export default function UserManagementScreen() {
 
     const doDelete = async () => {
       try {
-        await deleteDoc(doc(db, "Users", id));
+        // Backend call: removes the Auth account as well as the Firestore
+        // record. deleteDoc() alone left an orphaned sign-in that kept the
+        // email address claimed forever.
+        await deleteUserCompletely(id);
         fetchUsers();
       } catch (e) {
         console.error("Delete error:", e);
@@ -108,27 +112,28 @@ export default function UserManagementScreen() {
           <View style={[styles.roleBadge, { backgroundColor: role.bg }]}>
             <Text style={[styles.roleText, { color: role.color }]}>{role.label}</Text>
           </View>
-        </View>
 
-        <View style={styles.divider} />
-
-        <View style={styles.actions}>
-          <TouchableOpacity
-            style={styles.editBtn}
-            onPress={() => router.push({ pathname: '/userform', params: { user: JSON.stringify(item) } })}
-            activeOpacity={0.75}
-          >
-            <Ionicons name="pencil-outline" size={14} color="#7c3aed" />
-            <Text style={styles.editBtnText}>Edit</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.deleteBtn}
-            onPress={() => deleteUser(item.id, item.username)}
-            activeOpacity={0.75}
-          >
-            <Ionicons name="trash-outline" size={14} color="#f87171" />
-            <Text style={styles.deleteBtnText}>Delete</Text>
-          </TouchableOpacity>
+          {/* Icon buttons sit on the row itself. The full-width Edit/Delete bar
+              below each card doubled the card height for two rarely-used
+              actions, and pushed the list under the Add button. */}
+          <View style={styles.iconActions}>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => router.push({ pathname: '/userform', params: { user: JSON.stringify(item) } })}
+              accessibilityLabel={`Edit ${item.username || 'user'}`}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            >
+              <Ionicons name="pencil-outline" size={17} color="#7c3aed" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => deleteUser(item.id, item.username)}
+              accessibilityLabel={`Delete ${item.username || 'user'}`}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            >
+              <Ionicons name="trash-outline" size={17} color="#dc2626" />
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
@@ -188,6 +193,8 @@ export default function UserManagementScreen() {
 }
 
 const styles = StyleSheet.create({
+  iconActions:   { flexDirection: "row", alignItems: "center", gap: 2, marginLeft: 6 },
+  iconBtn:       { padding: 6, borderRadius: 8 },
   safeArea:      { flex: 1, backgroundColor: "#f5f3ff" },
   container:     { flex: 1, backgroundColor: "#f5f3ff", paddingHorizontal: 16, paddingTop: 16 },
   topBar:        { flexDirection: "row", alignItems: "center", marginBottom: 20 },

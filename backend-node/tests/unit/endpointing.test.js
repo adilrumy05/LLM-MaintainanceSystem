@@ -2,7 +2,7 @@
 // These prove the logic does what it claims on clean signals. They do NOT prove
 // it works with a real microphone in a noisy room - only the device test can.
 
-const { createEndpointer } = require('../../LLM-Mobile/utils/endpointing');
+const { createEndpointer } = require('../../../LLM-Mobile/utils/endpointing');
 
 const STEP = 100; // recorder state updates every 100 ms
 

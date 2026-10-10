@@ -6,6 +6,7 @@ import { db } from '../firebaseConfig';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
+import { displayUser } from '../utils/userNames';
 import { useUser } from './_layout';
 
 const ROLE_ID_MAP = {
@@ -14,6 +15,98 @@ const ROLE_ID_MAP = {
   'worker_intermediate': 'intermediate',
   'worker_beginner':     'beginner',
 };
+
+// Sessions over time: a line, because the job is change-over-time rather than
+// comparing independent magnitudes (a bar chart implies the latter).
+//
+// Drawn with rotated Views because the project has no charting library and no
+// react-native-svg. Each segment is a 2px View rotated to the angle between two
+// points — six segments for seven days.
+//
+// Deliberately NOT labelling every point: with 7 values that becomes noise. The
+// peak carries a label and the y-axis top gives the scale; the rest is read off
+// the shape, which is what a line chart is for.
+const CHART_H = 110;
+
+function SessionLineChart({ counts, labels, max }) {
+  const [width, setWidth] = useState(0);
+  const n = counts.length;
+  const peak = counts.indexOf(Math.max(...counts));
+  const hasData = counts.some(c => c > 0);
+
+  // Horizontal inset keeps the first and last markers fully inside the card.
+  const pad = 14;
+  const plotW = Math.max(width - pad * 2, 1);
+  const stepX = n > 1 ? plotW / (n - 1) : 0;
+  const yOf = (v) => CHART_H - (v / max) * CHART_H;
+  const pt = (i) => ({ x: pad + i * stepX, y: yOf(counts[i]) });
+
+  return (
+    <View onLayout={e => setWidth(e.nativeEvent.layout.width)}>
+      <View style={s.chartTopRow}>
+        <Text style={s.chartAxisMax}>{max}</Text>
+        {!hasData && <Text style={s.chartEmpty}>No sessions in this period</Text>}
+      </View>
+
+      <View style={[s.chartPlot, { height: CHART_H }]}>
+        {/* Recessive gridlines — quarters of the scale. */}
+        {[0, 0.25, 0.5, 0.75, 1].map(f => (
+          <View key={f} style={[s.chartGrid, { top: f * CHART_H }]} />
+        ))}
+
+        {width > 0 && counts.map((_, i) => {
+          if (i === n - 1) return null;
+          const a = pt(i), b = pt(i + 1);
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+          return (
+            <View
+              key={`seg${i}`}
+              style={[s.chartLine, {
+                left: a.x,
+                top: a.y,
+                width: len,
+                // Rotate about the left edge so the segment starts exactly on
+                // the point rather than its own centre.
+                transform: [{ translateY: -1 }, { rotateZ: `${deg}deg` }],
+                transformOrigin: 'left center',
+              }]}
+            />
+          );
+        })}
+
+        {width > 0 && counts.map((c, i) => {
+          const { x, y } = pt(i);
+          const isPeak = i === peak && c > 0;
+          return (
+            <View key={`dot${i}`}>
+              <View style={[s.chartDot, isPeak && s.chartDotPeak, { left: x - 4, top: y - 4 }]} />
+              {isPeak && (
+                <Text
+                  style={[s.chartPeakLabel, {
+                    // Clamped so the label stays inside the card when the peak
+                    // falls on the first or last day...
+                    left: Math.min(Math.max(x - 14, 0), Math.max(width - 28, 0)),
+                    // ...and dropped below the marker when the peak sits at the
+                    // top of the plot, where there is no room above it.
+                    top: y < 20 ? y + 9 : y - 20,
+                  }]}
+                >{c}</Text>
+              )}
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={s.chartLabels}>
+        {labels.map((l, i) => (
+          <Text key={i} style={s.chartDayLabel}>{l}</Text>
+        ))}
+      </View>
+    </View>
+  );
+}
 
 export default function Analytics() {
   const { user }                    = useUser();
@@ -39,7 +132,7 @@ export default function Analytics() {
 
       unsubUsers = onSnapshot(
         query(collection(db, 'Users'), limit(100)),
-        (snap) => setUsers(snap.docs.map(d => d.data())),
+        (snap) => setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
         (e)    => console.error('[Analytics] Users error:', e)
       );
 
@@ -117,6 +210,16 @@ export default function Analytics() {
     );
   }
 
+  // Built from the Users snapshot already in state. audit_logs stores a uid for
+  // some rows and an email for most, so index both.
+  const nameMap = new Map();
+  (users || []).forEach(u => {
+    const name = (u.username || '').trim();
+    if (!name) return;
+    if (u.id) nameMap.set(u.id, name);
+    if (u.email) nameMap.set(String(u.email).toLowerCase(), name);
+  });
+
   const maxDay  = Math.max(...metrics.dayCounts, 1);
   const maxUser = Math.max(...metrics.topUsers.map(u => u.count), 1);
 
@@ -159,15 +262,7 @@ export default function Analytics() {
           </View>
           <Text style={s.sectionLabel}>SESSIONS — LAST 7 DAYS</Text>
           <View style={s.card}>
-            <View style={s.barChartRow}>
-              {metrics.dayCounts.map((count, i) => (
-                <View key={i} style={s.barCol}>
-                  <Text style={s.barValue}>{count > 0 ? count : ''}</Text>
-                  <View style={s.barTrack}><View style={[s.barFill, { height: `${Math.max((count / maxDay) * 100, count > 0 ? 8 : 2)}%`, backgroundColor: count > 0 ? C.primary : C.cardBorder }]} /></View>
-                  <Text style={s.barLabel}>{metrics.dayLabels[i]}</Text>
-                </View>
-              ))}
-            </View>
+            <SessionLineChart counts={metrics.dayCounts} labels={metrics.dayLabels} max={maxDay} />
           </View>
           <Text style={s.sectionLabel}>USER ROLE DISTRIBUTION</Text>
           <View style={s.card}>
@@ -186,7 +281,7 @@ export default function Analytics() {
                 {metrics.topUsers.map((u, i) => (
                   <View key={u.id} style={[s.userRow, i < metrics.topUsers.length - 1 && s.userBorder]}>
                     <View style={[s.rankBadge, { backgroundColor: i === 0 ? '#fef9c3' : C.primaryLight }]}><Text style={[s.rankText, { color: i === 0 ? '#d97706' : C.primary }]}>#{i + 1}</Text></View>
-                    <Text style={s.userId} numberOfLines={1}>{u.id}</Text>
+                    <Text style={s.userId} numberOfLines={1}>{displayUser(nameMap, u.id)}</Text>
                     <View style={s.userBarWrap}><View style={[s.userBar, { width: `${(u.count / maxUser) * 100}%`, backgroundColor: C.primary }]} /></View>
                     <Text style={s.userCount}>{u.count}</Text>
                   </View>
@@ -243,6 +338,17 @@ const s = StyleSheet.create({
   statusBarTrack: { flex: 1, height: 8, backgroundColor: C.cardBorder, borderRadius: 4, overflow: 'hidden' },
   statusBarFill:  { height: '100%', borderRadius: 4 },
   statusBarCount: { width: 70, fontSize: 11, fontWeight: '700', textAlign: 'right' },
+  chartTopRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
+  chartAxisMax:   { fontSize: 10, color: C.textMuted, fontWeight: '600' },
+  chartEmpty:     { fontSize: 11, color: C.textMuted, fontStyle: 'italic' },
+  chartPlot:      { position: 'relative', marginBottom: 6 },
+  chartGrid:      { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: C.cardBorder, opacity: 0.6 },
+  chartLine:      { position: 'absolute', height: 2, borderRadius: 1, backgroundColor: C.primary },
+  chartDot:       { position: 'absolute', width: 8, height: 8, borderRadius: 4, backgroundColor: C.card, borderWidth: 2, borderColor: C.primary },
+  chartDotPeak:   { backgroundColor: C.primary },
+  chartPeakLabel: { position: 'absolute', width: 28, textAlign: 'center', fontSize: 10, fontWeight: '700', color: C.primary },
+  chartLabels:    { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
+  chartDayLabel:  { fontSize: 9, color: C.textMuted, flex: 1, textAlign: 'center' },
   barChartRow:    { flexDirection: 'row', alignItems: 'flex-end', height: 120, gap: 6 },
   barCol:         { flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end' },
   barValue:       { fontSize: 9, color: C.primary, fontWeight: '700', marginBottom: 2 },

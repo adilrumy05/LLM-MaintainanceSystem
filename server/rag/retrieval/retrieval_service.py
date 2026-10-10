@@ -36,14 +36,26 @@ class RetrievalRequest(BaseModel):
     category_level_2: Optional[str] = None
     model_number: Optional[str] = None
     top_k: int = 5
+    # Optional override. Leave unset to get the pipeline's default, which now
+    # includes "image" — VLM-described figures/graphs/schematics/flowcharts/
+    # installation steps are searchable by default. Pass e.g. ["image"] to
+    # search only images, or ["child", "table"] to exclude them again.
+    chunk_types: Optional[List[str]] = None
 
 class ContextBlock(BaseModel):
+    chunk_id: str
     chunk_type: str
     score: float
     page: int
     document_group_id: str
     filename: str
     text: str
+    # Populated only for chunk_type=="image" (VLM-described figures/graphs/
+    # schematics/etc. from vlm_pipeline). None for text/table/parent chunks.
+    # Exposing this is what lets the Node layer attach an image to a specific
+    # step, and lets a multi-round retrieval loop dedupe blocks by chunk_id
+    # across rounds instead of only by (group, filename, page).
+    image_url: Optional[str] = None
 
 class Source(BaseModel):
     document_group_id: str
@@ -70,6 +82,7 @@ async def retrieve(request: RetrievalRequest):
             category_level_2=request.category_level_2,
             model_number=request.model_number,
             top_k=request.top_k,
+            chunk_types=request.chunk_types,
         )
 
         # Build a dictionary of applied filters
@@ -86,12 +99,18 @@ async def retrieve(request: RetrievalRequest):
             "applied_filters": applied_filters,  # <-- new field
             "context_blocks": [
                 {
+                    "chunk_id": b.chunk_id,
                     "chunk_type": b.chunk_type,
                     "score": b.score,
                     "page": b.page,
                     "document_group_id": b.document_group_id,
                     "filename": b.filename,
                     "text": b.text,
+                    "image_url": (
+                        (b.metadata.get("images") or [{}])[0].get("url")
+                        if b.chunk_type == "image" and b.metadata.get("images")
+                        else None
+                    ),
                 }
                 for b in result.context_blocks
             ],
@@ -108,7 +127,7 @@ async def get_filters():
     try:
         # Force initialization by accessing the lazy-init property
         vs = pipeline._vector_store
-        
+
         # If still None, the pipeline uses lazy init — trigger it
         if vs is None:
             # Run a dummy retrieve to force the pipeline to initialize
@@ -117,10 +136,10 @@ async def get_filters():
             except Exception:
                 pass  # We don't care about the result, just the side effect
             vs = pipeline._vector_store
-        
+
         if vs is None:
             raise HTTPException(status_code=503, detail="Vector store not initialized after warmup.")
-        
+
         filters = vs.get_known_filters()
         # Return flat — NOT nested under "filters" key
         return {
@@ -148,10 +167,10 @@ async def debug_filters():
             except Exception:
                 pass
             vs = pipeline._vector_store
-        
+
         if vs is None:
             return {"error": "Vector store is None even after warmup — check RetrievalPipeline init"}
-        
+
         filters = vs.get_known_filters()
         return {
             "group_count": len(filters["document_group_ids"]),

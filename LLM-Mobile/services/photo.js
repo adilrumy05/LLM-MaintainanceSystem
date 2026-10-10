@@ -1,4 +1,4 @@
-// services/photo.js
+// LLM-Mobile/services/photo.js
 //
 // Capture or pick a photo and prepare it for /api/query.
 //
@@ -47,7 +47,10 @@ async function prepare(asset) {
  *   allows picking several at once.
  * @throws Error with a message the app can show, e.g. permission denied.
  */
-export async function capturePhotos(source, { limit = MAX_PHOTOS } = {}) {
+export async function capturePhotos(source, { limit = MAX_PHOTOS, cameraOnly = false } = {}) {
+  if (cameraOnly && (source !== 'camera' || Platform.OS === 'web')) {
+    throw new Error('Take this required photo using the camera in the mobile app.');
+  }
   const useCamera = source === 'camera' && Platform.OS !== 'web';
 
   const permission = useCamera

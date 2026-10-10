@@ -27,6 +27,9 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+
+
 echo  [OK] Docker is running.
 
 :: ── Port conflict checks ─────────────────────────────────────────

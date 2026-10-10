@@ -1,8 +1,22 @@
-import sys, json, pathlib, urllib.request
+import os, sys, json, pathlib, urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+from dotenv import load_dotenv
+load_dotenv(pathlib.Path(__file__).resolve().parents[3] / ".env")
 
 from fastapi.testclient import TestClient
 from retrieval.retrieval_service import app
+
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333").rstrip("/")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
+
+
+def _qdrant_get(path):
+    req = urllib.request.Request(f"{QDRANT_URL}{path}")
+    if QDRANT_API_KEY:
+        req.add_header("api-key", QDRANT_API_KEY)
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read())
 
 
 def test_rag01_docs_page_loads():
@@ -18,12 +32,10 @@ def test_rag02_api_lists_its_routes():
 
 
 def test_rag03_qdrant_is_reachable():
-    with urllib.request.urlopen("http://localhost:6333/collections", timeout=5) as r:
-        data = json.loads(r.read())
+    data = _qdrant_get("/collections")
     assert data["status"] == "ok"
 
 
 def test_rag04_qdrant_has_data():
-    with urllib.request.urlopen("http://localhost:6333/collections/text_chunks_general", timeout=5) as r:
-        data = json.loads(r.read())
+    data = _qdrant_get("/collections/text_chunks_general")
     assert data["result"]["points_count"] > 0

@@ -91,6 +91,36 @@ uploads/audio/
 # Expo local state (machine-specific device history, dev server settings)
 .expo/
 
+# Personal contribution log — never commit
+DEVLOG.txt
+# Local test account credentials — never commit
+Test_account.txt
+
+# Qdrant snapshots — large binaries, transferred out of band
+*.snapshot
+
+# macOS/Linux launcher. Team is on Windows and uses start.bat; this exists
+# only for the one Mac dev, so it is kept local rather than adding a second
+# script everyone has to keep in sync.
+start.sh
+
 data/
 
 test-results/
+.gstack/
+
+
+# Node backend
+backend-node/node_modules/
+backend-node/serviceAccountKey.json
+backend-node/uploads/
+
+# Python
+server/**/__pycache__/
+__pycache__/
+*.pyc
+
+# Shared secrets
+
+LLM-Mobile/package-lock.json
+.env

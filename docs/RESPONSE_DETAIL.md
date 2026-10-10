@@ -23,6 +23,15 @@ level, their permissions or the AI model.
 >    control", "safety hazards an"). Seen twice on the iPhone. Not investigated;
 >    the inline selectable text added for copy/select is the first suspect.
 > 6. **No Brief answer has been checked line by line against the manual.**
+>
+> **Changed on 10 Oct 2026, when this was merged onto `main`'s new backend.**
+> `main` now finds its evidence in a search-and-answer loop, so Brief is written
+> after that loop, from the same evidence, while the guided steps are extracted.
+> A Brief request therefore takes about as long as Standard (it is no longer the
+> quickest level), and a Brief answer keeps its Procedure view. The speed and
+> "Brief skips guided steps" notes further down describe the earlier build and
+> have not been re-measured. The feature is switched off on both sides
+> (`FEATURES.EFFORT_LEVELS`, `EFFORT_LEVELS_ENABLED`) until the checks above pass.
 
 | Detail | What the technician gets | What the server does |
 |---|---|---|
@@ -105,7 +114,7 @@ answer text.
 The Node backend's four chat calls now use `gpt-6-luna` instead of
 `gpt-4o-mini`: the written answer, guided steps, photo reading and spoken
 (hands-free) answers. The model is set by `ANSWER_MODEL` in `.env` (see
-`server/services/answerModel.js`); setting it to `gpt-4o-mini` restores the
+`backend-node/server/services/answerModel.js`); setting it to `gpt-4o-mini` restores the
 earlier requests exactly. Voice transcription (Whisper) and the Python
 ingestion pipeline are unchanged.
 
@@ -172,9 +181,9 @@ Older clients can ignore all three.
 
 | Part | File |
 |---|---|
-| Prompt rules and the Brief checks | `server/services/responseDetail.js` |
-| Request handling and the Standard fallback | `server.js` (`/api/query`) |
-| Request validation | `server/middleware/validate.js` |
+| Prompt rules and the Brief checks | `backend-node/server/services/responseDetail.js` |
+| Request handling and the Standard fallback | `backend-node/server.js` (`/api/query`) |
+| Request validation | `backend-node/server/middleware/validate.js` |
 | Chip and picker | `LLM-Mobile/components/DetailChip.jsx` |
 | Saved preference | `LLM-Mobile/hooks/usePreferences.js` |
 | Labels, default view, fallback messages | `LLM-Mobile/utils/responseDetail.js` |

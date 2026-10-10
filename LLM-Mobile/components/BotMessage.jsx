@@ -3,6 +3,7 @@ import Markdown from 'react-native-markdown-display';
 import { markdownStyles, makeMarkdownRules } from '../constants/markdownConfig';
 import ProcedureViewer from './ProcedureViewer';
 import SourceItem from './SourceItem';
+import ProcedureTimer from './ProcedureTimer';
 import { StyleSheet } from 'react-native';
 import { C } from '../theme';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,7 +17,7 @@ const ACTION_ICONS = { retake: 'camera-outline', add_photo: 'add-circle-outline'
 // Replies that need the technician ("which model?", retake, retry) carry
 // `actions`. They must stay visible: without them a photo that needs model
 // confirmation leaves the conversation with no way forward.
-export default function BotMessage({ item, updateMessage, onAction, actionsDisabled = false, onCopy, onSelectText }) {
+export default function BotMessage({ item, updateMessage, onAction, actionsDisabled = false, onCopy, onSelectText, onTimerComplete }) {
   const hasSteps  = item.isProcedural && item.steps?.length > 0;
   const viewMode = answerView(item, FEATURES.EFFORT_LEVELS);
   const views = answerViews(item, FEATURES.EFFORT_LEVELS);
@@ -29,6 +30,17 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
 
   const setProcedureState = (nextState) =>
     updateMessage(item.id, m => ({ ...m, procedureState: nextState }));
+
+  // Timers belong ON the step that mandates the wait, so in procedure view the
+  // step cards own them. The loose box below is kept for Full Text, and as a
+  // fallback for the case where the answer carried a marker but the extractor
+  // failed to attach it to any step — losing the timer entirely would be worse
+  // than showing it detached.
+  const stepsOwnTimers = hasSteps && item.steps.some(
+    st => (Number(st.timerSeconds ?? st.timer_seconds) || 0) > 0
+  );
+  const showLooseTimers =
+    item.timers?.length > 0 && !(viewMode === 'procedure' && stepsOwnTimers);
 
   return (
     <View style={[s.bubbleBot, (views.length > 1 || item.sources?.length > 0) && s.bubbleBotWide]}>
@@ -50,9 +62,24 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
       )}
 
       {hasSteps && viewMode === 'procedure'
-        ? <ProcedureViewer steps={item.steps} state={procedureState} onChange={setProcedureState} />
+        ? <ProcedureViewer
+            steps={item.steps}
+            state={procedureState}
+            onChange={setProcedureState}
+            onTimerComplete={onTimerComplete}
+          />
         : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{viewMode === 'full' ? item.fullText : item.text}</Markdown>
       }
+
+      {/* Full Text has no step cards to host a countdown, so the timers are
+          listed here instead. */}
+      {showLooseTimers && (
+        <View style={s.timersBox}>
+          {item.timers.map((t) => (
+            <ProcedureTimer key={t.id} timer={t} onComplete={onTimerComplete} />
+          ))}
+        </View>
+      )}
 
       {item.sources?.length > 0 && (
         <View style={s.sourcesBox}>
@@ -109,6 +136,7 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
 const s = StyleSheet.create({
   detailLabel:      { color: C.textMuted, fontSize: 12, fontWeight: '600', marginBottom: 8 },
   bubbleBot:        { backgroundColor: C.card, borderWidth: 1, borderColor: C.cardBorder, borderRadius: 18, borderBottomLeftRadius: 4, padding: 12, maxWidth: '88%' },
+  timersBox:        { marginTop: 4 },
   sourcesBox:       { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: '#ddd6fe' },
   sourcesLabelRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   sourcesLabel:     { fontSize: 9, fontWeight: '700', color: '#7c3aed', letterSpacing: 1 },

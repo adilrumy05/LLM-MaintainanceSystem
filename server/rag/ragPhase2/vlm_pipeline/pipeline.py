@@ -1,4 +1,4 @@
-"""describe_images/pipeline.py — VLM description pipeline (Firebase → OpenAI → Firebase).
+"""describe_images/pipeline.py — VLM description pipeline (Firebase -> OpenAI -> Firebase).
 
 Pulls image records from the ManualImages Firestore collection, downloads each
 image from Firebase Storage, deduplicates near-identical figures, sends unique
@@ -20,6 +20,10 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from .dedup import DuplicateIndex, compute_phash
 from .firebase_client import FirebaseClient
 from .image_info import get_image_dimensions, resize_for_vlm
@@ -27,22 +31,24 @@ from .pricing import calculate_cost
 from .review import REVIEW_DIR, generate_review_html
 from .scope import determine_scope, scope_label
 from .utils import page_num_display
-from .vlm import classify_image, describe_diagram_detailed
-
-from dotenv import load_dotenv
-load_dotenv()
+from .vlm import ALL_DETAIL_FIELDS, DETAIL_HANDLERS, classify_image
 
 logger = logging.getLogger("describe_images.pipeline")
 
 DEFAULT_MODEL = os.getenv("VLM_MODEL", "gpt-4o-mini")
 DEFAULT_BUCKET = os.getenv("FIREBASE_BUCKET", "rbacfyp.firebasestorage.app")
 
-# OpenAI tokens-per-minute cap for this model/account tier.
-TOKEN_RATE_LIMIT_PER_MIN = int(os.getenv("VLM_TOKEN_LIMIT_PER_MIN"))
+# OpenAI tokens-per-minute cap for this model/account tier. 60,000 is the
+# lowest published tier as a safe out-of-the-box default — check
+# https://platform.openai.com/account/limits for your actual tier and set
+# VLM_TOKEN_LIMIT_PER_MIN accordingly, or the limiter will throttle far more
+# than it needs to.
+TOKEN_RATE_LIMIT_PER_MIN = int(os.getenv("VLM_TOKEN_LIMIT_PER_MIN", "60000"))
 
 # Conservative first-call estimate (image tiles + prompt + max output).
-# Updated to the real value after each call.
-DEFAULT_TOKEN_ESTIMATE = int(os.getenv("VLM_TOKEN_ESTIMATE"))
+# Updated to the real value after each call, so this only matters for the
+# very first request of a run.
+DEFAULT_TOKEN_ESTIMATE = int(os.getenv("VLM_TOKEN_ESTIMATE", "1200"))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -116,6 +122,7 @@ class RunStats:
     duplicates: int = 0
     described: int = 0
     diagrams_detailed: int = 0
+    detail_pass_counts: Counter = field(default_factory=Counter)
     errors: int = 0
     scope_counts: Counter = field(default_factory=Counter)
     tag_counts: Counter = field(default_factory=Counter)
@@ -128,6 +135,7 @@ class RunStats:
     total_cost_usd: float = 0.0
 
     total_rate_limit_wait_s: float = 0.0
+    stopped_early: Optional[str] = None  # reason string, or None if the run completed normally
 
     def add_usage(self, input_tokens: int, output_tokens: int, total_tokens: int,
                    input_cost: float, output_cost: float, total_cost: float) -> None:
@@ -144,15 +152,26 @@ class RunStats:
             "═" * 70,
             "RUN SUMMARY" + ("  (DRY RUN — nothing was called or written)" if dry_run else ""),
             "═" * 70,
+        ]
+        if self.stopped_early:
+            lines += [
+                f"  ⚠ STOPPED EARLY: {self.stopped_early}",
+                "  Fix the issue, then re-run the exact same command — already-described",
+                "  images are skipped automatically; only the ones still marked 'error' retry.",
+                "",
+            ]
+        lines += [
             f"  Images scanned:          {self.scanned}",
             f"  Already described:       {self.already_done}  (skipped, use --force to redo)",
             f"  Near-duplicates:         {self.duplicates}  (no VLM call, tagged skipped_duplicate)",
             f"  Sent to VLM:             {self.described}",
-            f"  Of which diagrams (2nd pass for exact measurements): {self.diagrams_detailed}",
+            f"  Of which got a 2nd detail pass (diagram/graph/schematic/flowchart/installation): {self.diagrams_detailed}",
             f"  Errors:                  {self.errors}",
         ]
         if self.scope_counts:
             lines.append(f"  By scope:                {dict(self.scope_counts)}")
+        if self.detail_pass_counts:
+            lines.append(f"  Detail pass by tag:      {dict(self.detail_pass_counts)}")
         if self.tag_counts:
             lines.append(f"  By content_type:         {dict(self.tag_counts)}")
 
@@ -190,7 +209,19 @@ def run(
     service_account_path: str,
     bucket_name: str,
     diagram_detail: bool = True,
+    diagram_model: Optional[str] = None,
+    only_tags: Optional[List[str]] = None,
 ) -> RunStats:
+    diagram_model = diagram_model or model
+    # --only-tag means "re-tag docs currently marked X" — those docs are
+    # already vlmStatus=="described" by definition, so without this they'd
+    # all just get skipped as already_done. Also skip dedup entirely in this
+    # mode: these docs already passed dedup once, and re-running it against
+    # only a filtered subset (not the full original batch) would produce
+    # wrong matches — a diagram doc could dedupe against nothing when its
+    # original near-duplicate figure isn't in this filtered run at all.
+    retag_mode = bool(only_tags)
+    force = force or retag_mode
     fb = FirebaseClient(service_account_path, bucket_name)
 
     openai_client = None
@@ -198,7 +229,7 @@ def run(
         from openai import OpenAI
         openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-    docs = fb.fetch_image_docs(document_group=document_group, max_pages=max_pages, limit=limit)
+    docs = fb.fetch_image_docs(document_group=document_group, max_pages=max_pages, limit=limit, vlm_tags=only_tags)
     logger.info(f"Found {len(docs)} image doc(s) matching scope")
 
     dupe_index = DuplicateIndex(threshold=dedup_threshold)
@@ -208,7 +239,13 @@ def run(
         os.makedirs(REVIEW_DIR, exist_ok=True)
 
     limiter = TokenRateLimiter(limit_per_minute=TOKEN_RATE_LIMIT_PER_MIN)
+    # Separate limiter for the diagram-detail model when it differs from the
+    # classify model — different models have separate TPM quotas on OpenAI's
+    # side, so sharing one counter across both would either over- or
+    # under-throttle depending on which one you'd actually hit first.
+    diagram_limiter = limiter if diagram_model == model else TokenRateLimiter(limit_per_minute=TOKEN_RATE_LIMIT_PER_MIN)
     last_token_estimate = DEFAULT_TOKEN_ESTIMATE
+    last_diagram_token_estimate = DEFAULT_TOKEN_ESTIMATE
 
     for doc in docs:
         stats.scanned += 1
@@ -252,7 +289,7 @@ def run(
         #     coarse visual hash even at ~20% area, which would otherwise wipe
         #     out the one description with enough resolution to say anything
         #     specific about it)
-        dup_of = dupe_index.find_duplicate(phash) if (phash and scope != "page") else None
+        dup_of = dupe_index.find_duplicate(phash) if (phash and scope != "page" and not retag_mode) else None
 
         if dup_of:
             stats.duplicates += 1
@@ -270,7 +307,7 @@ def run(
                 })
             continue
 
-        if phash and scope != "page":
+        if phash and scope != "page" and not retag_mode:
             dupe_index.add_representative(doc_id, phash)
 
         if dry_run:
@@ -293,23 +330,34 @@ def run(
 
             content_type = result["content_type"]
             in_tok, out_tok, tot_tok = result["input_tokens"], result["output_tokens"], result["total_tokens"]
-            measurements = None
+            input_cost, output_cost, total_cost = calculate_cost(in_tok, out_tok, model)
+            extra_payload: Dict[str, Any] = {}
+            used_diagram_model = None
 
-            if content_type == "diagram" and diagram_detail:
-                # ── Rate limit + detailed diagram pass ────────────────────
-                stats.total_rate_limit_wait_s += limiter.wait_for_capacity(last_token_estimate)
-                detailed = describe_diagram_detailed(openai_client, model, small, context_line)
-                limiter.record(detailed["total_tokens"])
-                last_token_estimate = max(1, detailed["total_tokens"])
+            handler = DETAIL_HANDLERS.get(content_type)
+            if handler and diagram_detail:
+                # ── Rate limit + detail pass (its own model, own limiter) ──
+                stats.total_rate_limit_wait_s += diagram_limiter.wait_for_capacity(last_diagram_token_estimate)
+                detailed = handler(openai_client, diagram_model, small, context_line)
+                diagram_limiter.record(detailed["total_tokens"])
+                last_diagram_token_estimate = max(1, detailed["total_tokens"])
 
                 result["description"] = detailed["description"] or result["description"]
-                measurements = detailed["measurements"]
-                in_tok += detailed["input_tokens"]
-                out_tok += detailed["output_tokens"]
-                tot_tok += detailed["total_tokens"]
-                stats.diagrams_detailed += 1
+                extra_payload = detailed["payload"]
+                used_diagram_model = diagram_model
 
-            input_cost, output_cost, total_cost = calculate_cost(in_tok, out_tok, model)
+                d_in, d_out, d_tot = detailed["input_tokens"], detailed["output_tokens"], detailed["total_tokens"]
+                d_input_cost, d_output_cost, d_total_cost = calculate_cost(d_in, d_out, diagram_model)
+
+                in_tok += d_in
+                out_tok += d_out
+                tot_tok += d_tot
+                input_cost += d_input_cost
+                output_cost += d_output_cost
+                total_cost += d_total_cost
+                stats.diagrams_detailed += 1
+                stats.detail_pass_counts[content_type] += 1
+
             stats.described += 1
             stats.scope_counts[scope] += 1
             stats.tag_counts[content_type] += 1
@@ -331,8 +379,7 @@ def run(
                 "description": final_description,
                 "tag": content_type,
                 "image_scope": scope,
-                "measurements": measurements or [],
-                "model": model,
+                "model": model if not used_diagram_model else f"{model} + {used_diagram_model}",
                 "original_width": original_width,
                 "original_height": original_height,
                 "sent_width": sent_width,
@@ -341,6 +388,7 @@ def run(
                 "output_tokens": out_tok,
                 "total_tokens": tot_tok,
                 "cost": total_cost,
+                **extra_payload,
             })
 
             fields = {
@@ -360,9 +408,11 @@ def run(
                 "vlmTotalCostUSD": total_cost,
                 "phash": phash or "",
                 "vlmStatus": "described",
+                **ALL_DETAIL_FIELDS,  # wipe any structured fields from a previous tag first
             }
-            if measurements is not None:
-                fields["vlmMeasurements"] = measurements
+            if extra_payload:
+                fields.update(extra_payload)
+                fields["vlmDetailModel"] = used_diagram_model
             fb.update_doc(doc_id, fields)
 
             print()
@@ -373,24 +423,46 @@ def run(
             print(f"  Original dimensions:  {original_width} x {original_height}")
             print(f"  Sent dimensions:      {sent_width} x {sent_height}")
             print(f"  Tag:                  {content_type}")
-            print(f"  Model:                {model}")
+            print(f"  Model:                {model}" + (f"  (+ detail pass: {used_diagram_model})" if used_diagram_model else ""))
             print(f"  Input / output / total tokens: {in_tok:,} / {out_tok:,} / {tot_tok:,}")
             print(f"  Cost:                 ${total_cost:.8f}")
-            if measurements:
-                print(f"  Measurements extracted: {len(measurements)}")
+            if extra_payload:
+                counts = {k: len(v) for k, v in extra_payload.items() if isinstance(v, list)}
+                if counts and not any(counts.values()):
+                    print(f"  Extracted: none visible — not treated as a fabrication risk ({counts})")
+                elif counts:
+                    print(f"  Extracted: {counts}")
             print()
             print("  DESCRIPTION:")
             print(f"  {final_description}")
             print("─" * 70)
 
         except Exception as e:
-            logger.warning(f"[{doc_id}] VLM/write failed: {e}")
-            stats.errors += 1
+            err_str = str(e)
             fb.update_doc(doc_id, {
-                "vlmStatus": "error", "vlmError": str(e), "imageScope": scope,
+                "vlmStatus": "error", "vlmError": err_str, "imageScope": scope,
                 "vlmOriginalWidth": original_width, "vlmOriginalHeight": original_height,
                 "vlmSentWidth": sent_width, "vlmSentHeight": sent_height,
             })
+            stats.errors += 1
+
+            # Unrecoverable account-level errors (out of credits, revoked key,
+            # etc.) will fail identically for every remaining image — no point
+            # burning wall-clock time (and the SDK's own retry-with-backoff)
+            # grinding through the rest of the batch to confirm that N more
+            # times. Stop now; add credits/fix the key, then just re-run the
+            # same command — already-described images are skipped
+            # automatically and only "error" docs (this one included) retry.
+            if "insufficient_quota" in err_str or "credit_balance_exhausted" in err_str:
+                logger.error(
+                    f"[{doc_id}] OpenAI account has no credits remaining — stopping this run "
+                    f"early instead of repeating the same failure {len(docs) - stats.scanned} more times. "
+                    f"Add credits, then re-run the exact same command."
+                )
+                stats.stopped_early = "out of OpenAI credits"
+                break
+
+            logger.warning(f"[{doc_id}] VLM/write failed: {e}")
 
         time.sleep(0.2)
 
@@ -432,6 +504,25 @@ def report(document_group: Optional[str], service_account_path: str, bucket_name
     print("\nBy (imageScope, vlmTag) — use this to spot page-vs-figure overlap:")
     for (scope, tag), v in scope_tag_counts.most_common():
         print(f"  {scope:<8} {tag:<15} {v}")
+
+    # Per-tag breakdown for every detail-pass type, not just diagrams.
+    DETAIL_LIST_FIELDS = {
+        "diagram": ("vlmMeasurements", "vlmHasVisibleMeasurements"),
+        "graph": ("vlmGraphs", "vlmHasReadableGraphs"),
+        "schematic": ("vlmComponents", "vlmHasIdentifiableComponents"),
+        "flowchart": ("vlmFlowcharts", "vlmHasReadableFlow"),
+        "installation_diagram": ("vlmInstallationSteps", "vlmHasReadableSteps"),
+    }
+    for tag, (list_field, gate_field) in DETAIL_LIST_FIELDS.items():
+        tag_docs = [d for d in docs if d.get("vlmTag") == tag and d.get("vlmStatus") == "described"]
+        if not tag_docs:
+            continue
+        with_data = sum(1 for d in tag_docs if d.get(list_field))
+        confirmed_empty = sum(1 for d in tag_docs if not d.get(list_field) and d.get(gate_field) is False)
+        model_counts = Counter(d.get("vlmDetailModel", "unknown") for d in tag_docs)
+        print(f"\nOf {len(tag_docs)} {tag}(s): {with_data} have extracted data, "
+              f"{confirmed_empty} confirmed nothing readable (not a fabrication risk).")
+        print(f"  detail-pass model used: {dict(model_counts)}")
 
     total_input_tokens = total_output_tokens = total_tokens = 0
     total_input_cost = total_output_cost = total_cost = 0.0

@@ -32,10 +32,15 @@ class FirebaseClient:
         document_group: Optional[str] = None,
         max_pages: Optional[int] = None,
         limit: Optional[int] = None,
+        vlm_tags: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         query = self.db.collection(COLLECTION_NAME)
         if document_group:
             query = query.where("documentGroup", "==", document_group)
+        if vlm_tags:
+            # "in" works for a single-element list too, so no need for a
+            # separate "==" branch. Firestore allows up to 10 values here.
+            query = query.where("vlmTag", "in", vlm_tags)
 
         docs = []
         for snap in query.stream():

@@ -11,13 +11,25 @@ jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn().mockResolvedValue
 jest.mock('react-native-toast-message', () => ({ show: jest.fn() }));
 jest.mock('../firebaseConfig', () => ({ db: {} }));
 jest.mock('firebase/firestore', () => ({ collection: jest.fn(), addDoc: jest.fn(), serverTimestamp: jest.fn() }));
-jest.mock('../services/api', () => ({ submitQuery: jest.fn(), decodeEntities: text => text || '', getFilters: jest.fn().mockResolvedValue({}) }));
+jest.mock('react-native-safe-area-context', () => {
+  const { View } = require('react-native');
+  return { SafeAreaView: View, SafeAreaProvider: ({ children }) => children, useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
+});
+jest.mock('../services/reportPdf', () => ({ shareReportPdf: jest.fn() }));
+jest.mock('../services/api', () => ({
+  submitQuery: jest.fn(), decodeEntities: text => text || '', getFilters: jest.fn().mockResolvedValue({}),
+  getSession: jest.fn(() => 'session-1'), setSession: jest.fn(), resetSession: jest.fn(() => 'session-2'),
+  generateChatTitle: jest.fn().mockResolvedValue('New Chat'), generateReport: jest.fn(), logTimerEvent: jest.fn(),
+}));
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { submitQuery } from '../services/api';
 import Dashboard from '../app/dashboard';
+import { FEATURES } from '../constants/featureFlags';
 
-beforeEach(() => { jest.clearAllMocks(); });
+// Response detail is switched off until it passes its live checks; these tests turn it on.
+beforeEach(() => { jest.clearAllMocks(); FEATURES.EFFORT_LEVELS = true; });
+afterAll(() => { FEATURES.EFFORT_LEVELS = false; });
 
 test('APP-A5-1 Retry keeps the original detail after the picker changes, and the Brief answer is saved', async () => {
   submitQuery.mockRejectedValueOnce(Object.assign(new Error('Temporary outage'), { retryable: true }));

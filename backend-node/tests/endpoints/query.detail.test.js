@@ -47,12 +47,13 @@ function mockPipeline({ brief = BRIEF, briefFinish = 'stop' } = {}) {
     let finish_reason = 'stop';
     if (schema === 'step_extraction') calls.steps.push(sent);
     else if (schema === 'spoken_answer') { calls.spoken.push(sent); content = JSON.stringify({ spokenText: '', complete: false }); }
-    else if (schema) throw new Error(`Unexpected schema: ${schema}`);
-    else {
+    else if (schema === 'answer_or_followup') {
+      // The answer call returns JSON: the answer, or a request for another search.
       calls.answer.push(sent);
-      content = isBrief(sent) ? brief : STANDARD;
+      content = JSON.stringify({ sufficient: true, answer: isBrief(sent) ? brief : STANDARD, follow_up_query: '' });
       if (isBrief(sent)) finish_reason = briefFinish;
     }
+    else throw new Error(`Unexpected call: ${schema || 'no schema'}`);
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ choices: [{ finish_reason, message: { content } }] }) });
   });
   return calls;
@@ -99,7 +100,7 @@ describe('Brief', () => {
     expect(calls.answer.filter(isBrief)).toHaveLength(1);
     expect(res.body).toMatchObject({ text: BRIEF, fullText: STANDARD, responseDetail: 'brief' });
     expect(res.body.detailFallback).toBeUndefined();
-    expect(res.body.sources).toEqual([{ filename: 'manual.pdf', page: 33 }]);
+    expect(res.body.sources).toEqual([expect.objectContaining({ filename: 'manual.pdf', page: 33 })]);
     expect(calls.retrieve[0].top_k).toBe(5);
   });
 
@@ -117,20 +118,20 @@ describe('Brief', () => {
     expect(logAuditRecord.mock.calls[0][1]).toBe(BRIEF);
   });
 
-  // Guided-step extraction takes about as long as the answer itself. Skipping
-  // it is what makes Brief quicker than the other levels.
-  test('a Brief answer skips guided-step extraction', async () => {
+  // The Brief answer is written while the guided steps are extracted from the
+  // full answer, so a Brief request takes about as long as a Standard one.
+  test('a Brief answer keeps guided steps, taken from the full answer', async () => {
     const calls = mockPipeline();
-    const res = await post({ detail: 'brief' });
-    expect(calls.steps).toHaveLength(0);
-    expect(res.body).toMatchObject({ isProcedural: false, steps: [] });
+    await post({ detail: 'brief' });
+    expect(calls.steps).toHaveLength(1);
+    expect(calls.steps[0].messages.at(-1).content).toContain(STANDARD);
   });
 
   test('a Brief request that falls back to Standard still gets guided steps, from the Standard answer', async () => {
     const calls = mockPipeline({ brief: 'Wash filters below 40 °C (manual.pdf, p.33).' });
     await post({ detail: 'brief' });
     expect(calls.steps).toHaveLength(1);
-    expect(calls.steps[0].messages.at(-1).content).toBe(STANDARD);
+    expect(calls.steps[0].messages.at(-1).content).toContain(STANDARD);
   });
 
   test.each([
