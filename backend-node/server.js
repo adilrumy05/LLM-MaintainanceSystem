@@ -19,8 +19,7 @@ const validate = require('./server/middleware/validate');
 const outputSanitize = require('./server/middleware/outputSanitize');
 const { resolveVisualIntake } = require('./server/services/visionIntake');
 const { generateSpokenAnswer } = require('./server/services/spokenAnswer');
-const { ANSWER_MODEL, modelRequest } = require('./server/services/answerModel');
-const { detailRules, checkBriefFigures, checkBriefKeepsSafety, plainMeasurements, DETAILED_TOP_K } = require('./server/services/responseDetail');
+const { detailRules, checkBriefFigures, checkBriefKeepsSafety, plainMeasurements } = require('./server/services/responseDetail');
 
 dotenv.config();
 
@@ -57,6 +56,8 @@ const PROMPT_FILE_PATH = path.join(__dirname, 'latest_prompt.txt');
 // extra round costs one more /retrieve call plus one more Call-1 LLM call, so
 // this is intentionally small and hard-capped rather than open-ended.
 const MAX_RETRIEVAL_ROUNDS = parseInt(process.env.MAX_RETRIEVAL_ROUNDS || '2', 10);
+const ANSWER_MODEL = process.env.ANSWER_MODEL || 'gpt-6-luna';
+const DEFAULT_TOP_K = parseInt(process.env.RETRIEVAL_TOP_K || '10', 10);
 
 const ROLE_SYSTEM_PROMPTS = {
   beginner: `You are a Guidance Helper for a junior maintenance technician.
@@ -274,11 +275,13 @@ Before answering, judge whether the context above is actually enough to fully an
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      ...modelRequest({ temperature: 0.2, maxTokens: 2048 }),
+      model: ANSWER_MODEL,
       messages: [
         { role: 'system', content: fullSystemPrompt },
         { role: 'user', content: userContent },
       ],
+      reasoning_effort: 'high',
+      max_completion_tokens: 8192,
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -317,7 +320,6 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       classification,
       category1,
       category2,
-      topK = 5,
       imageBase64: singleImage,
       images,
       confirmedModel,
@@ -334,7 +336,6 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     const detailAllowed = detail === 'brief' && process.env.BRIEF_ANSWERS_ENABLED !== 'true' ? 'standard' : detail;
     const detailRequested = voice === true || process.env.EFFORT_LEVELS_ENABLED === 'false'
       ? 'standard' : detailAllowed || 'standard';
-    const retrievalTopK = detailRequested === 'detailed' ? Math.max(DETAILED_TOP_K, topK ?? 5) : topK ?? 5;
     const timing = { start: Date.now() };
 
     // One photo or several. Everything below works on the list; `imageBase64`
@@ -468,7 +469,6 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
       // match against the typed text, so it wins.
       model_number: visualModel || matchedModel || (imageBase64 ? null : trustedConfirmedModel) || null,
       date_added: matchedDate || null,
-      top_k: retrievalTopK,
     };
 
     console.log(`Calling retrieval service for: "${query}"`);
@@ -734,7 +734,7 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...modelRequest({ temperature: 0, maxTokens: 2500 }),
+          model: ANSWER_MODEL,
           messages: [
             {
               role: 'system',
@@ -784,8 +784,10 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
             // above still cannot leak marker syntax into the UI.
             { role: 'user', content: stepUserContent },
           ],
-          // 2500 (raised from 1500): each step now carries two extra fields,
-          // and a truncated response would break JSON.parse.
+          reasoning_effort: 'medium',
+          // Raised from 1500: each step now carries two extra fields, and a
+          // truncated response would break JSON.parse.
+          max_completion_tokens: 6144,
           response_format: {
             type: 'json_schema',
             json_schema: {
@@ -1044,7 +1046,7 @@ app.post('/api/chat-title', sanitize, async (req, res) => {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: ANSWER_MODEL,
         messages: [
           {
             role: 'system',
@@ -1069,8 +1071,8 @@ Reply with the title and nothing else.`,
             content: `Question: ${String(question).slice(0, 500)}\n\nAnswer: ${String(answer || '').slice(0, 500)}`,
           },
         ],
-        temperature: 0.3,
-        max_tokens: 20,
+        reasoning_effort: 'low',
+        max_completion_tokens: 100,
       }),
     });
 

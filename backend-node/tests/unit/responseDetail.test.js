@@ -2,7 +2,7 @@
 // answer to compare them with. These check the one automatic safeguard: every
 // measurement and code in a Brief answer must be in the manual text it came from.
 
-const { checkBriefFigures, detailRules, plainMeasurements, DETAILED_TOP_K } = require('../../server/services/responseDetail');
+const { checkBriefFigures, detailRules, plainMeasurements } = require('../../server/services/responseDetail');
 
 const MANUAL = [
   'Switch off the power supply and unplug before cleaning. Wash the filters with water below 40 °C.',
@@ -84,9 +84,8 @@ describe('detail rules', () => {
     expect(detailRules('brief')).toMatch(/warning, prohibition and\s+every quantity/);
   });
 
-  test('Detailed asks only for what the extracts support, and searches more passages', () => {
+  test('Detailed asks only for what the extracts support', () => {
     expect(detailRules('detailed')).toMatch(/Explain only what the manual extracts support/);
-    expect(DETAILED_TOP_K).toBe(8);
   });
 });
 

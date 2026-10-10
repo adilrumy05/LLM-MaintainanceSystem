@@ -84,7 +84,8 @@ describe('Standard is unchanged', () => {
     expect(after.answer).toEqual(before.answer);
     expect(before.answer).toHaveLength(1);
     expect(before.answer[0].messages[0].content).not.toMatch(/Brief response|Detailed response/);
-    expect(before.retrieve[0].top_k).toBe(5);
+    // The search size is the retrieval service's own setting (RETRIEVAL_TOP_K).
+    expect(before.retrieve[0]).not.toHaveProperty('top_k');
     expect(b.body).toMatchObject({ text: STANDARD, responseDetail: 'standard' });
     expect(b.body.detailFallback).toBeUndefined();
   });
@@ -102,7 +103,6 @@ describe('Brief', () => {
     expect(res.body).toMatchObject({ text: BRIEF, fullText: STANDARD, responseDetail: 'brief' });
     expect(res.body.detailFallback).toBeUndefined();
     expect(res.body.sources).toEqual([expect.objectContaining({ filename: 'manual.pdf', page: 33 })]);
-    expect(calls.retrieve[0].top_k).toBe(5);
   });
 
   test('keeps the role prompt and adds the safety-preserving rules', async () => {
@@ -163,11 +163,11 @@ describe('Brief', () => {
 });
 
 describe('Detailed', () => {
-  test('searches more passages and asks only for supported detail', async () => {
+  test('asks only for supported detail, from the same search as Standard', async () => {
     const calls = mockPipeline();
     const res = await post({ detail: 'detailed', confirmedModel: 'CS-S10TKH' });
 
-    expect(calls.retrieve[0].top_k).toBe(8);
+    expect(calls.retrieve[0]).not.toHaveProperty('top_k');
     expect(calls.retrieve[0].model_number).toBe('CS-S10TKH');
     expect(calls.answer).toHaveLength(1);
     expect(calls.answer[0].messages[0].content).toMatch(/Detailed response/);
@@ -175,18 +175,12 @@ describe('Detailed', () => {
     expect(res.body.responseDetail).toBe('detailed');
   });
 
-  test('never lowers a larger requested search size', async () => {
-    const calls = mockPipeline();
-    await post({ detail: 'detailed', topK: 10 });
-    expect(calls.retrieve[0].top_k).toBe(10);
-  });
 });
 
 describe('where detail does not apply', () => {
   test.each(['brief', 'detailed'])('hands-free ignores %s', async (detail) => {
     const calls = mockPipeline();
     const res = await post({ detail, voice: true });
-    expect(calls.retrieve[0].top_k).toBe(5);
     expect(calls.answer).toHaveLength(1);
     expect(calls.answer[0].messages[0].content).not.toMatch(/Brief response|Detailed response/);
     expect(calls.spoken).toHaveLength(1);

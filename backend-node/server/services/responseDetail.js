@@ -5,8 +5,6 @@
 // rewritten afterwards. This changes how much is explained, not the user's
 // skill level and not the model.
 
-const DETAILED_TOP_K = 8;
-
 const RULES = {
   brief: `
 
@@ -180,4 +178,4 @@ function checkBriefKeepsSafety(brief, standard, evidence) {
   return { ok: missing.length === 0, missing };
 }
 
-module.exports = { detailRules, checkBriefFigures, checkBriefKeepsSafety, figures, plainMeasurements, DETAILED_TOP_K };
+module.exports = { detailRules, checkBriefFigures, checkBriefKeepsSafety, figures, plainMeasurements };

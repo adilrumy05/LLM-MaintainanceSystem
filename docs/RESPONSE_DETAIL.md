@@ -310,3 +310,14 @@ On the five questions that were answered:
 - **Not done:** the blind comparison of Detailed and Standard by two teammates.
 
 Raw results are not in the repo (they contain manual text); ask Adil.
+
+## Change on 11 Oct 2026: Detailed no longer searches more passages
+
+Andrei moved the search size out of the request and into the retrieval
+service's own setting (`RETRIEVAL_TOP_K`), and set the answer model's
+reasoning effort and token limits in `backend-node/server.js`. Merging that in
+means Detailed now reads the same passages as Standard and differs only in how
+it is asked to write. In the 10 Oct evaluation the larger search was
+Detailed's one clear gain (it answered a question Standard could not), so
+Detailed should be compared with Standard again before it is switched on. The
+comparison sheet made on 10 Oct used the old behaviour.

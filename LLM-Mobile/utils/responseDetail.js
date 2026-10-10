@@ -3,7 +3,7 @@ import { FEATURES } from '../constants/featureFlags';
 export const DETAIL_OPTIONS = [
   { value: 'brief', label: 'Brief', description: 'Short key points. Keeps the steps, warnings and measurements.' },
   { value: 'standard', label: 'Standard', description: 'A complete answer with moderate explanation.' },
-  { value: 'detailed', label: 'Detailed', description: 'Searches more of the manual and explains the reasons, where the manual gives them.' },
+  { value: 'detailed', label: 'Detailed', description: 'Explains the reasons, parts and follow-up checks, where the manual gives them.' },
 ];
 
 export const isResponseDetail = value => DETAIL_OPTIONS.some(option => option.value === value);
