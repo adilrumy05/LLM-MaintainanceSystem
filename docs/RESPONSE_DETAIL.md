@@ -321,3 +321,10 @@ it is asked to write. In the 10 Oct evaluation the larger search was
 Detailed's one clear gain (it answered a question Standard could not), so
 Detailed should be compared with Standard again before it is switched on. The
 comparison sheet made on 10 Oct used the old behaviour.
+
+Rerun on 11 Oct 2026 with these settings (10 questions, Standard and Detailed):
+Standard averaged 15.4 s and Detailed 22.6 s (8.5 s and 9.8 s the day before).
+Detailed answered the servicing-safety question where Standard could not.
+Four questions were still not answered at Standard: what the filters do,
+drain-hose installation, error H11 and servicing safety. A new comparison sheet
+with seven questions was made from this run.
