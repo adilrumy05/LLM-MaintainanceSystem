@@ -15,7 +15,7 @@
 // Every uncertain path STOPS and asks. There is deliberately no
 // "retrieve unfiltered and hope" fallback.
 
-const VISION_MODEL = 'gpt-4o-mini';
+const { modelRequest } = require('./answerModel');
 
 // Structured Outputs schema. Stricter than JSON mode: the model must return
 // these keys with these types, so a prose reply cannot slip through into
@@ -140,9 +140,7 @@ async function extractFromImage(images, apiKey, { fetchImpl = fetch } = {}) {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: VISION_MODEL,
-        max_tokens: 300,
-        temperature: 0,
+        ...modelRequest({ temperature: 0, maxTokens: 300 }),
         response_format: EXTRACTION_SCHEMA,
         messages: [
           { role: 'system', content: VISION_SYSTEM_PROMPT },

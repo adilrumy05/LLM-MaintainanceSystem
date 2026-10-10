@@ -1,0 +1,7 @@
+# Raw run output stays local. Kept in git: the first run (the baseline the
+# write-up compares against), the final run, and the spending ledger.
+*
+!.gitignore
+!ledger.json
+!run1-first-full.json
+!run4-procedures-only.json

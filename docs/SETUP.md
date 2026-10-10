@@ -596,6 +596,27 @@ Set-Location LLM-Mobile; npm ci; Set-Location ..
 > mobile app and are not used by the server. Removing them is a sensible tidy-up
 > for the team, but it is a bigger change than this fix.
 
+> **Known issue on `main` @ `263fa4b` (checked 30 Sep 2026, awaiting a lockfile
+> fix).** Both plain `npm ci` commands above fail on a clean clone:
+>
+> | Where | Error | Cause |
+> |---|---|---|
+> | Root | `EUSAGE` — "package.json and package-lock.json … are [not] in sync" | The root lockfile was not regenerated after a `package.json` change |
+> | `LLM-Mobile` | `ERESOLVE` — `react-test-renderer@19.3.0` needs a newer `react` than the pinned `19.2.3` | Peer-dependency mismatch in the dev dependencies |
+>
+> Until the lockfiles are fixed, install with:
+>
+> ```powershell
+> npm install --legacy-peer-deps
+> Set-Location LLM-Mobile; npm ci --legacy-peer-deps; Set-Location ..
+> ```
+>
+> The root `npm install` may rewrite `package-lock.json`; don't commit that
+> change unless fixing the lockfile is the point of your commit
+> (`git checkout -- package-lock.json` discards it). With these commands the
+> backend suite (177 tests), the app suite (16 tests) and the ios, android and
+> web bundles all pass.
+
 ---
 
 ## Stage 5 — Python dependencies

@@ -14,7 +14,7 @@ import { submitQuery, decodeEntities, getFilters,
          generateReport, logTimerEvent } from '../services/api';
 import { shareReportPdf } from '../services/reportPdf';
 import { extractTimers } from '../services/procedureTimers';
-import { generateChatTitle } from '../services/api';
+import { generateChatTitle, animateAnswer } from '../services/api';
 import Toast from 'react-native-toast-message';
 import { capturePhotos, MAX_PHOTOS } from '../services/photo';
 import MicButton from '../components/MicButton';
@@ -24,6 +24,16 @@ import BotMessage from '../components/BotMessage';
 import { actionsForOutcome } from '../utils/chatActions';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import * as Clipboard from 'expo-clipboard';
+import SelectTextSheet from '../components/SelectTextSheet';
+import QuoteChip from '../components/QuoteChip';
+import { FEATURES } from '../constants/featureFlags';
+import { answerForClipboard, toPlainText, toQuote } from '../utils/messageText';
+import { createRequestGuard } from '../utils/requestGuard';
+import DetailChip from '../components/DetailChip';
+import AnimateChip from '../components/AnimateChip';
+import usePreferences from '../hooks/usePreferences';
+import { normaliseDetail, answerView, isResponseDetail } from '../utils/responseDetail';
 
 const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
 
@@ -92,8 +102,14 @@ export default function Dashboard() {
   const [sharingRepairPdf, setSharingRepairPdf]   = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportText, setReportText]           = useState('');
+  const [quote, setQuote]                     = useState(null);   // { text, messageId }
+  const [selectFor, setSelectFor]             = useState(null);   // message open in the select sheet
+  const [showNewBelow, setShowNewBelow]       = useState(false);
 
-  const cancelRef       = useRef(false);
+  const requestGuardRef = useRef(null);
+  if (!requestGuardRef.current) requestGuardRef.current = createRequestGuard();
+  const requestGuard    = requestGuardRef.current;
+  const nearBottomRef   = useRef(true);
   const flatListRef     = useRef(null);
   const chatsRef        = useRef(chats);
   const activeChatIdRef = useRef(activeChatId);
@@ -106,6 +122,7 @@ export default function Dashboard() {
   const router                             = useRouter();
   const { role, isJunior, isIntermediate } = useRole();
   const { user, setUser }                  = useUser();
+  const preferences = usePreferences(user);
 
   const activeChat = chats.find(c => c.id === activeChatId);
   const messages   = useMemo(() => activeChat?.messages || [], [activeChat]);
@@ -151,7 +168,15 @@ export default function Dashboard() {
   const addMessage = useCallback((from, text, sources = [], extra = {}, chatId = activeChatIdRef.current) => {
     const msg = { id: Date.now().toString() + Math.random(), from, text, sources, ...extra };
     setChats(prev => prev.map(c => c.id === chatId ? { ...c, messages: [...c.messages, msg] } : c));
-    requestAnimationFrame(() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80));
+    // Follow the conversation only if the technician is already at the bottom,
+    // or has just sent something. Otherwise leave them where they are reading
+    // and offer a "New answer" shortcut.
+    if (from === 'user' || nearBottomRef.current) {
+      requestAnimationFrame(() => setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80));
+    } else {
+      setShowNewBelow(true);
+    }
+    return msg.id;
   }, []);
 
   // Kept so the external BotMessage can persist step state
@@ -171,24 +196,64 @@ export default function Dashboard() {
       messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
     }))), []);
 
+  // ── Animations ─────────────────────────────────────────────────────────────
+  // One request per answer. The answer is already on screen; this fills in the
+  // card under it. Each request has its own controller, so a cancelled or
+  // replaced request that finishes late cannot write to the message.
+  const animationRequests = useRef(new Map());
+  const [animating, setAnimating] = useState([]);
+
+  const requestAnimation = useCallback(async (chatId, messageId, ref) => {
+    animationRequests.current.get(messageId)?.abort();
+    const controller = new AbortController();
+    animationRequests.current.set(messageId, controller);
+    setAnimating(ids => [...ids.filter(id => id !== messageId), messageId]);
+    updateMessage(messageId, m => ({ ...m, animation: { status: 'generating', ref } }), chatId);
+    let outcome;
+    try {
+      outcome = await animateAnswer(ref, { signal: controller.signal });
+    } catch (err) {
+      outcome = { status: 'failed', message: 'Could not reach the server. Try again.' };
+    }
+    if (animationRequests.current.get(messageId) !== controller) return;
+    animationRequests.current.delete(messageId);
+    setAnimating(ids => ids.filter(id => id !== messageId));
+    updateMessage(messageId, m => ({ ...m, animation: { ...outcome, ref } }), chatId);
+  }, [updateMessage]);
+
+  const cancelAnimation = useCallback((chatId, messageId) => {
+    const controller = animationRequests.current.get(messageId);
+    animationRequests.current.delete(messageId);
+    controller?.abort();
+    setAnimating(ids => ids.filter(id => id !== messageId));
+    updateMessage(messageId, m => (m.animation ? { ...m, animation: { status: 'cancelled', ref: m.animation.ref } } : m), chatId);
+  }, [updateMessage]);
+
+  useEffect(() => () => { animationRequests.current.forEach(controller => controller.abort()); animationRequests.current.clear(); }, []);
+
   const markActionsUsed   = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, true),  [setActionsUsed]);
   const markActionsUnused = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, false), [setActionsUsed]);
 
-  const runQuery = useCallback(async ({ text, photos = [], confirmedModel, docGroup, voice = false }) => {
+  const runQuery = useCallback(async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null, detail, animate }) => {
     const chatId = activeChatIdRef.current;
     const chat   = chatsRef.current.find(c => c.id === chatId);
     const model  = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
     const group  = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
-    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group };
+    const requestedDetail = voice || !FEATURES.EFFORT_LEVELS ? 'standard' : normaliseDetail(detail ?? preferences.detail);
+    // Captured with the request, like the detail, so Retry asks for the same thing.
+    const requestedAnimate = !voice && FEATURES.ANIMATIONS && (animate ?? preferences.animate) === true;
+    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group, quote: quoted, voice, detail: requestedDetail, animate: requestedAnimate };
     const hasPhotos = photos.length > 0;
 
-    cancelRef.current = false;
+    // Only the latest request may write to the chat; starting one aborts the last.
+    const { id: requestId, signal } = requestGuard.begin();
     setIsProcessing(true);
     try {
       const result = await submitQuery(text, {
         docGroup: group, images: photos.map(p => p.base64), confirmedModel: model, voice,
+        quote: quoted, signal, detail: requestedDetail, animate: requestedAnimate,
       });
-      if (cancelRef.current) return { cancelled: true };
+      if (!requestGuard.isCurrent(requestId)) return { cancelled: true };
 
       if (result.needsInput) {
         addMessage('bot', decodeEntities(result.text), [], { actions: actionsForOutcome(result, hasPhotos) }, chatId);
@@ -197,8 +262,12 @@ export default function Dashboard() {
         // or the markers can be missed. Markers never reach the renderer,
         // AsyncStorage, or a later repair report.
         const { cleanText, timers } = extractTimers(decodeEntities(result.text));
-        addMessage('bot', cleanText, result.sources || [], {
+        const answerId = addMessage('bot', cleanText, result.sources || [], {
           timers,
+          detail: requestedDetail,
+          ...(isResponseDetail(result.responseDetail) ? { responseDetail: result.responseDetail } : {}),
+          ...(result.detailFallback ? { detailFallback: result.detailFallback } : {}),
+          ...(typeof result.fullText === 'string' ? { fullText: extractTimers(decodeEntities(result.fullText)).cleanText } : {}),
           isProcedural: result.isProcedural || false,
           steps: (result.steps || []).map(st => ({
             title: decodeEntities(st.title),
@@ -213,10 +282,11 @@ export default function Dashboard() {
             timerSeconds: Number(st.timer_seconds) > 0 ? Number(st.timer_seconds) : 0,
             timerLabel: decodeEntities(st.timer_label || ''),
           })),
-          procedureView: (result.isProcedural && result.steps?.length > 0) ? 'procedure' : 'text',
+          procedureView: answerView({ ...result, detail: requestedDetail }, FEATURES.EFFORT_LEVELS),
           procedureState: (result.isProcedural && result.steps?.length > 0)
             ? { currentStep: 0, completedSteps: [], overviewOpen: false } : null,
         }, chatId);
+        if (requestedAnimate && typeof result.animationRef === 'string') requestAnimation(chatId, answerId, result.animationRef);
         if (result.identifiedModel) updateChat(chatId, { confirmedModel: decodeEntities(result.identifiedModel) });
 
         // Name the chat from its first exchange, the way chat assistants do.
@@ -233,31 +303,64 @@ export default function Dashboard() {
       }
       return { result };
     } catch (err) {
-      if (cancelRef.current) return { cancelled: true };
+      if (err.cancelled || !requestGuard.isCurrent(requestId)) return { cancelled: true };
       const photoProblem = err.code === 'invalid_image' || err.code === 'image_too_large';
       const actions = hasPhotos && photoProblem ? [{ type: 'retake' }]
         : err.retryable || !err.status ? [{ type: 'retry' }] : [];
       addMessage('bot', `Error: ${err.message || 'Could not reach the server.'}`, [], { actions }, chatId);
       return { error: err };
     } finally {
-      setIsProcessing(false);
+      // A stale request finishing late must not clear the spinner of the newer one.
+      if (requestGuard.isCurrent(requestId)) setIsProcessing(false);
     }
-  }, [addMessage, updateChat]);
+  }, [addMessage, updateChat, requestGuard, preferences.detail, preferences.animate, requestAnimation]);
 
   const handleSend = async (overrideText) => {
     const typed  = (overrideText || inputValue).trim();
     const photos = pendingPhotos;
     if ((!typed && !photos.length) || isProcessing) return;
     const queryText = typed || DEFAULT_PHOTO_QUESTION;
+    const quoted    = FEATURES.CHAT_QUOTE && quote?.text ? quote : null;
+    const requestedDetail = FEATURES.EFFORT_LEVELS ? preferences.detail : 'standard';
     setInputValue('');
     setPendingPhotos([]);
+    setQuote(null);
     const raw = await AsyncStorage.getItem('queryHistory');
     const existing = JSON.parse(raw || '[]');
     await AsyncStorage.setItem('queryHistory', JSON.stringify(
       [{ id: Date.now(), text: queryText, timestamp: new Date().toISOString() }, ...existing].slice(0, 50)
     ));
-    addMessage('user', queryText, [], photos.length ? { imageUris: photos.map(p => p.uri) } : {});
-    await runQuery({ text: queryText, photos });
+    addMessage('user', queryText, [], {
+      ...(photos.length ? { imageUris: photos.map(p => p.uri) } : {}),
+      ...(quoted ? { quote: quoted } : {}),
+    });
+    await runQuery({ text: queryText, photos, quote: quoted, detail: requestedDetail });
+  };
+
+  // ─── Copy, select and reply ───────────────────────────────────────────────
+  const handleCopyAnswer = useCallback(async (message) => {
+    try {
+      await Clipboard.setStringAsync(answerForClipboard(message));
+      Toast.show({ type: 'success', text1: 'Answer copied', text2: 'Manual sources are included.' });
+    } catch (e) {
+      Toast.show({ type: 'error', text1: 'Could not copy the answer' });
+    }
+  }, []);
+
+  const handleCopySelection = async (text) => {
+    try {
+      await Clipboard.setStringAsync(text.trim());
+      Toast.show({ type: 'success', text1: 'Copied' });
+      setSelectFor(null);
+    } catch (e) {
+      Toast.show({ type: 'error', text1: 'Could not copy the selection' });
+    }
+  };
+
+  const handleReplyToSelection = (text) => {
+    const trimmed = toQuote(text);
+    if (trimmed) setQuote({ text: trimmed, messageId: selectFor?.id });
+    setSelectFor(null);
   };
 
   const getPhotos = useCallback(async (limit) => {
@@ -306,7 +409,7 @@ export default function Dashboard() {
         const photos = [...kept, ...added].slice(0, MAX_PHOTOS);
         const text   = req?.text || DEFAULT_PHOTO_QUESTION;
         addMessage('user', text, [], { imageUris: photos.map(p => p.uri) });
-        await runQuery({ text, photos, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup });
+        await runQuery({ text, photos, confirmedModel: req?.confirmedModel, docGroup: req?.docGroup, detail: req?.detail, quote: req?.quote });
         return;
       }
       case 'retry': {
@@ -381,7 +484,7 @@ export default function Dashboard() {
   };
 
   const handleCancel = () => {
-    cancelRef.current = true;
+    requestGuard.cancel();
     setIsProcessing(false);
     addMessage('bot', 'Response stopped. You can continue the conversation.');
   };
@@ -430,6 +533,7 @@ export default function Dashboard() {
     });
     handsFree.stop();
     setPendingPhotos([]);
+    setQuote(null);
     setChats(prev => [...prev, { id: newId, messages: [], filter: null, confirmedModel: null, sessionId: resetSession() }]);
     setActiveChatId(newId);
     setShowSidebar(false);
@@ -437,7 +541,7 @@ export default function Dashboard() {
   };
 
   const handleSwitchChat = (id) => {
-    if (id !== activeChatId) { handsFree.stop(); setPendingPhotos([]); }
+    if (id !== activeChatId) { handsFree.stop(); setPendingPhotos([]); setQuote(null); }
     // Re-point the API at this chat's session so its messages land in its own
     // audit_logs document.
     const target = chats.find(c => c.id === id);
@@ -616,20 +720,30 @@ export default function Dashboard() {
                 {messagePhotos(item).map((uri, i) => <PhotoThumb key={i} uri={uri} small />)}
               </View>
             ) : null}
+            {item.quote?.text ? (
+              <View style={s.bubbleQuote}>
+                <Text style={s.bubbleQuoteText} numberOfLines={3}>“{item.quote.text}”</Text>
+              </View>
+            ) : null}
             <Text style={[s.bubbleText, s.bubbleTextUser]}>{item.text}</Text>
           </View>
         ) : (
           <BotMessage
             item={item}
-            onAction={handleAction}
-            disabled={disabled}
             updateMessage={updateMessage}
+            onAction={(action) => handleAction(item, action)}
+            actionsDisabled={disabled}
+            onCopy={FEATURES.CHAT_COPY ? handleCopyAnswer : undefined}
+            onSelectText={FEATURES.CHAT_SELECT ? (message, text) => setSelectFor({ ...message, text }) : undefined}
             onTimerComplete={handleTimerComplete}
+            animating={animating.includes(item.id)}
+            onRetryAnimation={() => requestAnimation(activeChatIdRef.current, item.id, item.animation?.ref)}
+            onCancelAnimation={() => cancelAnimation(activeChatIdRef.current, item.id)}
           />
         )}
       </View>
     );
-  }, [handleAction, isProcessing, isPhotoBusy, handsFreeActive, updateMessage]);
+  }, [handleAction, isProcessing, isPhotoBusy, handsFreeActive, updateMessage, handleCopyAnswer, handleTimerComplete, animating, requestAnimation, cancelAnimation]);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={0}>
@@ -1033,6 +1147,11 @@ export default function Dashboard() {
               directionalLockEnabled
               scrollEventThrottle={16}
               showsVerticalScrollIndicator
+              onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
+                const near = contentOffset.y + layoutMeasurement.height >= contentSize.height - 120;
+                nearBottomRef.current = near;
+                if (near && showNewBelow) setShowNewBelow(false);
+              }}
               removeClippedSubviews
               maxToRenderPerBatch={5}
               updateCellsBatchingPeriod={50}
@@ -1040,7 +1159,17 @@ export default function Dashboard() {
               initialNumToRender={5}
             />
           )}
-
+          {showNewBelow && !isEmpty && (
+            <TouchableOpacity
+              style={s.newBelowPill}
+              onPress={() => { flatListRef.current?.scrollToEnd({ animated: true }); setShowNewBelow(false); }}
+              accessibilityRole="button"
+              accessibilityLabel="Scroll to the new answer"
+            >
+              <Ionicons name="arrow-down" size={14} color="#fff" />
+              <Text style={s.newBelowText}>New answer</Text>
+            </TouchableOpacity>
+          )}
           {isProcessing && (
             <View style={s.typingRow}>
               <View style={s.typingBubble}>
@@ -1089,7 +1218,11 @@ export default function Dashboard() {
             </View>
           )}
 
-          <View style={s.filterBar}>
+          {FEATURES.CHAT_QUOTE && <QuoteChip text={quote?.text} onRemove={() => setQuote(null)} />}
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterBar} style={s.filterScroll} keyboardShouldPersistTaps="handled">
+            {FEATURES.EFFORT_LEVELS && <DetailChip value={preferences.detail} onChange={preferences.setDetail} disabled={!preferences.ready || handsFree.active} />}
+            {FEATURES.ANIMATIONS && <AnimateChip value={preferences.animate} introSeen={preferences.animateIntroSeen} onChange={preferences.setAnimate} disabled={!preferences.ready || handsFree.active} />}
             <TouchableOpacity style={s.filterChip} onPress={() => setShowFilterPicker(true)}>
               <Ionicons name="filter-outline" size={13} color={activeChat?.filter ? C.primary : C.textMuted} />
               <Text style={[s.filterChipText, activeChat?.filter && { color: C.primary, fontWeight: '700' }]} numberOfLines={1}>
@@ -1122,7 +1255,8 @@ export default function Dashboard() {
               <Ionicons name="headset-outline" size={13} color={handsFree.active ? '#fff' : C.primary} />
               <Text style={[s.handsFreeChipText, handsFree.active && { color: '#fff' }]}>Hands-free</Text>
             </TouchableOpacity>
-          </View>
+          </ScrollView>
+          {FEATURES.EFFORT_LEVELS && preferences.error && <Text style={s.preferenceNote}>{preferences.error}</Text>}
 
           <View style={s.inputBar}>
             <TouchableOpacity style={s.iconBtn} onPress={handleAttachPhoto} disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}>
@@ -1140,6 +1274,8 @@ export default function Dashboard() {
             />
             <TouchableOpacity
               style={[s.sendBtn, ((!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active) && s.sendBtnDisabled]}
+              accessibilityRole="button"
+              accessibilityLabel="Send question"
               onPress={() => handleSend()}
               disabled={(!inputValue.trim() && !pendingPhotos.length) || isProcessing || handsFree.active}
             >
@@ -1147,6 +1283,14 @@ export default function Dashboard() {
             </TouchableOpacity>
           </View>
         </View>
+
+        <SelectTextSheet
+          visible={!!selectFor}
+          text={selectFor ? toPlainText(selectFor.text) : ''}
+          onClose={() => setSelectFor(null)}
+          onCopy={handleCopySelection}
+          onReply={handleReplyToSelection}
+        />
 
       </SafeAreaView>
     </KeyboardAvoidingView>
@@ -1252,6 +1396,10 @@ const s = StyleSheet.create({
   bubbleUser:         { backgroundColor: C.primary, borderBottomRightRadius: 4 },
   bubbleText:         { color: C.text, fontSize: 14, lineHeight: 20 },
   bubbleTextUser:     { color: '#fff' },
+  bubbleQuote:        { borderLeftWidth: 3, borderColor: 'rgba(255,255,255,0.7)', paddingLeft: 8, marginBottom: 6 },
+  bubbleQuoteText:    { color: 'rgba(255,255,255,0.9)', fontSize: 12, fontStyle: 'italic' },
+  newBelowPill:       { position: 'absolute', bottom: 12, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.primary, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 8, elevation: 3, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
+  newBelowText:       { color: '#fff', fontSize: 12, fontWeight: '700' },
   msgPhoto:           { width: 200, height: 150, borderRadius: 10, marginBottom: 6, backgroundColor: 'rgba(255,255,255,0.2)' },
   msgPhotoSmall:      { width: 96, height: 96, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.2)' },
   msgPhotoGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6, maxWidth: 196 },
@@ -1267,6 +1415,8 @@ const s = StyleSheet.create({
   sendBtn:            { width: 40, height: 40, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   sendBtnDisabled:    { backgroundColor: '#c4b5fd' },
   filterBar:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, gap: 6 },
+  filterScroll:       { flexGrow: 0 },
+  preferenceNote:     { fontSize: 12, color: C.textMuted, marginHorizontal: 12, marginTop: 6 },
   filterChip:         { flexDirection: 'row', alignItems: 'center', backgroundColor: C.primaryLight, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, gap: 4, flexShrink: 1 },
   filterChipText:     { fontSize: 12, color: C.textSub, flexShrink: 1 },
   filterClearBtn:     { padding: 4 },

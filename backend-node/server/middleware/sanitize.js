@@ -58,6 +58,24 @@ const sanitize = (req, res, next) => {
       req.body[key] = value;
     }
   }
+
+  // A quoted passage is user-controlled text that reaches the prompt just like
+  // `query`, so it gets the same screening. It is nested in an object, which the
+  // top-level loop above skips.
+  const quote = req.body.quote;
+  if (quote && typeof quote === 'object' && typeof quote.text === 'string') {
+    const value = stripTags(quote.text);
+    if (value.length > 1000) {
+      return res.status(400).json({ error: "Input too long" });
+    }
+    for (let pattern of injectionPatterns) {
+      if (pattern.test(value)) {
+        return res.status(400).json({ error: "Malicious input detected" });
+      }
+    }
+    req.body.quote = { ...quote, text: value };
+  }
+
   next();
 };
 

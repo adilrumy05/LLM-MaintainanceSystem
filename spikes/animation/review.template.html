@@ -1,0 +1,613 @@
+<title>Animation Spike Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600&display=swap">
+<style>
+/* Layout: a review sheet. Summary matrix first, then one section per question
+   with the two models side by side, each a small storyboard player beside the
+   manual's own words. Drawing-office vocabulary: cool paper, ink, drawing blue. */
+:root {
+  --bg: #f1f4f8; --surface: #ffffff; --ink: #16202c; --muted: #566475; --line: #d3dae3;
+  --accent: #1456d9; --accent-soft: #e2ebfd;
+  --ok: #1b7448; --ok-soft: #def1e6; --warn: #8f5400; --warn-soft: #fcefd3; --stop: #b0271f; --stop-soft: #fae2e0;
+  --stage: #f8fafc; --stage-line: #b9c4d2; --part: #ffffff; --shade: #e3e9f1;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141b; --surface: #171e28; --ink: #e5eaf1; --muted: #97a4b4; --line: #2a3543;
+    --accent: #7ba8ff; --accent-soft: #1b2a46;
+    --ok: #70d3a1; --ok-soft: #143324; --warn: #f0b955; --warn-soft: #3a2c0f; --stop: #ff8d83; --stop-soft: #41201d;
+    --stage: #121922; --stage-line: #3b4858; --part: #1e2835; --shade: #2c3848;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141b; --surface: #171e28; --ink: #e5eaf1; --muted: #97a4b4; --line: #2a3543;
+  --accent: #7ba8ff; --accent-soft: #1b2a46;
+  --ok: #70d3a1; --ok-soft: #143324; --warn: #f0b955; --warn-soft: #3a2c0f; --stop: #ff8d83; --stop-soft: #41201d;
+  --stage: #121922; --stage-line: #3b4858; --part: #1e2835; --shade: #2c3848;
+  color-scheme: dark;
+}
+
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.sheet { max-width: 1120px; margin-inline: auto; padding-inline: 20px; padding-block: 28px 56px; display: flex; flex-direction: column; gap: 32px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; line-height: 1.15; margin: 0; text-wrap: balance; }
+h1 { font-size: 2rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1.05rem; }
+p { margin: 0; }
+.lede { max-width: 66ch; color: var(--muted); }
+.eyebrow { font-family: var(--data); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.questions { display: flex; flex-direction: column; gap: 28px; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.brief { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+.brief div { border-top: 2px solid var(--ink); padding-top: 10px; }
+.brief strong { display: block; font-family: var(--display); font-size: 1.02rem; }
+.brief span { color: var(--muted); font-size: 0.92rem; }
+
+.who { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.who label { font-weight: 500; }
+input[type="text"] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; min-width: 0; }
+
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--data); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+
+.pill { display: inline-block; font-family: var(--data); font-size: 0.74rem; padding: 2px 8px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; }
+.pill.ready { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+.pill.unavailable { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.pill.rejected, .pill.failed { background: var(--stop-soft); color: var(--stop); border-color: var(--stop); }
+.chip { font-family: var(--data); font-size: 0.72rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+
+.question { display: flex; flex-direction: column; gap: 14px; border-top: 1px solid var(--line); padding-top: 22px; }
+.question header { display: flex; flex-direction: column; gap: 6px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 0.9rem; }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; align-items: start; }
+.result { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.result > .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.result .model { font-family: var(--data); font-weight: 500; }
+.result .cost { font-family: var(--data); font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.why { color: var(--muted); font-size: 0.93rem; overflow-wrap: anywhere; }
+
+.stage { background: var(--stage); border: 1px solid var(--stage-line); border-radius: 8px; }
+.stage svg { display: block; width: 100%; height: auto; }
+.frames { display: flex; flex-direction: column; gap: 16px; }
+.frame { display: flex; flex-direction: column; gap: 8px; }
+.frame .n { font-family: var(--data); font-size: 0.76rem; color: var(--muted); }
+.controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--surface); border-color: var(--accent); font-weight: 500; }
+button:disabled { opacity: 0.45; cursor: default; }
+.count { font-family: var(--data); font-size: 0.82rem; color: var(--muted); margin-inline-start: auto; font-variant-numeric: tabular-nums; }
+
+.caption { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.caption li { display: grid; grid-template-columns: 7.2rem minmax(0, 1fr) auto; gap: 10px; align-items: baseline; }
+.caption .kind { font-family: var(--data); font-size: 0.7rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.caption .kind.safety { color: var(--stop); font-weight: 500; }
+.caption .text { overflow-wrap: anywhere; }
+.caption .page { font-family: var(--data); font-size: 0.76rem; color: var(--muted); white-space: nowrap; }
+@media (max-width: 460px) { .caption li { grid-template-columns: minmax(0, 1fr) auto; } .caption .kind { grid-column: 1 / -1; } }
+
+.gaps { background: var(--warn-soft); border-left: 3px solid var(--warn); border-radius: 0 6px 6px 0; padding: 10px 12px; font-size: 0.92rem; }
+.gaps.unseen { background: var(--stop-soft); border-left-color: var(--stop); }
+.gaps ul, details ul { margin: 6px 0 0; padding-left: 18px; }
+details { font-size: 0.9rem; }
+details summary { cursor: pointer; color: var(--muted); }
+details .body { margin-top: 8px; color: var(--muted); overflow-wrap: anywhere; }
+details pre { white-space: pre-wrap; font-family: var(--data); font-size: 0.78rem; background: var(--stage); border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin: 8px 0 0; overflow-wrap: anywhere; }
+
+.verdict { border-top: 1px dashed var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.verdict .row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; }
+.verdict .q { font-weight: 500; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg label { cursor: pointer; font-size: 0.88rem; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span { display: block; padding: 4px 12px; }
+.seg input:checked + span { background: var(--accent); color: var(--surface); }
+.seg label + label { border-left: 1px solid var(--line); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+.verdict input[type="text"] { width: 100%; box-sizing: border-box; }
+
+.send { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+textarea { font-family: var(--data); font-size: 0.8rem; color: var(--ink); background: var(--stage); border: 1px solid var(--line); border-radius: 6px; padding: 10px; width: 100%; min-height: 150px; box-sizing: border-box; }
+.note { color: var(--muted); font-size: 0.88rem; }
+
+/* ── Stage drawing. Every stroke and fill comes from the tokens above. ── */
+.d-body { fill: var(--part); stroke: var(--ink); stroke-width: 1.6; stroke-linejoin: round; }
+.d-shade { fill: var(--shade); stroke: var(--ink); stroke-width: 1.2; stroke-linejoin: round; }
+.d-ink { fill: none; stroke: var(--ink); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.d-thin { fill: none; stroke: var(--ink); stroke-width: 1; stroke-linecap: round; opacity: 0.5; }
+.d-hot { fill: var(--accent); stroke: none; }
+.d-tube { fill: none; stroke: var(--ink); stroke-width: 13; stroke-linecap: round; }
+.d-tube-in { fill: none; stroke: var(--part); stroke-width: 10; stroke-linecap: round; }
+.d-ghost { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.d-ring { fill: none; stroke: var(--accent); stroke-width: 2.2; }
+.d-ctx { opacity: 0.78; }
+.s-label { fill: var(--ink); font-family: var(--body); font-size: 11.5px; font-weight: 500; }
+.s-small { fill: var(--muted); font-family: var(--data); font-size: 9.5px; }
+.s-tag { fill: var(--accent); font-family: var(--data); font-size: 11px; font-weight: 500; }
+.s-num { fill: var(--ink); font-family: var(--data); font-size: 11px; font-weight: 500; }
+.s-wire, .s-flow { stroke: var(--accent); stroke-width: 2.6; fill: none; stroke-linecap: round; }
+.s-arrow { stroke: var(--accent); stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.s-head { fill: var(--accent); stroke: none; }
+.s-value { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
+.s-badge { fill: var(--accent); stroke: none; }
+.s-badge-ink { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.s-caution { fill: var(--stop-soft); stroke: var(--stop); stroke-width: 1.6; stroke-linejoin: round; }
+.s-caution-text { fill: var(--stop); font-family: var(--data); font-size: 10px; font-weight: 500; }
+.s-empty { fill: var(--muted); font-family: var(--body); font-size: 12px; }
+
+/* Each moving part rests in its end position, so a still frame (reduced
+   motion, a screenshot, a printed page) still shows what happened. */
+.fx-away { transform: translate(var(--dx), var(--dy)); animation: lift 3.4s ease-in-out infinite; }
+.fx-toward { animation: land 3.4s ease-in-out infinite; }
+.fx-ccw .turn { animation: spin 2.6s linear infinite reverse; transform-box: fill-box; transform-origin: center; }
+.fx-cw .turn { animation: spin 2.6s linear infinite; transform-box: fill-box; transform-origin: center; }
+.fx-press .press { animation: press 1.5s ease-in-out infinite; }
+.fx-highlight .d-ring, .fx-off .d-ring { animation: ring 1.5s ease-in-out infinite alternate; transform-box: fill-box; transform-origin: center; }
+.fx-clean .twinkle { animation: twinkle 1.6s ease-in-out infinite; }
+.fx-clean .twinkle:nth-of-type(2) { animation-delay: 0.5s; }
+.fx-clean .twinkle:nth-of-type(3) { animation-delay: 1s; }
+.blink { animation: twinkle 1.2s ease-in-out infinite; }
+.s-wire { stroke-dasharray: 160; animation: draw 2.8s ease-out infinite; }
+.s-flow { stroke-dasharray: 7 6; animation: march 0.9s linear infinite; }
+@keyframes lift { 0%, 18% { transform: translate(0, 0); } 62%, 100% { transform: translate(var(--dx), var(--dy)); } }
+@keyframes land { 0%, 18% { transform: translate(var(--dx), var(--dy)); } 62%, 100% { transform: translate(0, 0); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes press { 0%, 100% { transform: translateY(0); } 45%, 60% { transform: translateY(7px); } }
+@keyframes ring { from { transform: scale(0.94); opacity: 0.95; } to { transform: scale(1.05); opacity: 0.3; } }
+@keyframes twinkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
+@keyframes draw { 0%, 12% { stroke-dashoffset: 160; } 55%, 100% { stroke-dashoffset: 0; } }
+@keyframes march { to { stroke-dashoffset: -13; } }
+@media (prefers-reduced-motion: reduce) {
+  .fx-away, .fx-toward, .fx-ccw .turn, .fx-cw .turn, .fx-press .press, .fx-highlight .d-ring, .fx-off .d-ring, .fx-clean .twinkle, .blink, .s-wire, .s-flow { animation: none; }
+}
+.still .fx-away, .still .fx-toward, .still .fx-ccw .turn, .still .fx-cw .turn, .still .fx-press .press, .still .d-ring, .still .twinkle, .still .blink, .still .s-wire, .still .s-flow { animation: none; }
+</style>
+
+<div class="sheet">
+  <header class="stack">
+    <span class="eyebrow">Maintenance Copilot · Sprint 5 · feasibility test</span>
+    <h1>Animation Spike Review</h1>
+    <p class="lede">Twelve technician questions were put through a pipeline that turns manual passages into a step-by-step schematic animation. Two AI models were tried on each. This sheet shows every result so that people who know the equipment can judge whether the animations are correct and useful.</p>
+  </header>
+
+  <section class="brief" aria-label="How to review">
+    <div><strong>Check it against the manual</strong><span>Each line under a drawing is the manual's own wording, with its page number. Open that page and compare: steps, order, values, wiring.</span></div>
+    <div><strong>Look for what is missing</strong><span>The checks can catch a wrong arrow or wire. They cannot know about a warning the model never picked up. That part needs you.</span></div>
+    <div><strong>Say if it would help</strong><span>The drawings are schematic: shapes and positions are not from the manual. Judge whether a technician would understand the job faster with this than with text alone.</span></div>
+  </section>
+
+  <section class="stack" aria-label="Summary">
+    <h2>Results at a glance</h2>
+    <p class="lede" id="tally"></p>
+    <div class="scroll"><table id="matrix"></table></div>
+  </section>
+
+  <section class="who" aria-label="Reviewer">
+    <label for="reviewer">Your name</label>
+    <input type="text" id="reviewer" autocomplete="name" placeholder="for the review you copy at the end">
+  </section>
+
+  <div id="questions" class="questions"></div>
+
+  <section class="send" aria-label="Send your review">
+    <h2>Send your review</h2>
+    <p class="note">Your answers are kept in this browser only. Copy them and send them to Adil.</p>
+    <div class="controls"><button class="primary" id="copy" type="button">Copy my review</button><span class="note" id="copied" role="status"></span></div>
+    <textarea id="summary" readonly aria-label="Your review as text"></textarea>
+  </section>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(function () {
+  var DATA = JSON.parse(document.getElementById('data').textContent);
+  var KIND = { action: 'Step', connection: 'Wiring', quantity: 'Value', warning: 'Warning', prohibition: 'Do not', prerequisite: 'Before you start', statement: 'Note' };
+  var STATUS = { ready: 'Animation shown', unavailable: 'Not animated', rejected: 'Blocked by checks', failed: 'Failed' };
+  var VERDICTS = [
+    { key: 'matches', q: 'Does it match the manual?', options: ['Yes', 'No'] },
+    { key: 'missing', q: 'Is anything important missing?', options: ['No', 'Yes'] },
+    { key: 'helpful', q: 'Would it help a technician?', options: ['Yes', 'No'] }
+  ];
+  // "#sheet" in the address shows every step of every animation at once, still.
+  var SHEET = location.hash === '#sheet';
+  if (SHEET) document.documentElement.classList.add('still');
+  var store = {};
+  try { store = JSON.parse(localStorage.getItem('animation-spike-review') || '{}') || {}; } catch (e) { store = {}; }
+  function save() { try { localStorage.setItem('animation-spike-review', JSON.stringify(store)); } catch (e) { /* the page works without it */ } }
+
+  function el(tag, attrs, children) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (key) {
+      if (key === 'text') node.textContent = attrs[key]; else if (key === 'class') node.className = attrs[key]; else node.setAttribute(key, attrs[key]);
+    });
+    (children || []).forEach(function (child) { if (child) node.appendChild(child); });
+    return node;
+  }
+  function esc(text) { return String(text == null ? '' : text).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function lc(text) { return String(text == null ? '' : text).toLowerCase(); }
+  function title(text) { text = String(text || ''); return text.charAt(0).toUpperCase() + text.slice(1); }
+  function tidyUnit(unit) { return String(unit || '').replace(/\\text\{([^}]*)\}/g, '$1').replace(/\^\{?2\}?/g, '²').replace(/[\\$]/g, ''); }
+  function num(value) { return Math.round(value * 10) / 10; }
+  function wrap(text, max) {
+    var words = String(text).split(/\s+/), lines = [''];
+    words.forEach(function (word) {
+      var last = lines.length - 1;
+      if ((lines[last] + ' ' + word).trim().length <= max || !lines[last]) lines[last] = (lines[last] + ' ' + word).trim(); else lines.push(word);
+    });
+    if (lines.length > 2) { lines = [lines[0], lines.slice(1).join(' ')]; if (lines[1].length > max) lines[1] = lines[1].slice(0, max - 1) + '…'; }
+    return lines;
+  }
+  function label(text, x, y, cls, max) {
+    return wrap(text, max || 22).map(function (line, i) { return '<text class="' + cls + '" x="' + num(x) + '" y="' + num(y + i * 13) + '" text-anchor="middle">' + esc(line) + '</text>'; }).join('');
+  }
+  var DEFS = '<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="s-head" d="M0 0 L10 5 L0 10 z"></path></marker></defs>';
+
+  // ── Parts ───────────────────────────────────────────────────────────────
+  // Each is drawn around (0, 0), about 110 wide and 70 high. They are generic
+  // pictures of a kind of part, not drawings of the real one.
+  function screwHead(x, y, r) { return '<circle class="d-body" cx="' + x + '" cy="' + y + '" r="' + r + '"></circle><path class="d-ink" d="M' + (x - r * 0.55) + ' ' + y + 'H' + (x + r * 0.55) + '"></path>'; }
+  var DRAW = {
+    indoor_unit: function () { return '<rect class="d-body" x="-58" y="-24" width="116" height="46" rx="13"></rect><path class="d-ink" d="M-58 6H58M-42 14H42"></path><rect class="d-shade" x="-44" y="-15" width="26" height="9" rx="2"></rect><circle class="d-hot" cx="40" cy="-10" r="2.6"></circle>'; },
+    outdoor_unit: function () { return '<rect class="d-body" x="-54" y="-36" width="108" height="70" rx="6"></rect><circle class="d-shade" cx="-16" cy="-1" r="26"></circle><path class="d-thin" d="M-16 -27V25M-42 -1H10M-34 -19L2 17M-34 17L2 -19"></path><circle class="d-body" cx="-16" cy="-1" r="7"></circle><rect class="d-shade" x="24" y="-28" width="20" height="54" rx="2"></rect><path class="d-ink" d="M-44 34v6M44 34v6"></path>'; },
+    unit: function () { return '<rect class="d-body" x="-52" y="-30" width="104" height="60" rx="8"></rect><path class="d-ink" d="M-52 10H52"></path><path class="d-thin" d="M-38 19H38"></path><circle class="d-hot" cx="38" cy="-17" r="2.6"></circle>'; },
+    cover: function () { return '<rect class="d-body" x="-44" y="-30" width="88" height="60" rx="5"></rect><path class="d-thin" d="M-28 -10H28M-28 0H28M-28 10H28"></path><circle class="d-ink" cx="-35" cy="-21" r="2.4"></circle><circle class="d-ink" cx="35" cy="-21" r="2.4"></circle><circle class="d-ink" cx="-35" cy="21" r="2.4"></circle><circle class="d-ink" cx="35" cy="21" r="2.4"></circle>'; },
+    screw: function () { return '<g class="turn"><circle class="d-body" cx="0" cy="0" r="18"></circle><path class="d-ink" d="M-11 0H11"></path><circle class="d-hot" cx="0" cy="-12" r="2.2"></circle></g>'; },
+    cable: function () { return '<rect class="d-shade" x="-58" y="-8" width="64" height="16" rx="8"></rect><path class="d-ink" d="M6 -5L40 -20M6 -2L44 -7M6 2L44 7M6 5L40 20"></path><circle class="d-body" cx="43" cy="-21" r="3.6"></circle><circle class="d-body" cx="47" cy="-7" r="3.6"></circle><circle class="d-body" cx="47" cy="7" r="3.6"></circle><circle class="d-body" cx="43" cy="21" r="3.6"></circle>'; },
+    terminal_block: function () { return '<rect class="d-body" x="-42" y="-18" width="84" height="36" rx="3"></rect>' + screwHead(-26, 0, 8) + screwHead(0, 0, 8) + screwHead(26, 0, 8); },
+    board: function () { return '<rect class="d-body" x="-48" y="-30" width="96" height="60" rx="3"></rect><rect class="d-shade" x="-38" y="-21" width="24" height="16" rx="1"></rect><rect class="d-shade" x="-4" y="-21" width="38" height="9" rx="1"></rect><path class="d-thin" d="M-38 2H-10M-4 -5H32"></path><rect class="d-shade" x="-36" y="12" width="11" height="11"></rect><rect class="d-shade" x="-18" y="12" width="11" height="11"></rect><rect class="d-shade" x="0" y="12" width="11" height="11"></rect><rect class="d-shade" x="18" y="12" width="11" height="11"></rect>'; },
+    clamp: function () { return '<path class="d-body" d="M-36 14H-17V2a17 17 0 0 1 34 0V14H36V23H-36Z"></path><circle class="d-ink" cx="-27" cy="18.5" r="2"></circle><circle class="d-ink" cx="27" cy="18.5" r="2"></circle>'; },
+    tape: function () { return '<circle class="d-body" cx="-6" cy="0" r="25"></circle><circle class="d-shade" cx="-6" cy="0" r="10"></circle><path class="d-ink" d="M12 18L42 27"></path>'; },
+    filter: function () { return '<path class="d-ink" d="M-12 26v9h24v-9"></path><rect class="d-body" x="-48" y="-28" width="96" height="54" rx="6"></rect><path class="d-thin" d="M-32 -28V26M-16 -28V26M0 -28V26M16 -28V26M32 -28V26M-48 -10H48M-48 8H48"></path>'; },
+    hose: function () { var d = 'M-54 -14C-20 -14 -24 18 8 18S40 -2 54 -2'; return '<path class="d-tube" d="' + d + '"></path><path class="d-tube-in" d="' + d + '"></path>'; },
+    pipe: function () { return '<path class="d-tube" d="M-54 0H34"></path><path class="d-tube-in" d="M-54 0H34"></path><rect class="d-shade" x="28" y="-13" width="24" height="26" rx="3"></rect>'; },
+    tool: function () { return '<rect class="d-shade" x="-54" y="-9" width="44" height="18" rx="8"></rect><path class="d-ink" d="M-10 0H40"></path><path class="d-body" d="M40 -4.5L53 0L40 4.5Z"></path>'; },
+    remote: function () { return '<rect class="d-body" x="-22" y="-38" width="44" height="76" rx="9"></rect><rect class="d-shade" x="-14" y="-30" width="28" height="17" rx="2"></rect><circle class="d-ink" cx="-9" cy="-2" r="4"></circle><circle class="d-ink" cx="9" cy="-2" r="4"></circle><circle class="d-ink" cx="-9" cy="12" r="4"></circle><circle class="d-ink" cx="9" cy="12" r="4"></circle><circle class="d-ink" cx="-9" cy="26" r="4"></circle><circle class="d-ink" cx="9" cy="26" r="4"></circle>'; },
+    button: function () { return '<rect class="d-shade" x="-32" y="-6" width="64" height="26" rx="7"></rect><rect class="d-body press" x="-26" y="-18" width="52" height="26" rx="9"></rect>'; },
+    led: function () { return '<path class="d-thin" d="M0 -26V-20M0 20V26M-26 0H-20M20 0H26M-18.5 -18.5L-14 -14M18.5 -18.5L14 -14M-18.5 18.5L-14 14M18.5 18.5L14 14"></path><circle class="d-body" cx="0" cy="0" r="14"></circle><circle class="d-hot blink" cx="0" cy="0" r="7.5"></circle>'; },
+    display: function () { return '<rect class="d-body" x="-38" y="-21" width="76" height="42" rx="5"></rect><rect class="d-shade" x="-30" y="-14" width="60" height="28" rx="2"></rect><path class="d-ink" d="M-13 0H-4M4 0H13"></path>'; },
+    'switch': function () { return '<rect class="d-body" x="-24" y="-32" width="48" height="64" rx="7"></rect><rect class="d-shade" x="-13" y="-22" width="26" height="44" rx="4"></rect><path class="d-ink" d="M0 -15V-6"></path><circle class="d-ink" cx="0" cy="9" r="5.5"></circle>'; },
+    bottle: function () { return '<path class="d-body" d="M-16 32V-4q0-9 9-11V-30h14v15q9 2 9 11V32Z"></path><rect class="d-shade" x="-10" y="2" width="20" height="18" rx="2"></rect>'; },
+    generic: function () { return '<rect class="d-body" x="-46" y="-24" width="92" height="48" rx="10"></rect><path class="d-thin" d="M-30 -6H30M-30 6H14"></path>'; }
+  };
+  DRAW.panel = DRAW.cover;
+  // The picture is chosen from the manual's own name for the part first, and
+  // from the model's suggestion only when the name gives no clue.
+  var SHAPE_WORDS = [
+    [/indoor unit/, 'indoor_unit'], [/outdoor unit/, 'outdoor_unit'], [/display/, 'display'], [/button/, 'button'], [/remote/, 'remote'],
+    [/holder|clamp/, 'clamp'], [/\bleds?\b|\blamps?\b|indicator/, 'led'], [/screw|bolt/, 'screw'], [/cover|panel|grille|door|\blid\b/, 'cover'], [/terminal/, 'terminal_block'],
+    [/board|pcb/, 'board'], [/tape/, 'tape'], [/filter/, 'filter'], [/hose/, 'hose'], [/pip(e|ing)|tube/, 'pipe'],
+    [/cable|wire|cord|\blead\b/, 'cable'], [/power supply|switch|breaker|plug/, 'switch'], [/detergent|soap/, 'bottle'],
+    [/driver|wrench|cutter|reamer|\btool\b/, 'tool'], [/\bunit\b/, 'unit']
+  ];
+  function shapeOf(part) {
+    var name = lc(part.label);
+    for (var i = 0; i < SHAPE_WORDS.length; i++) if (SHAPE_WORDS[i][0].test(name)) return SHAPE_WORDS[i][1];
+    return part.shape && part.shape !== 'generic' && DRAW[part.shape] ? part.shape : 'generic';
+  }
+  function picture(part) { return DRAW[shapeOf(part)](); }
+
+  // ── From verified facts to things on the stage ──────────────────────────
+  // What moves, and which way, comes from the fact's verb and object, both of
+  // which were checked against the manual's sentence. The model's own drawing
+  // suggestions are used only where they add a part to point at.
+  function partNamedIn(scene, text, skip) {
+    var haystack = lc(text), best = null;
+    scene.parts.forEach(function (part) {
+      var name = lc(part.label);
+      if (name && haystack.indexOf(name) >= 0 && (skip || []).indexOf(part.id) < 0 && (!best || name.length > lc(best.label).length)) best = part;
+    });
+    return best;
+  }
+  function partForObject(scene, object) {
+    var wanted = lc(object), best = null, bestAt = Infinity;
+    scene.parts.forEach(function (part) {
+      var name = lc(part.label), at = name ? wanted.indexOf(name) : -1;
+      if (at < 0 && name && name.indexOf(wanted) >= 0) at = 0;
+      if (at < 0) return;
+      if (at < bestAt || (at === bestAt && name.length > lc(best.label).length)) { best = part; bestAt = at; }
+    });
+    return best || { id: 'object:' + wanted, label: String(object).replace(/^(the|a|an)\s+/i, ''), shape: 'generic' };
+  }
+  function partAfter(scene, text, words, skip) {
+    var haystack = lc(text), best = null;
+    scene.parts.forEach(function (part) {
+      if (skip.indexOf(part.id) >= 0) return;
+      var name = lc(part.label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (name && new RegExp('\\b(?:' + words + ')\\s+(?:the\\s+|a\\s+|an\\s+)?' + name).test(haystack) && (!best || name.length > lc(best.label).length)) best = part;
+    });
+    return best;
+  }
+  function effectOf(fact) {
+    if (fact.verb === 'loosen') return 'ccw';
+    if (fact.verb === 'tighten') return 'cw';
+    if (fact.direction === 'away') return 'away';
+    if (fact.direction === 'toward') return 'toward';
+    if (/press|push/.test(lc(fact.verbText))) return 'press';
+    if (fact.verb === 'clean') return 'clean';
+    if (fact.verb === 'check') return 'check';
+    if (fact.verb === 'replace') return 'replace';
+    if (fact.verb === 'switch_off') return 'off';
+    if (fact.verb === 'wait') return 'wait';
+    return 'highlight';
+  }
+  function actorsFor(result, step) {
+    var scene = result.scene, byId = {}, actors = [], seen = {};
+    result.facts.forEach(function (fact) { byId[fact.id] = fact; });
+    var facts = step.factIds.map(function (id) { return byId[id]; }).filter(Boolean);
+    function add(actor) { if (seen[actor.part.id]) return seen[actor.part.id]; seen[actor.part.id] = actor; actors.push(actor); return actor; }
+
+    facts.filter(function (f) { return f.type === 'action'; }).forEach(function (fact) {
+      var part = partForObject(scene, fact.object), effect = effectOf(fact);
+      var actor = add({ part: part, effect: effect, tag: lc(fact.verbText) });
+      if (actor.effect !== effect || actor.tag !== lc(fact.verbText)) return;
+      var skip = [part.id];
+      if (effect === 'toward') actor.target = partAfter(scene, fact.text, 'onto|into|to|on|in|at|between', skip);
+      if (effect === 'away') actor.source = partAfter(scene, fact.text, 'from|off', skip);
+      if (actor.target) skip.push(actor.target.id);
+      if (actor.source) skip.push(actor.source.id);
+      actor.instrument = partAfter(scene, fact.text, 'with|using', skip);
+    });
+    facts.filter(function (f) { return f.type === 'quantity'; }).forEach(function (fact) {
+      var part = partNamedIn(scene, fact.subject) || partNamedIn(scene, fact.text) || partForObject(scene, fact.subject);
+      var actor = add({ part: part, effect: 'none', tag: '' });
+      var value = fact.value + ' ' + tidyUnit(fact.unit);
+      if ((actor.values || []).indexOf(value) < 0) actor.values = (actor.values || []).concat([value]);
+    });
+    facts.filter(function (f) { return f.type === 'prerequisite' && /(switch|turn|power)\w*\s+off|unplug|isolat/.test(lc(f.text)); }).forEach(function (fact) {
+      var part = partNamedIn(scene, fact.text);
+      if (part) add({ part: part, effect: 'off', tag: 'off' });
+    });
+    facts.filter(function (f) { return f.type === 'statement'; }).forEach(function (fact) {
+      var part = partNamedIn(scene, fact.text);
+      if (part) add({ part: part, effect: 'highlight', tag: '' });
+    });
+    (step.motions || []).forEach(function (motion) {
+      var part = scene.parts.filter(function (p) { return p.id === motion.part; })[0];
+      if (part && motion.kind === 'highlight') add({ part: part, effect: 'highlight', tag: '' });
+    });
+    // Loosening comes before taking off, and tightening after fitting on.
+    var rank = { ccw: 0, away: 1, toward: 2, cw: 3 };
+    return actors.map(function (actor, i) { return { actor: actor, i: i }; })
+      .sort(function (a, b) { return ((rank[a.actor.effect] == null ? 1.5 : rank[a.actor.effect]) - (rank[b.actor.effect] == null ? 1.5 : rank[b.actor.effect])) || (a.i - b.i); })
+      .map(function (item) { return item.actor; }).slice(0, 3);
+  }
+
+  // ── Drawing ─────────────────────────────────────────────────────────────
+  function badge(kind, x, y) {
+    var marks = {
+      check: '<path class="s-badge-ink" d="M-5 0L-1.5 4L5.5 -4"></path>',
+      replace: '<path class="s-badge-ink" d="M-5 -1.5A5.5 5.5 0 0 1 5 -2.5M5 1.5A5.5 5.5 0 0 1 -5 2.5"></path><path class="s-badge-ink" d="M5 -6V-2.5H1.5M-5 6V2.5H-1.5"></path>',
+      wait: '<circle class="s-badge-ink" cx="0" cy="0" r="6"></circle><path class="s-badge-ink" d="M0 -3.5V0L2.5 2"></path>'
+    };
+    return '<g transform="translate(' + num(x) + ' ' + num(y) + ')"><circle class="s-badge" r="11"></circle>' + marks[kind] + '</g>';
+  }
+  function drawActor(actor, cx, cy, s, alone) {
+    var out = '', context = actor.target || actor.source, ax = cx, ay = cy;
+    if (context) {
+      var kx = cx - 50 * s, ky = cy + 14 * s;
+      out += '<g class="d-ctx" transform="translate(' + num(kx) + ' ' + num(ky) + ') scale(' + num(s * 0.95) + ')">' + picture(context) + '</g>';
+      out += label(context.label, kx, ky + 56 * s, 's-small', 20);
+      ax = cx + 22 * s; ay = cy - 14 * s;
+    }
+    var dx = 38 * s, dy = -36 * s, moving = actor.effect === 'away' || actor.effect === 'toward';
+    if (moving) {
+      // The dashed outline is where the part is before it moves.
+      var gx = actor.effect === 'away' ? ax : ax + dx, gy = actor.effect === 'away' ? ay : ay + dy;
+      out += '<rect class="d-ghost" x="' + num(gx - 48 * s) + '" y="' + num(gy - 32 * s) + '" width="' + num(96 * s) + '" height="' + num(64 * s) + '" rx="8"></rect>';
+      var bx = ax - 58 * s, by = ay - 40 * s, ex = bx + dx * 0.6, ey = by + dy * 0.6;
+      var from = actor.effect === 'away' ? [bx, by] : [ex, ey], to = actor.effect === 'away' ? [ex, ey] : [bx, by];
+      out += '<line class="s-arrow" marker-end="url(#ah)" x1="' + num(from[0]) + '" y1="' + num(from[1]) + '" x2="' + num(to[0]) + '" y2="' + num(to[1]) + '"></line>';
+    }
+    var inner = '<g transform="translate(' + num(ax) + ' ' + num(ay) + ') scale(' + num(s) + ')">' + picture(actor.part);
+    if (actor.effect === 'highlight' || actor.effect === 'off') inner += '<rect class="d-ring" x="-66" y="-44" width="132" height="88" rx="18"></rect>';
+    if (actor.effect === 'ccw' || actor.effect === 'cw') inner += '<path class="s-arrow" ' + (actor.effect === 'cw' ? 'marker-end' : 'marker-start') + '="url(#ah)" d="M0 -29A29 29 0 1 1 -29 0"></path>';
+    if (actor.effect === 'press') inner += '<line class="s-arrow" marker-end="url(#ah)" x1="0" y1="-48" x2="0" y2="-26"></line>';
+    if (actor.effect === 'clean') inner += ['-58,-30', '56,-34', '60,22'].map(function (at) { return '<path class="s-arrow twinkle" transform="translate(' + at.replace(',', ' ') + ')" d="M-6 0H6M0 -6V6"></path>'; }).join('');
+    inner += '</g>';
+    out += '<g class="fx-' + actor.effect + '" style="--dx:' + num(moving ? dx : 0) + 'px;--dy:' + num(moving ? dy : 0) + 'px">' + inner + '</g>';
+    if (actor.effect === 'check' || actor.effect === 'replace' || actor.effect === 'wait') out += badge(actor.effect, ax + 50 * s, ay - 34 * s);
+
+    var tagX = moving ? ax - 46 * s : ax, tagY = moving ? ay - 74 * s : ay - 54 * s;
+    if (actor.tag) out += '<text class="s-tag" x="' + num(tagX) + '" y="' + num(tagY) + '" text-anchor="middle">' + esc(actor.tag) + '</text>';
+    var textY = cy + 62 * s;
+    out += label(actor.part.label, ax, textY, 's-label', alone ? 28 : 20);
+    (actor.values || []).slice(0, 2).forEach(function (value, i) {
+      var vy = textY + 26 + i * 22, w = Math.max(56, value.length * 7 + 18);
+      out += '<rect class="s-value" x="' + num(ax - w / 2) + '" y="' + num(vy - 13) + '" width="' + num(w) + '" height="19" rx="9.5"></rect><text class="s-tag" x="' + num(ax) + '" y="' + num(vy + 1) + '" text-anchor="middle">' + esc(value) + '</text>';
+    });
+    if (actor.instrument && alone) {
+      var ix = cx + 158, iy = cy + 26;
+      out += '<text class="s-small" x="' + num(ix) + '" y="' + num(iy - 40) + '" text-anchor="middle">with</text><g transform="translate(' + num(ix) + ' ' + num(iy) + ') scale(0.62)">' + picture(actor.instrument) + '</g>' + label(actor.instrument.label, ix, iy + 38, 's-small', 18);
+    }
+    return out;
+  }
+  function drawWiring(wires, coloursMissing) {
+    var n = wires.length, top = n > 1 ? 70 : 104, gap = n > 1 ? Math.min(36, 104 / (n - 1)) : 0, bottom = top + gap * (n - 1), out = '';
+    out += '<g transform="translate(58 ' + num((top + bottom) / 2) + ') scale(0.72)">' + DRAW.outdoor_unit() + '</g><g transform="translate(362 ' + num((top + bottom) / 2) + ') scale(0.72)">' + DRAW.indoor_unit() + '</g>';
+    out += label(title(wires[0].fromUnit), 58, bottom + 62, 's-label') + label(title(wires[0].toUnit), 362, bottom + 62, 's-label');
+    out += '<rect class="d-body" x="134" y="' + num(top - 20) + '" width="34" height="' + num(bottom - top + 40) + '" rx="4"></rect><rect class="d-body" x="252" y="' + num(top - 20) + '" width="34" height="' + num(bottom - top + 40) + '" rx="4"></rect>';
+    wires.forEach(function (wire, i) {
+      var y = top + i * gap;
+      out += '<path class="s-wire" style="animation-delay:' + num(i * 0.45) + 's" d="M168 ' + num(y) + 'C196 ' + num(y + 12) + ' 224 ' + num(y - 12) + ' 252 ' + num(y) + '"></path>';
+      out += screwHead(151, y, 8) + screwHead(269, y, 8);
+      out += '<text class="s-num" x="122" y="' + num(y + 4) + '" text-anchor="middle">' + esc(wire.fromTerminal) + '</text><text class="s-num" x="298" y="' + num(y + 4) + '" text-anchor="middle">' + esc(wire.toTerminal) + '</text>';
+    });
+    out += '<text class="s-small" x="210" y="' + num(top - 30) + '" text-anchor="middle">terminal numbers as in the manual’s table</text>';
+    if (coloursMissing) out += '<text class="s-small" x="210" y="' + num(bottom + 38) + '" text-anchor="middle">wire colours are not in the manual text</text>';
+    return out;
+  }
+  function drawStep(result, index) {
+    var step = result.scene.steps[index], byId = {};
+    result.facts.forEach(function (fact) { byId[fact.id] = fact; });
+    var facts = step.factIds.map(function (id) { return byId[id]; }).filter(Boolean);
+    var wires = facts.filter(function (f) { return f.type === 'connection'; }).map(function (f) { return { fromUnit: f.from.unit, fromTerminal: f.from.terminal, toUnit: f.to.unit, toTerminal: f.to.terminal }; });
+    var out = '<svg viewBox="0 0 420 262" role="img" aria-label="Drawing for step ' + (index + 1) + '">' + DEFS;
+    if (wires.length) {
+      out += drawWiring(wires, result.missingDetails.some(function (item) { return /colou?r/i.test(item); }));
+    } else {
+      var actors = actorsFor(result, step);
+      if (!actors.length) out += '<text class="s-empty" x="210" y="134" text-anchor="middle">No drawing for this step. Read the text below.</text>';
+      var slots = { 1: [200], 2: [106, 300], 3: [72, 210, 344] }[actors.length] || [], scale = { 1: 1.12, 2: 0.9, 3: 0.68 }[actors.length];
+      actors.forEach(function (actor, i) { out += drawActor(actor, actor.instrument && actors.length === 1 ? 150 : slots[i], 118, scale, actors.length === 1); });
+    }
+    if (facts.some(function (f) { return f.type === 'warning' || f.type === 'prohibition' || f.type === 'prerequisite'; })) {
+      out += '<path class="s-caution" d="M22 10L36 34H8Z"></path><text class="s-caution-text" x="22" y="30" text-anchor="middle">!</text><text class="s-caution-text" x="42" y="27">safety</text>';
+    }
+    return out + '<text class="s-small" x="412" y="254" text-anchor="end">schematic, not to scale</text></svg>';
+  }
+
+  // ── Page ────────────────────────────────────────────────────────────────
+  function captionList(lines) {
+    return el('ul', { class: 'caption' }, lines.map(function (line) {
+      var safety = line.type === 'warning' || line.type === 'prohibition' || line.type === 'prerequisite';
+      return el('li', {}, [
+        el('span', { class: 'kind' + (safety ? ' safety' : ''), text: KIND[line.type] || line.type }),
+        el('span', { class: 'text', text: line.text }),
+        el('span', { class: 'page', text: 'p.' + line.page })
+      ]);
+    }));
+  }
+  function listDetails(summary, items) {
+    if (!items || !items.length) return null;
+    return el('details', {}, [el('summary', { text: summary }), el('div', { class: 'body' }, [el('ul', {}, items.map(function (item) { return el('li', { text: item }); }))])]);
+  }
+  function stageFor(result, index) { var stage = el('div', { class: 'stage' }); stage.innerHTML = drawStep(result, index); return stage; }
+
+  function player(result) {
+    var index = 0, total = result.scene.steps.length, all = SHEET, timer = null;
+    var view = el('div', { class: 'stack' }), count = el('span', { class: 'count' });
+    var back = el('button', { type: 'button', text: 'Back' }), next = el('button', { type: 'button', text: 'Next' });
+    var play = el('button', { type: 'button', class: 'primary', text: 'Play' }), every = el('button', { type: 'button', text: 'All steps' });
+    function stop() { if (timer) { clearInterval(timer); timer = null; } play.textContent = 'Play'; }
+    function show() {
+      if (all) {
+        view.replaceChildren(el('div', { class: 'frames' }, result.scene.steps.map(function (step, i) {
+          return el('div', { class: 'frame' }, [el('span', { class: 'n', text: 'step ' + (i + 1) + ' of ' + total }), stageFor(result, i), captionList(result.captions[i])]);
+        })));
+      } else {
+        view.replaceChildren(stageFor(result, index), captionList(result.captions[index]));
+      }
+      count.textContent = all ? total + ' steps' : 'step ' + (index + 1) + ' of ' + total;
+      back.disabled = all || index === 0; next.disabled = all || index === total - 1; play.disabled = all || total < 2;
+      every.textContent = all ? 'One at a time' : 'All steps';
+    }
+    back.addEventListener('click', function () { stop(); if (index > 0) { index -= 1; show(); } });
+    next.addEventListener('click', function () { stop(); if (index < total - 1) { index += 1; show(); } });
+    every.addEventListener('click', function () { stop(); all = !all; show(); });
+    play.addEventListener('click', function () {
+      if (timer) { stop(); return; }
+      if (index === total - 1) { index = 0; show(); }
+      play.textContent = 'Pause';
+      timer = setInterval(function () { if (index < total - 1) { index += 1; show(); } else stop(); }, 4500);
+    });
+    show();
+    return el('div', { class: 'stack' }, [el('div', { class: 'controls' }, [play, back, next, every, count]), view]);
+  }
+
+  function segment(id, key, question, options, mine) {
+    var seg = el('span', { class: 'seg', role: 'radiogroup', 'aria-label': question }, options.map(function (option) {
+      var input = el('input', { type: 'radio', name: id + '-' + key, id: id + '-' + key + '-' + option.toLowerCase(), value: option });
+      if (mine[key] === option) input.checked = true;
+      input.addEventListener('change', function () { mine[key] = option; save(); summarise(); });
+      return el('label', {}, [input, el('span', { text: option })]);
+    }));
+    return el('div', { class: 'row' }, [el('span', { class: 'q', text: question }), seg]);
+  }
+  function verdictForm(id) {
+    var mine = store[id] || (store[id] = {});
+    var rows = VERDICTS.map(function (item) { return segment(id, item.key, item.q, item.options, mine); });
+    var note = el('input', { type: 'text', id: id + '-note', placeholder: 'What is wrong or missing? (optional)', 'aria-label': 'Note' });
+    note.value = mine.note || '';
+    note.addEventListener('input', function () { mine.note = note.value; save(); summarise(); });
+    return el('div', { class: 'verdict' }, rows.concat([note]));
+  }
+  function verdictOnDecline(id) {
+    var mine = store[id] || (store[id] = {});
+    return el('div', { class: 'verdict' }, [segment(id, 'declined', 'Was it right not to show an animation?', ['Yes', 'No'], mine)]);
+  }
+
+  function resultPanel(question, result) {
+    var id = question.id + '--' + result.model;
+    var head = el('div', { class: 'head' }, [
+      el('span', { class: 'model', text: result.model }),
+      el('span', { class: 'pill ' + result.status, text: STATUS[result.status] || result.status }),
+      el('span', { class: 'cost', text: (result.ms / 1000).toFixed(1) + ' s · $' + result.costUsd.toFixed(4) })
+    ]);
+    var body = [head];
+    if (result.status === 'ready') {
+      body.push(player(result));
+      if (result.missingDetails.length) body.push(el('div', { class: 'gaps' }, [el('strong', { text: 'Not in the manual text, so not drawn' }), el('ul', {}, result.missingDetails.map(function (item) { return el('li', { text: item }); }))]));
+      if (result.uncoveredSafety.length) body.push(el('div', { class: 'gaps unseen' }, [el('strong', { text: 'Safety wording on the same pages that is not in this animation' }), el('span', { text: ' Check whether any of it belongs to this job.' }), el('ul', {}, result.uncoveredSafety.map(function (item) { return el('li', { text: 'p.' + item.page + ': ' + item.text }); }))]));
+      body.push(listDetails('Corrections the checks made to the model’s proposal (' + result.repairs.length + ')', result.repairs));
+      body.push(verdictForm(id));
+    } else {
+      body.push(el('p', { class: 'why', text: result.reasons.join(' · ') || 'No reason recorded.' }));
+      body.push(listDetails('Facts it did find in the manual (' + result.facts.length + ')', result.facts.map(function (fact) { return (KIND[fact.type] || fact.type) + ', p.' + fact.page + ': ' + fact.text; })));
+      if (question.expect === 'animate') body.push(verdictOnDecline(id));
+    }
+    body.push(listDetails('Proposed facts the checks threw out (' + result.dropped.length + ')', result.dropped.map(function (item) { return item.reason + ': ' + item.quote; })));
+    return el('article', { class: 'result', id: id }, body);
+  }
+
+  var EXPECT = {
+    animate: 'A procedure the manuals should cover, so an animation is hoped for.',
+    explain: 'An explanation. These are answered in text and not animated.',
+    decline: 'A correct system shows no animation here.'
+  };
+  var host = document.getElementById('questions');
+  DATA.questions.forEach(function (question) {
+    host.appendChild(el('section', { class: 'question', id: question.id }, [
+      el('header', {}, [
+        el('h3', { text: question.question }),
+        el('div', { class: 'meta' }, [el('span', { class: 'chip', text: question.category }), el('span', { class: 'chip', text: question.equipment || 'no model given' }), el('span', { text: EXPECT[question.expect] })])
+      ]),
+      el('div', { class: 'pair' }, question.results.map(function (result) { return resultPanel(question, result); })),
+      el('details', {}, [el('summary', { text: 'Manual passages the models were given (' + question.passages.length + ')' }),
+        el('div', { class: 'body' }, question.passages.map(function (passage) { return el('pre', { text: 'page ' + passage.page + '\n' + passage.text }); }))])
+    ]));
+  });
+
+  var models = DATA.models, matrix = document.getElementById('matrix');
+  matrix.appendChild(el('thead', {}, [el('tr', {}, [el('th', { text: 'Question' }), el('th', { text: 'Kind' })].concat(models.map(function (m) { return el('th', { text: m }); })))]));
+  matrix.appendChild(el('tbody', {}, DATA.questions.map(function (question) {
+    return el('tr', {}, [el('td', {}, [el('a', { href: '#' + question.id, text: question.question })]), el('td', {}, [el('span', { class: 'chip', text: question.category })])].concat(models.map(function (model) {
+      var result = question.results.filter(function (r) { return r.model === model; })[0];
+      return el('td', {}, result ? [el('span', { class: 'pill ' + result.status, text: STATUS[result.status] || result.status })] : []);
+    })));
+  })));
+  document.getElementById('tally').textContent = DATA.tally;
+
+  var reviewer = document.getElementById('reviewer'), summary = document.getElementById('summary');
+  reviewer.value = store.__name || '';
+  reviewer.addEventListener('input', function () { store.__name = reviewer.value; save(); summarise(); });
+  function summarise() {
+    var lines = ['Animation spike review' + (reviewer.value ? ' by ' + reviewer.value : '')];
+    DATA.questions.forEach(function (question) {
+      question.results.forEach(function (result) {
+        var mine = store[question.id + '--' + result.model] || {}, parts = [];
+        if (mine.matches) parts.push('matches manual: ' + mine.matches);
+        if (mine.missing) parts.push('something missing: ' + mine.missing);
+        if (mine.helpful) parts.push('helpful: ' + mine.helpful);
+        if (mine.declined) parts.push('right not to animate: ' + mine.declined);
+        if (mine.note) parts.push('note: ' + mine.note);
+        if (parts.length) lines.push(question.id + ' / ' + result.model + ' -> ' + parts.join('; '));
+      });
+    });
+    summary.value = lines.length > 1 ? lines.join('\n') : 'Nothing answered yet.';
+  }
+  summarise();
+  document.getElementById('copy').addEventListener('click', function () {
+    var status = document.getElementById('copied');
+    function fallback() { summary.focus(); summary.select(); status.textContent = 'The text is selected. Copy it with your keyboard.'; }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(summary.value).then(function () { status.textContent = 'Copied.'; }, fallback); else fallback();
+  });
+})();
+</script>

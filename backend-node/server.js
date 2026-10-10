@@ -7,6 +7,8 @@ const firebaseAdmin = require('./server/config/firebaseAdmin');
 const { runPriorityAdjustmentAgent } = require('./server/agents/priorityAdjustmentAgent');
 const { generateRepairReport } = require('./server/services/reportGenerator');
 const requireAdmin = require('./server/middleware/requireAdmin');
+const requireUser = require('./server/middleware/requireUser');
+const animations = require('./server/services/animation/service');
 // Lazy: firebase-admin/auth depends on ESM-only `jose`, which Jest cannot parse
 // from node_modules. Only the delete-user route needs it.
 const getAuthLazy = () => require('firebase-admin/auth').getAuth();
@@ -17,6 +19,7 @@ const validate = require('./server/middleware/validate');
 const outputSanitize = require('./server/middleware/outputSanitize');
 const { resolveVisualIntake } = require('./server/services/visionIntake');
 const { generateSpokenAnswer } = require('./server/services/spokenAnswer');
+const { detailRules, checkBriefFigures, checkBriefKeepsSafety, plainMeasurements } = require('./server/services/responseDetail');
 
 dotenv.config();
 
@@ -38,6 +41,8 @@ app.use(cors());
 // and raising the global limit would open 12MB on every route including the
 // unauthenticated ones.
 app.use('/api/query', express.json({ limit: '12mb' }));
+// An animation request carries one reference and nothing else.
+app.use('/api/animate', express.json({ limit: '2kb' }));
 app.use(express.json());
 const transcribeRouter = require('./server/routes/transcribe');
 app.use('/api', transcribeRouter);
@@ -319,7 +324,19 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       images,
       confirmedModel,
       voice,
+      quote,
+      detail,
+      animate,
     } = req.body;
+
+    // How much to explain, not who is asking: the role prompt is unchanged.
+    // Hands-free keeps its own spoken pipeline, and EFFORT_LEVELS_ENABLED=false
+    // switches this off for every client, including older app builds. Brief is
+    // answered as Standard unless BRIEF_ANSWERS_ENABLED=true (see RESPONSE_DETAIL.md).
+    const detailAllowed = detail === 'brief' && process.env.BRIEF_ANSWERS_ENABLED !== 'true' ? 'standard' : detail;
+    const detailRequested = voice === true || process.env.EFFORT_LEVELS_ENABLED === 'false'
+      ? 'standard' : detailAllowed || 'standard';
+    const timing = { start: Date.now() };
 
     // One photo or several. Everything below works on the list; `imageBase64`
     // stays truthy whenever at least one photo was attached.
@@ -423,6 +440,19 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       console.log(`[VISION] model=${visualModel} fault=${visualReading?.faultCode || '-'}`);
     }
 
+    // A reply to a passage from an earlier answer. The backend keeps no chat
+    // history, so the passage travels with the question. It goes into the text
+    // retrieval searches with - otherwise "what does that mean?" retrieves
+    // nothing useful - and into the system prompt below, so the answer
+    // addresses it. The chat's confirmed model and manual filter still scope it.
+    const quoteText = typeof quote?.text === 'string' && quote.text.trim() ? quote.text.trim() : null;
+    if (quoteText) retrievalQuery = `${retrievalQuery}\n\nAbout this passage: "${quoteText}"`;
+    const quoteRules = quoteText ? `
+
+The user is asking about this passage from an earlier answer: "${quoteText}".
+Treat their question as being about that passage. Answer only from the manual
+extracts above and cite pages as normal; if the extracts do not cover it, say so.` : '';
+
     // ── Steps 1+2: iterative retrieve -> answer loop ───────────────────────────
     // Round 1 uses the photo/query-derived retrievalQuery exactly as before.
     // If Call 1 reports the context was insufficient, round 2 retrieves again
@@ -478,7 +508,10 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       });
     }
 
-    const systemPrompt = (ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT) + TIMER_INSTRUCTION;
+    const systemPrompt = (ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT) + TIMER_INSTRUCTION + quoteRules;
+    // Standard adds nothing, so its request is what it was before response
+    // detail existed. Brief is written separately, after the loop (below).
+    const loopSystemPrompt = systemPrompt + detailRules(detailRequested === 'detailed' ? 'detailed' : 'standard');
 
     let rounds = [round1];
     let merged = mergeRetrievalRounds(rounds);
@@ -497,7 +530,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
 
       const openaiResponse = await callAnswerModel({
         apiKey,
-        systemPrompt,
+        systemPrompt: loopSystemPrompt,
         prompt,
         // Photos ride along on round 1 only — the model has already
         // incorporated what it saw into its first attempt; re-sending the
@@ -557,6 +590,55 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     }
 
     const retrievalData = { context_blocks: merged.context_blocks, sources: merged.sources };
+
+    // `text` is what the technician sees, so the audit record matches the
+    // screen. For a Brief answer, `fullText` is the Standard answer behind it:
+    // the app offers it as the Full view, and guided steps are taken from it.
+    const fullText = plainMeasurements(text);
+    text = fullText;
+    timing.answerEnd = Date.now();
+    let responseDetail = detailRequested;
+    let detailFallback = null;
+    let briefText = null;
+
+    // Written from exactly the evidence the full answer used, and shown only if
+    // it finished normally, every measurement and code in it is in that
+    // evidence, and it kept the measurements and safety items the full answer
+    // has. Otherwise the full answer is shown with the reason. Never retried.
+    const briefDone = detailRequested !== 'brief' ? Promise.resolve() : (async () => {
+      const manualText = merged.context_blocks.map((block) => block?.text);
+      const response = await callAnswerModel({
+        apiKey,
+        systemPrompt: systemPrompt + detailRules('brief'),
+        prompt: buildMergedPrompt(merged.context_blocks, retrievalQuery),
+        photos,
+        imageBase64,
+        visualModel,
+        visualReading,
+        forceAnswer: true,
+      });
+      const data = response?.ok ? await response.json().catch(() => null) : null;
+      const choice = data?.choices?.[0];
+      let draft = null;
+      try { draft = JSON.parse(choice?.message?.content || '{}').answer; } catch { draft = null; }
+      const finished = choice?.finish_reason === 'stop' && typeof draft === 'string' && draft.trim();
+      const figures = finished ? checkBriefFigures(draft, [
+        ...manualText, query, quoteText, visualModel, visualReading?.faultCode,
+      ]) : null;
+      const kept = finished && figures.ok ? checkBriefKeepsSafety(draft, fullText, manualText) : null;
+      if (kept?.ok) {
+        briefText = plainMeasurements(draft);
+      } else {
+        detailFallback = !finished ? 'incomplete' : !figures.ok ? 'unverified_figures' : 'missing_safety_detail';
+        // Figures and item names only, never the answer text.
+        console.info('[DETAIL]', JSON.stringify({ briefFallback: detailFallback, unverified: figures?.missing || [], dropped: kept?.missing || [] }));
+        responseDetail = 'standard';
+      }
+    })().catch((err) => {
+      console.error('Brief answer failed, showing the full answer:', err.message);
+      detailFallback = 'incomplete';
+      responseDetail = 'standard';
+    });
 
     // ── Call 2: cheap structured extraction FROM the finished answer ─────────
     // Given the list of reference images available across every retrieval
@@ -640,7 +722,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
     });
     console.log('===============================================\n');
 
-    try {
+    const stepsDone = (async () => { try {
       // The model only ever sees id / page / caption — never the URL.
       const stepUserContent = availableImages.length
         ? `${text}\n\n=== AVAILABLE REFERENCE IMAGES ===\n${JSON.stringify(
@@ -826,7 +908,11 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
       console.log('===============================================\n');
     } catch (stepErr) {
       console.error('Step extraction failed, continuing with text-only response:', stepErr);
-    }
+    } })();
+
+    await Promise.all([stepsDone, briefDone]);
+    if (briefText) text = briefText;
+    timing.stepsEnd = Date.now();
 
     // ── Step 3: Fire the Audit Logger (Session Based) ────────────────────────
     try {
@@ -867,13 +953,32 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
     }
 
     // ── Step 6: Return answer + sources + alert metadata ──────────────────────
+    // Stage timings in milliseconds; no question or answer text.
+    // The evidence behind a step-by-step answer is kept so that an animation
+    // can be drawn from it on request. Nothing is generated here, so the answer
+    // is not delayed and an answer without steps costs nothing.
+    const animationRef = animate === true && voice !== true && isProcedural && steps.length > 0
+      ? animations.issueRef({
+          uid: userId, question: query, answer: text,
+          model: retrievalFilters.model_number, group: retrievalFilters.document_group_id,
+          contextBlocks: retrievalData.context_blocks,
+        })
+      : null;
+
+    console.info('[TIMING]', JSON.stringify({ detail: detailRequested, shown: responseDetail, rounds: round, answerMs: timing.answerEnd - timing.start, stepsAndBriefMs: timing.stepsEnd - timing.answerEnd, totalMs: Date.now() - timing.start }));
     res.json({
       text,
+      // The detail this answer was actually written in; `detailFallback` is set
+      // when Brief was asked for and the full answer is shown instead.
+      responseDetail,
+      ...(detailFallback ? { detailFallback } : {}),
+      ...(briefText ? { fullText } : {}),
       isProcedural,
       steps,
+      ...(animationRef ? { animationRef } : {}),
       sources:        retrievalData.sources,
       context_blocks: retrievalData.context_blocks,
-      reasoning:      'Generated via OpenAI gpt-4o-mini with RAG context',
+      reasoning:      `Generated via OpenAI ${ANSWER_MODEL} with RAG context`,
       alert,
       priorityTask: priorityResult,
       // The model this answer is grounded in, so the app can hold it as the
@@ -1145,6 +1250,23 @@ app.post('/api/reject', async (req, res) => {
   } catch (err) {
     console.error('[HITL REJECT FAILED]:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Draws the animation for an answer already given. The caller sends only the
+// reference /api/query returned; the passages come from the server's own copy.
+// No audit record, alert or priority task: this route answers nothing new.
+app.post('/api/animate', requireUser, async (req, res) => {
+  const ref = req.body?.animationRef;
+  if (typeof ref !== 'string' || !/^[0-9a-f]{32}$/.test(ref)) {
+    return res.status(400).json({ error: 'animationRef is required.', code: 'invalid_request' });
+  }
+  try {
+    const { http, body } = await animations.requestAnimation(ref, req.caller.uid);
+    res.status(http).json(body);
+  } catch (error) {
+    console.error('[ANIMATION] route error:', error.message);
+    res.status(500).json({ error: 'Internal server error. Try again, and report it if it keeps happening.', code: 'internal_error' });
   }
 });
 
