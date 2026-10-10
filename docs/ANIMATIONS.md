@@ -4,16 +4,16 @@ A step-by-step answer can be drawn as a 2D schematic animation. The client
 approved it on 9 Oct 2026 as a toggle that is **off by default**, because each
 animation costs money and may not be produced at all.
 
-**Status, 10 Oct 2026: built and tested, switched off.** The server route, the
-Animate toggle, the card under an answer and the player are in place. Both
-switches are off: `ANIMATIONS_ENABLED` on the server and `ANIMATIONS` in
-`LLM-Mobile/constants/featureFlags.js`. Still to do before testers see it:
+**Status, 11 Oct 2026: on in the app.** The Animate chip is shown
+(`ANIMATIONS` is `true` in `LLM-Mobile/constants/featureFlags.js`); the chip
+itself is off for each user until they turn it on. The server answers only
+where `ANIMATIONS_ENABLED=true` is set (local `.env`, and the Node Server
+service's variables on Railway).
 
-1. ~~A check on an iPhone.~~ Done by Adil on 11 Oct 2026 with both switches
-   on: toggle, notice, card and player worked, including the login check on
-   `/api/animate` with a real account.
-2. Two people who know the equipment review the cable, filter and TIMER
-   animations against the manual pages.
+- Checked on an iPhone by Adil on 11 Oct 2026: toggle, notice, card, player,
+  and the login check on `/api/animate` with a real account.
+- Adil confirmed on 11 Oct 2026 that the review of the cable, filter and TIMER
+  animations against the manual is fine.
 
 How well it works, and its limits, are in [ANIMATION_SPIKE.md](ANIMATION_SPIKE.md).
 
