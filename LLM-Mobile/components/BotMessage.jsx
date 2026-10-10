@@ -10,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Text, TouchableOpacity } from 'react-native';
 import { actionLabel } from '../utils/chatActions';
 import { FEATURES } from '../constants/featureFlags';
+import AnimationCard from './AnimationCard';
 import { answerView, answerViews, displayedAnswerText, detailFallbackMessage, answerDetailLabel } from '../utils/responseDetail';
 
 const ACTION_ICONS = { retake: 'camera-outline', add_photo: 'add-circle-outline', retry: 'refresh-outline' };
@@ -17,7 +18,7 @@ const ACTION_ICONS = { retake: 'camera-outline', add_photo: 'add-circle-outline'
 // Replies that need the technician ("which model?", retake, retry) carry
 // `actions`. They must stay visible: without them a photo that needs model
 // confirmation leaves the conversation with no way forward.
-export default function BotMessage({ item, updateMessage, onAction, actionsDisabled = false, onCopy, onSelectText, onTimerComplete }) {
+export default function BotMessage({ item, updateMessage, onAction, actionsDisabled = false, onCopy, onSelectText, onTimerComplete, animating = false, onRetryAnimation, onCancelAnimation }) {
   const hasSteps  = item.isProcedural && item.steps?.length > 0;
   const viewMode = answerView(item, FEATURES.EFFORT_LEVELS);
   const views = answerViews(item, FEATURES.EFFORT_LEVELS);
@@ -79,6 +80,10 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
             <ProcedureTimer key={t.id} timer={t} onComplete={onTimerComplete} />
           ))}
         </View>
+      )}
+
+      {FEATURES.ANIMATIONS && item.animation && (
+        <AnimationCard state={item.animation} active={animating} onRetry={onRetryAnimation} onCancel={onCancelAnimation} />
       )}
 
       {item.sources?.length > 0 && (

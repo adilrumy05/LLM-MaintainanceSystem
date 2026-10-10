@@ -1,3 +1,5 @@
+import { FEATURES } from '../constants/featureFlags';
+
 export const DETAIL_OPTIONS = [
   { value: 'brief', label: 'Brief', description: 'Short key points. Keeps the steps, warnings and measurements.' },
   { value: 'standard', label: 'Standard', description: 'A complete answer with moderate explanation.' },
@@ -5,7 +7,10 @@ export const DETAIL_OPTIONS = [
 ];
 
 export const isResponseDetail = value => DETAIL_OPTIONS.some(option => option.value === value);
-export const normaliseDetail = value => isResponseDetail(value) ? value : 'standard';
+// What the picker offers. Brief stays a known value, so answers saved while it
+// was offered still display, but it cannot be chosen or sent while it is hidden.
+export const offeredDetails = () => DETAIL_OPTIONS.filter(option => option.value !== 'brief' || FEATURES.BRIEF_ANSWERS);
+export const normaliseDetail = value => offeredDetails().some(option => option.value === value) ? value : 'standard';
 
 // The detail the server says it wrote the answer in, never the one that was
 // only asked for: a Brief request can come back as a Standard answer.

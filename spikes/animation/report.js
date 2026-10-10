@@ -8,9 +8,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const { readable } = require('./facts');
+const { readable } = require('../../backend-node/server/services/animation/facts');
 const { QUESTIONS } = require('./run');
-const { validateScene, repairScene, buildCaptions } = require('./scene');
+const { validateScene, repairScene, buildCaptions } = require('../../backend-node/server/services/animation/scene');
 
 const RESULTS_DIR = path.join(__dirname, 'results');
 const runFile = process.argv[2] ? path.resolve(process.argv[2]) : path.join(RESULTS_DIR, 'latest.json');

@@ -51,6 +51,10 @@ const validate = (req, res, next) => {
     return res.status(400).json({ error: "detail must be brief, standard or detailed.", code: "invalid_request" });
   }
 
+  if (req.body.animate !== undefined && typeof req.body.animate !== 'boolean') {
+    return res.status(400).json({ error: "animate must be true or false.", code: "invalid_request" });
+  }
+
   const { confirmedModel, voice } = req.body;
 
   if (confirmedModel !== undefined && confirmedModel !== null &&

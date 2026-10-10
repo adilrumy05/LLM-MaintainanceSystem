@@ -5,8 +5,8 @@ import BotMessage from '../components/BotMessage';
 import { FEATURES } from '../constants/featureFlags';
 
 // Response detail is switched off until it passes its live checks; these tests turn it on.
-beforeEach(() => { FEATURES.EFFORT_LEVELS = true; });
-afterAll(() => { FEATURES.EFFORT_LEVELS = false; });
+beforeEach(() => { FEATURES.EFFORT_LEVELS = true; FEATURES.BRIEF_ANSWERS = true; });
+afterAll(() => { FEATURES.EFFORT_LEVELS = false; FEATURES.BRIEF_ANSWERS = false; });
 
 const base = { id: 'm', text: 'Short answer.', responseDetail: 'brief', isProcedural: true, sources: [],
   steps: [{ title: 'First step', description: 'First description.', warningLevel: 'none', toolsRequired: [] }] };

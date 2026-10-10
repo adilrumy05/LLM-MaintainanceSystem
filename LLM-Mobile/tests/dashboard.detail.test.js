@@ -28,8 +28,8 @@ import Dashboard from '../app/dashboard';
 import { FEATURES } from '../constants/featureFlags';
 
 // Response detail is switched off until it passes its live checks; these tests turn it on.
-beforeEach(() => { jest.clearAllMocks(); FEATURES.EFFORT_LEVELS = true; });
-afterAll(() => { FEATURES.EFFORT_LEVELS = false; });
+beforeEach(() => { jest.clearAllMocks(); FEATURES.EFFORT_LEVELS = true; FEATURES.BRIEF_ANSWERS = true; });
+afterAll(() => { FEATURES.EFFORT_LEVELS = false; FEATURES.BRIEF_ANSWERS = false; });
 
 test('APP-A5-1 Retry keeps the original detail after the picker changes, and the Brief answer is saved', async () => {
   submitQuery.mockRejectedValueOnce(Object.assign(new Error('Temporary outage'), { retryable: true }));

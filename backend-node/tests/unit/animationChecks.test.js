@@ -6,8 +6,8 @@
 // have to be caught by what connects to what, which way a part moves, what
 // order the steps come in, and what value is shown.
 
-const { verifyFact, terminalTableFacts, numberFacts, canonical } = require('../../../spikes/animation/facts');
-const { validateScene, repairScene, buildCaptions } = require('../../../spikes/animation/scene');
+const { verifyFact, terminalTableFacts, numberFacts, canonical } = require('../../server/services/animation/facts');
+const { validateScene, repairScene, buildCaptions } = require('../../server/services/animation/scene');
 
 const CABLE_GROUP = 'panasonic_aircon_CS-S10TKH';
 const SCOPE = { group: CABLE_GROUP };
@@ -351,7 +351,7 @@ describe('REPAIR: a wrong element is removed, never shown', () => {
 // Found in the first full run: the stronger model grouped facts from two pages
 // into one step, and no rearrangement of its steps satisfied both pages.
 describe('order when the model groups facts from different places', () => {
-  const { uncoveredSafetySentences } = require('../../../spikes/animation/facts');
+  const { uncoveredSafetySentences } = require('../../server/services/animation/facts');
   const stepOf = (scene, factId) => scene.steps.findIndex(step => step.factIds.includes(factId));
 
   test('a step holding the first and last action is split so the middle one can go between', () => {

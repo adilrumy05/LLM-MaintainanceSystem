@@ -126,3 +126,13 @@ shown. The live runs are recorded in spikes/animation/results/.
 
 After each `run-all-tests.ps1` run, add one row per layer to the table above with the date, your name, pass/fail, and the log file path.
 
+## 10 Oct 2026: Brief hidden, animation route and app player
+
+| Layer | Result | Notes |
+|---|---|---|
+| Backend Jest | 342 tests, 20 suites passed | 28 in tests/endpoints/animate.test.js, 8 in tests/unit/animationPipeline.test.js |
+| App Jest | 115 tests, 20 suites passed | 44 new, for the Animate toggle, card, player and drawing logic |
+| Bundles | ios, android, web built | |
+| Live | 2 animations through the service with gpt-6-sol | cable 9 steps 18 s $0.042; TIMER 7 steps 13 s $0.030; login check not exercised live |
+| Live | 30 response-detail requests | see docs/RESPONSE_DETAIL.md |
+| Not done | iPhone check of the animation player; RAG pytest (no Python changed) | |

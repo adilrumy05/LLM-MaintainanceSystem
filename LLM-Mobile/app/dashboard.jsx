@@ -14,7 +14,7 @@ import { submitQuery, decodeEntities, getFilters,
          generateReport, logTimerEvent } from '../services/api';
 import { shareReportPdf } from '../services/reportPdf';
 import { extractTimers } from '../services/procedureTimers';
-import { generateChatTitle } from '../services/api';
+import { generateChatTitle, animateAnswer } from '../services/api';
 import Toast from 'react-native-toast-message';
 import { capturePhotos, MAX_PHOTOS } from '../services/photo';
 import MicButton from '../components/MicButton';
@@ -31,6 +31,7 @@ import { FEATURES } from '../constants/featureFlags';
 import { answerForClipboard, toPlainText, toQuote } from '../utils/messageText';
 import { createRequestGuard } from '../utils/requestGuard';
 import DetailChip from '../components/DetailChip';
+import AnimateChip from '../components/AnimateChip';
 import usePreferences from '../hooks/usePreferences';
 import { normaliseDetail, answerView, isResponseDetail } from '../utils/responseDetail';
 
@@ -175,6 +176,7 @@ export default function Dashboard() {
     } else {
       setShowNewBelow(true);
     }
+    return msg.id;
   }, []);
 
   // Kept so the external BotMessage can persist step state
@@ -194,16 +196,53 @@ export default function Dashboard() {
       messages: c.messages.map(m => (m.id === messageId ? { ...m, actionsUsed: used } : m)),
     }))), []);
 
+  // ── Animations ─────────────────────────────────────────────────────────────
+  // One request per answer. The answer is already on screen; this fills in the
+  // card under it. Each request has its own controller, so a cancelled or
+  // replaced request that finishes late cannot write to the message.
+  const animationRequests = useRef(new Map());
+  const [animating, setAnimating] = useState([]);
+
+  const requestAnimation = useCallback(async (chatId, messageId, ref) => {
+    animationRequests.current.get(messageId)?.abort();
+    const controller = new AbortController();
+    animationRequests.current.set(messageId, controller);
+    setAnimating(ids => [...ids.filter(id => id !== messageId), messageId]);
+    updateMessage(messageId, m => ({ ...m, animation: { status: 'generating', ref } }), chatId);
+    let outcome;
+    try {
+      outcome = await animateAnswer(ref, { signal: controller.signal });
+    } catch (err) {
+      outcome = { status: 'failed', message: 'Could not reach the server. Try again.' };
+    }
+    if (animationRequests.current.get(messageId) !== controller) return;
+    animationRequests.current.delete(messageId);
+    setAnimating(ids => ids.filter(id => id !== messageId));
+    updateMessage(messageId, m => ({ ...m, animation: { ...outcome, ref } }), chatId);
+  }, [updateMessage]);
+
+  const cancelAnimation = useCallback((chatId, messageId) => {
+    const controller = animationRequests.current.get(messageId);
+    animationRequests.current.delete(messageId);
+    controller?.abort();
+    setAnimating(ids => ids.filter(id => id !== messageId));
+    updateMessage(messageId, m => (m.animation ? { ...m, animation: { status: 'cancelled', ref: m.animation.ref } } : m), chatId);
+  }, [updateMessage]);
+
+  useEffect(() => () => { animationRequests.current.forEach(controller => controller.abort()); animationRequests.current.clear(); }, []);
+
   const markActionsUsed   = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, true),  [setActionsUsed]);
   const markActionsUnused = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, false), [setActionsUsed]);
 
-  const runQuery = useCallback(async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null, detail }) => {
+  const runQuery = useCallback(async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null, detail, animate }) => {
     const chatId = activeChatIdRef.current;
     const chat   = chatsRef.current.find(c => c.id === chatId);
     const model  = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
     const group  = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
     const requestedDetail = voice || !FEATURES.EFFORT_LEVELS ? 'standard' : normaliseDetail(detail ?? preferences.detail);
-    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group, quote: quoted, voice, detail: requestedDetail };
+    // Captured with the request, like the detail, so Retry asks for the same thing.
+    const requestedAnimate = !voice && FEATURES.ANIMATIONS && (animate ?? preferences.animate) === true;
+    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group, quote: quoted, voice, detail: requestedDetail, animate: requestedAnimate };
     const hasPhotos = photos.length > 0;
 
     // Only the latest request may write to the chat; starting one aborts the last.
@@ -212,7 +251,7 @@ export default function Dashboard() {
     try {
       const result = await submitQuery(text, {
         docGroup: group, images: photos.map(p => p.base64), confirmedModel: model, voice,
-        quote: quoted, signal, detail: requestedDetail,
+        quote: quoted, signal, detail: requestedDetail, animate: requestedAnimate,
       });
       if (!requestGuard.isCurrent(requestId)) return { cancelled: true };
 
@@ -223,7 +262,7 @@ export default function Dashboard() {
         // or the markers can be missed. Markers never reach the renderer,
         // AsyncStorage, or a later repair report.
         const { cleanText, timers } = extractTimers(decodeEntities(result.text));
-        addMessage('bot', cleanText, result.sources || [], {
+        const answerId = addMessage('bot', cleanText, result.sources || [], {
           timers,
           detail: requestedDetail,
           ...(isResponseDetail(result.responseDetail) ? { responseDetail: result.responseDetail } : {}),
@@ -247,6 +286,7 @@ export default function Dashboard() {
           procedureState: (result.isProcedural && result.steps?.length > 0)
             ? { currentStep: 0, completedSteps: [], overviewOpen: false } : null,
         }, chatId);
+        if (requestedAnimate && typeof result.animationRef === 'string') requestAnimation(chatId, answerId, result.animationRef);
         if (result.identifiedModel) updateChat(chatId, { confirmedModel: decodeEntities(result.identifiedModel) });
 
         // Name the chat from its first exchange, the way chat assistants do.
@@ -273,7 +313,7 @@ export default function Dashboard() {
       // A stale request finishing late must not clear the spinner of the newer one.
       if (requestGuard.isCurrent(requestId)) setIsProcessing(false);
     }
-  }, [addMessage, updateChat, requestGuard, preferences.detail]);
+  }, [addMessage, updateChat, requestGuard, preferences.detail, preferences.animate, requestAnimation]);
 
   const handleSend = async (overrideText) => {
     const typed  = (overrideText || inputValue).trim();
@@ -696,11 +736,14 @@ export default function Dashboard() {
             onCopy={FEATURES.CHAT_COPY ? handleCopyAnswer : undefined}
             onSelectText={FEATURES.CHAT_SELECT ? (message, text) => setSelectFor({ ...message, text }) : undefined}
             onTimerComplete={handleTimerComplete}
+            animating={animating.includes(item.id)}
+            onRetryAnimation={() => requestAnimation(activeChatIdRef.current, item.id, item.animation?.ref)}
+            onCancelAnimation={() => cancelAnimation(activeChatIdRef.current, item.id)}
           />
         )}
       </View>
     );
-  }, [handleAction, isProcessing, isPhotoBusy, handsFreeActive, updateMessage, handleCopyAnswer, handleTimerComplete]);
+  }, [handleAction, isProcessing, isPhotoBusy, handsFreeActive, updateMessage, handleCopyAnswer, handleTimerComplete, animating, requestAnimation, cancelAnimation]);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={0}>
@@ -1179,6 +1222,7 @@ export default function Dashboard() {
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterBar} style={s.filterScroll} keyboardShouldPersistTaps="handled">
             {FEATURES.EFFORT_LEVELS && <DetailChip value={preferences.detail} onChange={preferences.setDetail} disabled={!preferences.ready || handsFree.active} />}
+            {FEATURES.ANIMATIONS && <AnimateChip value={preferences.animate} introSeen={preferences.animateIntroSeen} onChange={preferences.setAnimate} disabled={!preferences.ready || handsFree.active} />}
             <TouchableOpacity style={s.filterChip} onPress={() => setShowFilterPicker(true)}>
               <Ionicons name="filter-outline" size={13} color={activeChat?.filter ? C.primary : C.textMuted} />
               <Text style={[s.filterChipText, activeChat?.filter && { color: C.primary, fontWeight: '700' }]} numberOfLines={1}>

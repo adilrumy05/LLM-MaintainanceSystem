@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File } from 'expo-file-system';
-import { db } from '../firebaseConfig';
+import { db, auth } from '../firebaseConfig';
 import { FEATURES } from '../constants/featureFlags';
 import { detailRequestFields } from '../utils/responseDetail';
 
@@ -190,6 +190,7 @@ export const decodeEntities = (text) =>
  * @param {{ text: string, messageId?: string }} [options.quote]
  *                                          a passage from an earlier answer this
  *                                          question is about
+ * @param {boolean} [options.animate]      keep this answer's evidence so it can be animated; ignored for voice
  * @param {AbortSignal} [options.signal]    cancels the request; the thrown error
  *                                          then has `cancelled: true`
  *
@@ -209,6 +210,7 @@ export const submitQuery = async (query, options = {}) => {
     voice = false,
     detail = 'standard',
     quote = null,
+    animate = false,
     signal = undefined,
   } = opts;
   const images = imageList?.length ? imageList : singleImage ? [singleImage] : [];
@@ -275,6 +277,7 @@ export const submitQuery = async (query, options = {}) => {
           ...(confirmedModel ? { confirmedModel } : {}),
           ...(voice ? { voice: true } : {}),
           ...detailRequestFields({ detail, voice, enabled: FEATURES.EFFORT_LEVELS }),
+          ...(animate && !voice && FEATURES.ANIMATIONS ? { animate: true } : {}),
           ...(quote?.text ? { quote: { text: quote.text, ...(quote.messageId ? { messageId: String(quote.messageId) } : {}) } } : {}),
         }),
         signal,
@@ -652,4 +655,60 @@ export const setUserPassword = async (uid, password) => {
   const body = await response.json().catch(() => null);
   if (!response.ok) throw new Error(body?.error || `Password update failed (HTTP ${response.status})`);
   return body;
+};
+
+// ─────────────────────────────────────────────
+// ANIMATIONS
+// POST /api/animate
+// ─────────────────────────────────────────────
+
+const decodeAnimation = (animation) => ({
+  ...animation,
+  title: decodeEntities(animation.title),
+  parts: (animation.parts || []).map(part => ({ ...part, label: decodeEntities(part.label) })),
+  facts: (animation.facts || []).map(fact => ({
+    ...fact, text: decodeEntities(fact.text), object: decodeEntities(fact.object), subject: decodeEntities(fact.subject),
+  })),
+  captions: (animation.captions || []).map(lines => lines.map(line => ({ ...line, text: decodeEntities(line.text) }))),
+  missingDetails: (animation.missingDetails || []).map(decodeEntities),
+});
+
+/**
+ * Asks for the animation of an answer already given.
+ *
+ * The server checks who is asking, so this sends a fresh ID token: the one
+ * saved at sign-in expires after an hour.
+ *
+ * @param {string} animationRef  the reference /api/query returned with the answer
+ * @param {object} [options]
+ * @param {AbortSignal} [options.signal]  cancels the request; the thrown error has `cancelled: true`
+ * @returns {Promise<{ status: 'ready'|'unavailable'|'failed', animation?: object, message?: string, reason?: string, missing?: string[] }>}
+ */
+export const animateAnswer = async (animationRef, { signal } = {}) => {
+  let token = null;
+  try { token = await auth?.currentUser?.getIdToken?.(); } catch { token = null; }
+  if (!token) {
+    const userJson = await AsyncStorage.getItem('user').catch(() => null);
+    token = userJson ? JSON.parse(userJson)?.token : null;
+  }
+  if (!token) return { status: 'failed', message: 'Your session has expired. Sign in again to see animations.' };
+
+  const response = await fetchWithTimeout(`${API_URL}/animate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ animationRef }),
+    signal,
+  }, 150000);
+  const body = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    if (response.status === 401) return { status: 'failed', message: 'Your session has expired. Sign in again to see animations.' };
+    if (response.status === 429) return { status: 'failed', message: 'Too many animations requested. Wait a minute and try again.' };
+    return { status: body?.code === 'animations_disabled' ? 'unavailable' : 'failed', message: decodeEntities(body?.error) || 'The animation could not be made. Try again.' };
+  }
+  if (body?.status === 'ready' && body.animation) return { status: 'ready', animation: decodeAnimation(body.animation) };
+  if (body?.status === 'unavailable') {
+    return { status: 'unavailable', reason: body.reason, message: decodeEntities(body.message), missing: (body.missing || []).map(decodeEntities) };
+  }
+  return { status: 'failed', message: decodeEntities(body?.message) || 'The animation could not be made. Try again.' };
 };

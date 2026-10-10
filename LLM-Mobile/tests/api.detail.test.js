@@ -7,11 +7,12 @@ import { submitQuery } from '../services/api';
 import { FEATURES } from '../constants/featureFlags';
 
 beforeEach(() => {
-  jest.clearAllMocks(); FEATURES.EFFORT_LEVELS = true;
+  jest.clearAllMocks(); FEATURES.EFFORT_LEVELS = true; FEATURES.BRIEF_ANSWERS = true;
   AsyncStorage.getItem.mockResolvedValue(JSON.stringify({ uid: 'u1', role: 'beginner', email: 'u@example.com', token: 'test-token' }));
   global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ text: 'Short', responseDetail: 'brief', sources: [] }) });
 });
 afterEach(() => { FEATURES.EFFORT_LEVELS = true; });
+afterAll(() => { FEATURES.BRIEF_ANSWERS = false; });
 const sent = () => JSON.parse(global.fetch.mock.calls[0][1].body);
 
 test('sends Brief alongside photo, equipment and quoted-passage context', async () => {

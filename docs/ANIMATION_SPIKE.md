@@ -16,11 +16,14 @@ a fixed catalogue?
 **Only procedures are animated.** The first results showed that an explanation
 or a fault-code meaning has nothing to move: it came out as a highlighted box
 beside the manual's sentence. Adil agreed to drop those. They are answered in
-text as before. The switch is `SHOW_EXPLANATIONS` in `spikes/animation/scene.js`.
+text as before. The switch is `SHOW_EXPLANATIONS` in `scene.js`.
 
 ## What was built
 
-Code in `spikes/animation/`, tests in `backend-node/tests/unit/animationSpike.test.js`.
+The checks and prompts now live in `backend-node/server/services/animation/`
+(moved on 10 Oct 2026 for the app build, see [ANIMATIONS.md](ANIMATIONS.md));
+the test runner and review page are in `spikes/animation/`. Tests:
+`backend-node/tests/unit/animationChecks.test.js`.
 
 | Stage | Who does it | What stops a mistake |
 |---|---|---|

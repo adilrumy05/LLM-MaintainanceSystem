@@ -5,7 +5,7 @@
 // of them are backed by the retrieved passages. Wiring connections are never
 // taken from a model at all: they come only from terminal tables read here.
 
-const { figures } = require('../../backend-node/server/services/responseDetail');
+const { figures } = require('../responseDetail');
 
 // The ingested manuals carry LaTeX and Markdown leftovers ("$4 \times 1.5 \,
 // \text{mm}^2$", "1.0 \~ 1.5HP", "mm$^{2}$", "TIMER $\leftarrow$"), and a

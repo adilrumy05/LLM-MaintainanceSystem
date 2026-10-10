@@ -1,5 +1,9 @@
 import { answerView, displayedAnswerText, detailRequestFields, normaliseDetail, detailFallbackMessage, answerDetailLabel, textViewLabel } from '../utils/responseDetail';
 import { answerForClipboard } from '../utils/messageText';
+import { FEATURES } from '../constants/featureFlags';
+
+beforeEach(() => { FEATURES.BRIEF_ANSWERS = true; });
+afterAll(() => { FEATURES.BRIEF_ANSWERS = false; });
 
 const message = {
   text: 'Short answer.', responseDetail: 'brief', isProcedural: true,
@@ -60,6 +64,13 @@ test.each(['brief', 'detailed'])('APP-A2-2 %s is sent only for typed questions w
   expect(detailRequestFields({ detail })).toEqual({ detail });
   expect(detailRequestFields({ detail, voice: true })).toEqual({});
   expect(detailRequestFields({ detail, enabled: false })).toEqual({});
+});
+
+test('APP-A2-4 Brief is not sent while it is hidden', () => {
+  FEATURES.BRIEF_ANSWERS = false;
+  expect(normaliseDetail('brief')).toBe('standard');
+  expect(detailRequestFields({ detail: 'brief' })).toEqual({});
+  expect(detailRequestFields({ detail: 'detailed' })).toEqual({ detail: 'detailed' });
 });
 
 test('APP-A2-3 an unknown saved preference becomes Standard', () => expect(normaliseDetail('fast')).toBe('standard'));

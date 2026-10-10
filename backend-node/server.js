@@ -7,6 +7,8 @@ const firebaseAdmin = require('./server/config/firebaseAdmin');
 const { runPriorityAdjustmentAgent } = require('./server/agents/priorityAdjustmentAgent');
 const { generateRepairReport } = require('./server/services/reportGenerator');
 const requireAdmin = require('./server/middleware/requireAdmin');
+const requireUser = require('./server/middleware/requireUser');
+const animations = require('./server/services/animation/service');
 // Lazy: firebase-admin/auth depends on ESM-only `jose`, which Jest cannot parse
 // from node_modules. Only the delete-user route needs it.
 const getAuthLazy = () => require('firebase-admin/auth').getAuth();
@@ -40,6 +42,8 @@ app.use(cors());
 // and raising the global limit would open 12MB on every route including the
 // unauthenticated ones.
 app.use('/api/query', express.json({ limit: '12mb' }));
+// An animation request carries one reference and nothing else.
+app.use('/api/animate', express.json({ limit: '2kb' }));
 app.use(express.json());
 const transcribeRouter = require('./server/routes/transcribe');
 app.use('/api', transcribeRouter);
@@ -320,13 +324,16 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       voice,
       quote,
       detail,
+      animate,
     } = req.body;
 
     // How much to explain, not who is asking: the role prompt is unchanged.
     // Hands-free keeps its own spoken pipeline, and EFFORT_LEVELS_ENABLED=false
-    // switches this off for every client, including older app builds.
+    // switches this off for every client, including older app builds. Brief is
+    // answered as Standard unless BRIEF_ANSWERS_ENABLED=true (see RESPONSE_DETAIL.md).
+    const detailAllowed = detail === 'brief' && process.env.BRIEF_ANSWERS_ENABLED !== 'true' ? 'standard' : detail;
     const detailRequested = voice === true || process.env.EFFORT_LEVELS_ENABLED === 'false'
-      ? 'standard' : detail || 'standard';
+      ? 'standard' : detailAllowed || 'standard';
     const retrievalTopK = detailRequested === 'detailed' ? Math.max(DETAILED_TOP_K, topK ?? 5) : topK ?? 5;
     const timing = { start: Date.now() };
 
@@ -945,6 +952,17 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
 
     // ── Step 6: Return answer + sources + alert metadata ──────────────────────
     // Stage timings in milliseconds; no question or answer text.
+    // The evidence behind a step-by-step answer is kept so that an animation
+    // can be drawn from it on request. Nothing is generated here, so the answer
+    // is not delayed and an answer without steps costs nothing.
+    const animationRef = animate === true && voice !== true && isProcedural && steps.length > 0
+      ? animations.issueRef({
+          uid: userId, question: query, answer: text,
+          model: retrievalFilters.model_number, group: retrievalFilters.document_group_id,
+          contextBlocks: retrievalData.context_blocks,
+        })
+      : null;
+
     console.info('[TIMING]', JSON.stringify({ detail: detailRequested, shown: responseDetail, rounds: round, answerMs: timing.answerEnd - timing.start, stepsAndBriefMs: timing.stepsEnd - timing.answerEnd, totalMs: Date.now() - timing.start }));
     res.json({
       text,
@@ -955,6 +973,7 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
       ...(briefText ? { fullText } : {}),
       isProcedural,
       steps,
+      ...(animationRef ? { animationRef } : {}),
       sources:        retrievalData.sources,
       context_blocks: retrievalData.context_blocks,
       reasoning:      `Generated via OpenAI ${ANSWER_MODEL} with RAG context`,
@@ -1229,6 +1248,23 @@ app.post('/api/reject', async (req, res) => {
   } catch (err) {
     console.error('[HITL REJECT FAILED]:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Draws the animation for an answer already given. The caller sends only the
+// reference /api/query returned; the passages come from the server's own copy.
+// No audit record, alert or priority task: this route answers nothing new.
+app.post('/api/animate', requireUser, async (req, res) => {
+  const ref = req.body?.animationRef;
+  if (typeof ref !== 'string' || !/^[0-9a-f]{32}$/.test(ref)) {
+    return res.status(400).json({ error: 'animationRef is required.', code: 'invalid_request' });
+  }
+  try {
+    const { http, body } = await animations.requestAnimation(ref, req.caller.uid);
+    res.status(http).json(body);
+  } catch (error) {
+    console.error('[ANIMATION] route error:', error.message);
+    res.status(500).json({ error: 'Internal server error. Try again, and report it if it keeps happening.', code: 'internal_error' });
   }
 });
 

@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
-import { DETAIL_OPTIONS, normaliseDetail } from '../utils/responseDetail';
+import { offeredDetails, normaliseDetail } from '../utils/responseDetail';
 
 export default function DetailChip({ value, onChange, disabled = false }) {
   const [open, setOpen] = useState(false);
   const selected = normaliseDetail(value);
-  const label = DETAIL_OPTIONS.find(option => option.value === selected).label;
+  const options = offeredDetails();
+  const label = options.find(option => option.value === selected).label;
   return <>
     <TouchableOpacity style={[s.chip, disabled && s.disabled]} onPress={() => setOpen(true)} disabled={disabled}
       accessibilityRole="button" accessibilityLabel={`Response detail: ${label}`} accessibilityState={{ disabled }}>
@@ -25,7 +26,7 @@ export default function DetailChip({ value, onChange, disabled = false }) {
             </TouchableOpacity>
           </View>
           <Text style={s.hint}>Applies to your next question. Earlier answers stay as they are. This changes how much is explained, not your skill level.</Text>
-          {DETAIL_OPTIONS.map(option => <TouchableOpacity key={option.value}
+          {options.map(option => <TouchableOpacity key={option.value}
             style={[s.option, option.value === selected && s.selected]}
             accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ checked: option.value === selected }}
             onPress={() => { onChange(option.value); setOpen(false); }}>

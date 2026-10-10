@@ -68,8 +68,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   process.env.OPENAI_API_KEY = 'test-key';
   delete process.env.EFFORT_LEVELS_ENABLED;
+  process.env.BRIEF_ANSWERS_ENABLED = 'true';
 });
-afterEach(() => { delete process.env.EFFORT_LEVELS_ENABLED; });
+afterEach(() => { delete process.env.EFFORT_LEVELS_ENABLED; delete process.env.BRIEF_ANSWERS_ENABLED; });
 
 describe('Standard is unchanged', () => {
   test('REGRESSION: no detail and Standard send identical requests', async () => {
@@ -190,6 +191,16 @@ describe('where detail does not apply', () => {
     expect(calls.answer[0].messages[0].content).not.toMatch(/Brief response|Detailed response/);
     expect(calls.spoken).toHaveLength(1);
     expect(res.body.responseDetail).toBe('standard');
+  });
+
+  test('Brief is answered in Standard unless BRIEF_ANSWERS_ENABLED=true', async () => {
+    delete process.env.BRIEF_ANSWERS_ENABLED;
+    const calls = mockPipeline();
+    const res = await post({ detail: 'brief' });
+    expect(calls.answer).toHaveLength(1);
+    expect(res.body).toMatchObject({ text: STANDARD, responseDetail: 'standard' });
+    expect(res.body.detailFallback).toBeUndefined();
+    expect(res.body.fullText).toBeUndefined();
   });
 
   test('EFFORT_LEVELS_ENABLED=false answers everything in Standard', async () => {

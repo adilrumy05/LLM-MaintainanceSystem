@@ -17,7 +17,7 @@
 // the screen.
 
 const { canonical, readable } = require('./facts');
-const { figures } = require('../../backend-node/server/services/responseDetail');
+const { figures } = require('../responseDetail');
 
 const KINDS = ['procedural', 'conceptual', 'unavailable'];
 const SHAPES = ['indoor_unit', 'outdoor_unit', 'unit', 'panel', 'cover', 'filter', 'cable', 'terminal_block', 'board', 'screw',

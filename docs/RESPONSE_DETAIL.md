@@ -271,3 +271,42 @@ approved a known-bad answer and rejected known-good ones, so both were removed.
 What it found is worth raising with whoever owns retrieval: Standard answers
 sometimes add explanations the manual does not give, and sometimes leave out
 precautions that sit on a different page from the procedure.
+
+## Evaluation, 10 Oct 2026
+
+Ten questions, each asked at Brief, Standard and Detailed (30 requests), on the
+merged backend with `gpt-6-luna`, intermediate role, local manual database.
+Every Brief was read against the full answer behind it and the manual passages
+it was written from. **Decision (Adil, 10 Oct): ship Standard and Detailed, hide Brief,** once two
+teammates have compared Detailed with Standard. Brief is hidden by
+`BRIEF_ANSWERS` (app) and `BRIEF_ANSWERS_ENABLED` (server), both off; its code
+and tests stay. `EFFORT_LEVELS` stays off until the comparison is back.
+
+**Five of the ten questions were not answered at Standard at all.** Error H11,
+servicing safety precautions, drain-hose installation, what the filters do, and
+the airflow path all came back as "the extracts do not cover this". The search
+returned specification tables and parts lists. This is the search finding in
+`ANIMATION_SPIKE.md`, and it limits this feature more than the levels do.
+
+On the five questions that were answered:
+
+| Question | Brief | Words B / S / D |
+|---|---|---|
+| Filter cleaning | Correct, kept every caution | 58 / 69 / 106 |
+| Indoor/outdoor cable | Rejected (dropped a safety item); full answer shown | 262 / 192 / 271 |
+| TIMER blinking | Correct, but longer than Standard | 138 / 111 / 191 |
+| Refrigerant piping | Kept all torques. Says 6.35 mm and 9.52 mm are the CS-S10TKH's pipe sizes, which the passages do not state. Left out that the result can be "explosion, injury" | 225 / 276 / 230 |
+| Air evacuation | Rejected (a figure not in the passages); full answer shown | 150 / 135 / 157 |
+
+- **Brief:** one clean result in five. Two were rejected by the checks, so the
+  technician sees the full answer with a notice. Average time 11.2 s against
+  11.4 s for Standard, so it is not quicker.
+- **The checks did their job on what they cover** (figures, safety items), but
+  they cannot catch a correct figure attached to the wrong claim (piping).
+- **Detailed:** no error found. It mostly restates Standard with a "Not covered
+  in the manual" line. Its real gain is that it searches more passages: it
+  answered "what do the filters do" where Standard and Brief could not.
+  Average 13.4 s.
+- **Not done:** the blind comparison of Detailed and Standard by two teammates.
+
+Raw results are not in the repo (they contain manual text); ask Adil.
