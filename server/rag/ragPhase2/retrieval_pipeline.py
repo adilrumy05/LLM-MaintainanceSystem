@@ -14,11 +14,14 @@ Architecture
             │  RetrievalPipeline│
             │                  │
             │  1. Embed query   │
-            │  2. Filter build  │
-            │  3. Qdrant search │  ← children + tables
-            │  4. Parent hydrate│  ← fetch full context for matched children
-            │  5. TOC nav layer │  ← optionally restrict to TOC section
-            │  6. Assemble ctx  │
+            │  2. Qdrant search │  ← children + tables + images (per-type limits)
+            │  3. Agreement hits│  ← dense+sparse agreement survives the merge
+            │  4. Type-floor    │  ← top-k children/tables AND top few images
+            │     merge         │
+            │  5. Section       │  ← add every chunk of the section(s) the question
+            │     expansion     │    is about (see section_expansion.py)
+            │  6. Parent hydrate│  ← fetch full context for matched children
+            │  7. Assemble ctx  │
             └────────┬─────────┘
                      │
               RetrievalResult
@@ -27,40 +30,10 @@ Architecture
                      │
               [caller's LLM]
 
+Section expansion needs the toc_* payload fields written by
+backfill_toc_sections.py. Run that after every ingest / re-embed.
+
 RetrievalResult is a plain dataclass — pass it straight to any prompt builder.
-
-LLM Integration
----------------
-The pipeline does NOT call any LLM. Pass RetrievalResult.context_str to your
-LLM of choice:
-
-    # OpenAI / compatible API
-    import openai
-    client = openai.OpenAI(api_key=os.getenv("LLM_API_KEY"),
-                           base_url=os.getenv("LLM_BASE_URL"))  # optional for proxies
-    resp = client.chat.completions.create(
-        model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": result.build_prompt(question)},
-        ]
-    )
-    answer = resp.choices[0].message.content
-
-    # Local Qwen / HuggingFace
-    inputs  = tokenizer(result.build_prompt(question), return_tensors="pt")
-    outputs = model.generate(**inputs, max_new_tokens=512)
-    answer  = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-    # Anthropic
-    import anthropic
-    client = anthropic.Anthropic(api_key=os.getenv("LLM_API_KEY"))
-    msg = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": result.build_prompt(question)}],
-    )
-    answer = msg.content[0].text
 
 Required env vars
 -----------------
@@ -71,13 +44,14 @@ Required env vars
 
 Optional env vars
 -----------------
-    RETRIEVAL_TOP_K         default 5  — child + table hits to fetch
-    RETRIEVAL_SCORE_MIN     default 0.0 — minimum cosine similarity
+    RETRIEVAL_TOP_K            default 5   — child + table hits to fetch
+    RETRIEVAL_SCORE_MIN        default 0.0 — minimum cosine similarity
     RETRIEVAL_HYDRATE_PARENTS  true/false  (default true)
-                               fetch parent text for every matched child
-    LLM_API_KEY             API key forwarded to caller (not used here)
-    LLM_MODEL               LLM model name forwarded to caller (not used here)
-    LLM_BASE_URL            Custom base URL for OpenAI-compatible proxies
+    RETRIEVAL_IMAGE_FLOOR      default 4   — extra image hits kept after the merge
+    SECTION_MAX_PARENTS        default 3   — sections expanded per document
+    SECTION_MAX_PAGES          default 8   — pages kept per section
+    SECTION_MAX_CHARS          default 60000 — cap on text added by expansion
+    (more in section_expansion.py)
 
 Public API
 ----------
@@ -90,11 +64,11 @@ Public API
         category_level_1="Air_Conditioner",               # optional
     )
 
-    print(result.context_str)          # ready-to-paste context block
-    print(result.build_prompt(question))  # full prompt string
+    print(result.context_str)
+    print(result.build_prompt(question))
 
     for block in result.context_blocks:
-        print(block["chunk_type"], block["score"], block["text"][:100])
+        print(block.chunk_type, block.score, block.text[:100])
 """
 
 import os
@@ -104,6 +78,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+try:
+    from .section_expansion import expand_sections, merge_with_type_floor
+except ImportError:
+    from section_expansion import expand_sections, merge_with_type_floor
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,10 +90,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ContextBlock:
-    """One retrieved piece of context (child chunk, table, or hydrated parent)."""
+    """One retrieved piece of context (child chunk, table, image, or hydrated parent)."""
     chunk_id:          str
-    chunk_type:        str          # "child", "table", "parent"
-    score:             float        # cosine similarity (0 for hydrated parents)
+    chunk_type:        str          # "child", "table", "image", "parent"
+    score:             float        # cosine similarity (0 for hydrated parents / same-section pages)
     text:              str
     page:              int
     document_group_id: str
@@ -136,7 +115,7 @@ class RetrievalResult:
     context_blocks  : ordered list of ContextBlock objects
     context_str     : pre-formatted context string (numbered blocks)
     sources         : deduplicated list of (document_group_id, filename, page)
-    toc_section     : TOC heading matched to the query, if TOC nav active
+    toc_section     : section heading of the best hit, if the chunk was tagged
     raw_hits        : raw Qdrant hit dicts for debugging
     """
     question:       str
@@ -151,18 +130,7 @@ class RetrievalResult:
         question:      str = None,
         system_prompt: str = None,
     ) -> str:
-        """
-        Assemble a ready-to-send prompt string.
-
-        Parameters
-        ----------
-        question      : overrides self.question if supplied
-        system_prompt : custom system instruction; uses a sensible default
-
-        Returns
-        -------
-        str  — formatted prompt for any LLM
-        """
+        """Assemble a ready-to-send prompt string for any LLM."""
         q = question or self.question
         sp = system_prompt or (
             "You are a helpful technical assistant. "
@@ -172,7 +140,7 @@ class RetrievalResult:
         )
 
         toc_note = (
-            f"\n[TOC section matched: {self.toc_section}]\n"
+            f"\n[Best match is in section: {self.toc_section}]\n"
             if self.toc_section else ""
         )
 
@@ -192,20 +160,19 @@ class RetrievalPipeline:
     """
     LLM-agnostic retrieval pipeline.
 
-    Embeds the query, searches Qdrant for child + table chunks, optionally
-    hydrates matched children with their parent context, applies TOC nav
-    filtering when available, and returns a RetrievalResult.
+    Embeds the query, searches Qdrant for child + table + image chunks,
+    merges them without letting one type crowd out another, adds the rest of
+    the section the question is about, hydrates matched children with their
+    parent context, and returns a RetrievalResult.
     """
-
-
 
     def __init__(self):
         # Lazy imports so heavy models are only loaded on first retrieve()
         self._embedder      = None
         self._vector_store  = None
 
-        self.top_k           = int(os.getenv("RETRIEVAL_TOP_K"))
-        self.score_min       = float(os.getenv("RETRIEVAL_SCORE_MIN"))
+        self.top_k           = int(os.getenv("RETRIEVAL_TOP_K", "5"))
+        self.score_min       = float(os.getenv("RETRIEVAL_SCORE_MIN", "0.0"))
         self.hydrate_parents = os.getenv("RETRIEVAL_HYDRATE_PARENTS", "true").lower() in ("1", "true", "yes")
 
         print(
@@ -248,7 +215,7 @@ class RetrievalPipeline:
         model_number:      str   = None,
         top_k:             int   = None,
         score_min:         float = None,
-        chunk_types:       List[str] = None,  # default: ["child", "table"]
+        chunk_types:       List[str] = None,
     ) -> RetrievalResult:
         """
         Retrieve context for a question.
@@ -265,11 +232,7 @@ class RetrievalPipeline:
         top_k             : override default RETRIEVAL_TOP_K
         score_min         : override default RETRIEVAL_SCORE_MIN
         chunk_types       : which chunk types to search
-                            default ["child", "table"]
-
-        Returns
-        -------
-        RetrievalResult
+                            default ["child", "table", "image"]
         """
         vs        = self._get_vs()
         embedder  = self._get_embedder()
@@ -277,12 +240,7 @@ class RetrievalPipeline:
         min_score = score_min if score_min is not None else self.score_min
         types = chunk_types or ["child", "table", "image"]
 
-        # ── 1. TOC nav check ──────────────────────────────────────────────
-        toc_section = self._toc_section_for_query(
-            question, vs, document_group_id, classification
-        )
-
-        # ── 2. Search children + tables ───────────────────────────────────
+        # ── 1. Search children + tables + images ──────────────────────────
         raw_hits: List[Dict] = []
 
         print(f"Retrieving with filters:\n"
@@ -299,10 +257,15 @@ class RetrievalPipeline:
         # Embed the query once and reuse it for all chunk types
         query_vec = embedder.embed_query(question)
 
+        # Per-type limits: image chunks score on a lower scale than children and
+        # tables, so give them 3x the candidate headroom before the merge.
+        def _per_type_limit(chunk_type: str) -> int:
+            return k * 3 if chunk_type == "image" else k
+
         for chunk_type in types:
             hits = vs.search(
                 precomputed_query=query_vec,
-                limit=k,
+                limit=_per_type_limit(chunk_type),
                 score_threshold=min_score if min_score > 0 else None,
                 document_group_id=document_group_id,
                 date_added=date_added,
@@ -315,15 +278,7 @@ class RetrievalPipeline:
             )
             raw_hits.extend(hits)
 
-        # Sort by score descending and cap at top_k total
-        raw_hits.sort(key=lambda h: h["score"], reverse=True)
-        raw_hits = raw_hits[:k]
-
-        # ── 3. TOC section filtering ──────────────────────────────────────
-        # if toc_section:
-        #     raw_hits = self._filter_by_toc_section(raw_hits, toc_section)
-
-        # ── 3b. Guarantee dense+sparse agreement survives fusion/TOC cuts ──
+        # ── 2. Guarantee dense+sparse agreement survives fusion ───────────
         filters = dict(
             document_group_id=document_group_id, date_added=date_added, filename=filename,
             classification=classification, category_level_1=category_level_1,
@@ -335,15 +290,37 @@ class RetrievalPipeline:
             if hit["id"] not in existing_ids:
                 raw_hits.append(hit)
                 existing_ids.add(hit["id"])
-                logger.info(f"Re-added dense+sparse-agreed hit dropped by fusion/TOC filter: {hit['id']}")
+                logger.info(f"Re-added dense+sparse-agreed hit dropped by fusion: {hit['id']}")
 
-        # ── 4. Hydrate with parent context ────────────────────────────────
+        # ── 3. Type-aware merge ───────────────────────────────────────────
+        # Top-k children/tables PLUS the top few images. A single sort-and-cap
+        # lets children and tables (scored near 1.0) crowd out every image
+        # (scored around 0.6) even when the image is the right page.
+        raw_hits = merge_with_type_floor(raw_hits, k)
+
+        # ── 4. Section expansion ──────────────────────────────────────────
+        # A procedure spans several pages and most never mention the thing the
+        # user asked about. Add every chunk of the section(s) the question is
+        # about, in page order, with score 0. Needs toc_* payload fields from
+        # backfill_toc_sections.py; with none present it falls back to the pages
+        # either side of the best hit.
+        raw_hits = expand_sections(
+            vs, raw_hits, question,
+            document_group_id=document_group_id, filename=filename,
+        )
+
+        # ── 5. Hydrate with parent context ────────────────────────────────
         context_blocks = self._build_context_blocks(raw_hits, vs)
 
-        # ── 5. Assemble output ────────────────────────────────────────────
+        # ── 6. Assemble output ────────────────────────────────────────────
         context_str = _format_context(context_blocks)
         sources     = _deduplicate_sources(context_blocks)
         sources     = _enrich_sources_with_images(sources, context_blocks)
+
+        toc_section = next(
+            (h["payload"].get("toc_section") for h in raw_hits if h["payload"].get("toc_section")),
+            None,
+        )
 
         return RetrievalResult(
             question=question,
@@ -354,8 +331,7 @@ class RetrievalPipeline:
             raw_hits=raw_hits,
         )
 
-    
-    # ── TOC nav layer ─────────────────────────────────────────────────────────
+    # ── Dense+sparse agreement ────────────────────────────────────────────────
     def _dense_sparse_agreement_hits(self, vs, query_vec, chunk_types, k, **filters) -> List[Dict]:
         """Chunks ranked in BOTH dense-only and sparse-only top-k for every chunk_type searched."""
         agreed = []
@@ -365,94 +341,6 @@ class RetrievalPipeline:
             sparse_ids  = {h["id"] for h in sparse_hits}
             agreed.extend(h for h in dense_hits if h["id"] in sparse_ids)
         return agreed
-
-    # ── TOC nav layer ─────────────────────────────────────────────────────────
-    def _toc_section_for_query(
-        self,
-        question:          str,
-        vs,
-        document_group_id: Optional[str],
-        classification:    Optional[str],
-    ) -> Optional[str]:
-        """
-        If any document in scope has use_toc_nav=True, search the toc_headings
-        payload field for the best matching section heading.
-
-        Strategy: retrieve one point that has use_toc_nav=True and toc_headings
-        populated, then pick the heading with the highest word-overlap to the
-        question (simple but fast; no extra embedding call).
-
-        Returns the matched heading string, or None.
-        """
-        try:
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
-
-            conditions = [
-                FieldCondition(key="use_toc_nav", match=MatchValue(value=True))
-            ]
-            if document_group_id:
-                conditions.append(
-                    FieldCondition(
-                        key="document_group_id",
-                        match=MatchValue(value=document_group_id)
-                    )
-                )
-            if classification:
-                conditions.append(
-                    FieldCondition(
-                        key="classification",
-                        match=MatchValue(value=classification)
-                    )
-                )
-
-            scroll_result, _ = vs.client.scroll(
-                collection_name=vs.collection,
-                scroll_filter=Filter(must=conditions),
-                limit=1,
-                with_payload=["toc_headings"],
-                with_vectors=False,
-            )
-
-            if not scroll_result:
-                return None
-
-            toc_headings = scroll_result[0].payload.get("toc_headings", [])
-            if not toc_headings:
-                return None
-
-            # Word-overlap match between question and each heading
-            q_words = set(question.lower().split())
-            best_heading  = None
-            best_overlap  = 0
-
-            for heading in toc_headings:
-                h_words = set(heading.lower().split())
-                overlap = len(q_words & h_words)
-                if overlap > best_overlap:
-                    best_overlap = overlap
-                    best_heading = heading
-
-            return best_heading if best_overlap > 0 else None
-
-        except Exception as e:
-            logger.debug(f"TOC nav check failed (non-fatal): {e}")
-            return None
-
-    def _filter_by_toc_section(
-        self,
-        hits:        List[Dict],
-        toc_section: str,
-    ) -> List[Dict]:
-        """
-        Prefer hits whose text contains words from the matched TOC section.
-        Falls back to all hits if filtering would leave nothing.
-        """
-        section_words = set(toc_section.lower().split())
-        filtered = [
-            h for h in hits
-            if section_words & set(h["payload"].get("text", "").lower().split())
-        ]
-        return filtered if filtered else hits
 
     # ── Context block assembly ────────────────────────────────────────────────
 
@@ -466,14 +354,20 @@ class RetrievalPipeline:
 
         For child chunks: optionally prepend the parent's full text as an
         additional ContextBlock (chunk_type="parent", score=0) before the child.
-        Tables are added as-is.
+        Tables and image chunks are added as-is. A chunk that appears twice
+        (e.g. a hydrated parent that is also a same-section chunk) is kept once.
         """
-        blocks:        List[ContextBlock] = []
+        blocks:          List[ContextBlock] = []
         seen_parent_ids: set = set()
+        seen_ids:        set = set()
 
         for hit in raw_hits:
             p   = hit["payload"]
             cid = p.get("chunk_id", str(hit["id"]))
+
+            if cid in seen_ids:
+                continue
+            seen_ids.add(cid)
 
             block = ContextBlock(
                 chunk_id=cid,
@@ -495,10 +389,12 @@ class RetrievalPipeline:
                 and block.chunk_type == "child"
                 and block.parent_id
                 and block.parent_id not in seen_parent_ids
+                and block.parent_id not in seen_ids
             ):
                 parent_payload = vs.fetch_parent(block.parent_id)
                 if parent_payload:
                     seen_parent_ids.add(block.parent_id)
+                    seen_ids.add(block.parent_id)
                     parent_block = ContextBlock(
                         chunk_id=block.parent_id,
                         chunk_type="parent",
@@ -552,9 +448,7 @@ class RetrievalPipeline:
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
 def _format_context(blocks: List[ContextBlock]) -> str:
-    """
-    Format context blocks into a numbered string ready to paste into a prompt.
-    """
+    """Format context blocks into a numbered string ready to paste into a prompt."""
     if not blocks:
         return "(no context retrieved)"
 
@@ -564,10 +458,16 @@ def _format_context(blocks: List[ContextBlock]) -> str:
             f"[{i}] [{b.chunk_type}] page {b.page}"
             f" — {b.document_group_id} / {b.filename}"
         )
-        score_str = f"score: {b.score:.3f}" if b.score > 0 else "(context parent)"
+        if b.score > 0:
+            score_str = f"score: {b.score:.3f}"
+        elif b.chunk_type == "parent":
+            score_str = "(context parent)"
+        else:
+            score_str = "(same section, page order)"
         parts.append(f"{header}\n{score_str}\n{b.text}\n---")
 
     return "\n\n".join(parts)
+
 
 def _deduplicate_sources(blocks: List[ContextBlock]) -> List[Dict[str, Any]]:
     """Return unique (document_group_id, filename, page) triples."""
@@ -584,25 +484,6 @@ def _deduplicate_sources(blocks: List[ContextBlock]) -> List[Dict[str, Any]]:
                 "classification":    b.classification,
             })
     return sources
-
-
-
-def _build_firebase_url(self, abs_path: str, src_path: str) -> str | None:
-    rel_path = None
-    if abs_path and "/output/" in abs_path:
-        rel_path = "output/" + abs_path.split("/output/")[-1]
-    elif src_path:
-        rel_path = f"output/{src_path}"
-    
-    if not rel_path:
-        return None
-    
-    # URL-encode the path (replace / with %2F)
-    encoded = rel_path.replace("/", "%2F")
-    return (
-        f"https://firebasestorage.googleapis.com/v0/b/"
-        f"{FIREBASE_BUCKET}/o/{encoded}?alt=media"
-    )
 
 
 def _enrich_sources_with_images(sources: List[Dict], blocks: List[ContextBlock]) -> List[Dict]:
@@ -645,10 +526,8 @@ def _enrich_sources_with_images(sources: List[Dict], blocks: List[ContextBlock])
             if page_image_path and fallback_key not in seen_keys[key]:
                 seen_keys[key].add(fallback_key)
                 # page.png lives at output/.../page_N/images/page.png
-                # same structure as other images, just swap the filename
                 if "/output/" in page_image_path:
-                    page_dir = page_image_path.split("/output/")[-1]  # e.g. MANUAL/.../page_1/page.png
-                    # insert images/ before page.png
+                    page_dir = page_image_path.split("/output/")[-1]
                     page_dir = page_dir.replace("/page.png", "/images/page.png")
                     rel_path = "output/" + page_dir
                     encoded = rel_path.replace("/", "%2F")

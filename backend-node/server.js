@@ -217,7 +217,9 @@ function buildMergedPrompt(contextBlocks, question) {
     ? contextBlocks
         .map((b, i) => {
           const header = `[${i + 1}] [${b.chunk_type}] page ${b.page} — ${b.document_group_id} / ${b.filename}`;
-          const scoreStr = b.score > 0 ? `score: ${b.score.toFixed(3)}` : '(context parent)';
+          const scoreStr = b.score > 0
+            ? `score: ${b.score.toFixed(3)}`
+            : (b.chunk_type === 'parent' ? '(context parent)' : '(same section, page order)');
           return `${header}\n${scoreStr}\n${b.text}\n---`;
         })
         .join('\n\n')

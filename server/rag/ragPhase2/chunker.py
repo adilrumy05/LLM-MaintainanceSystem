@@ -293,25 +293,14 @@ class IntelligentChunker:
         Chunk a list of ContentUnits.
 
         Step 1 — Intra-unit segmentation
-            Each unit → ordered list of pure-text / pure-table _Segment objects.
-            Prevents table rows being swallowed into child chunks.
-
-        Step 2 — Tables → fixed single chunks (never split).
-
-        Step 3 — Text segments → semantic parents → fixed-size children.
-
-        Returns
-        -------
-        {
-            "parent_chunks": [...],
-            "child_chunks":  [...],
-            "table_chunks":  [...],
-        }
+        Step 2 — Tables → fixed single chunks (never split)
+        Step 3 — Text segments → semantic parents → fixed-size children
+        Step 4 — Fallback: any page that would otherwise have zero chunks gets one
+                tiny chunk carrying whatever text it has.
         """
         if not content_units:
             return {"parent_chunks": [], "child_chunks": [], "table_chunks": []}
 
-        # Step 1: segment every unit into pure-text / pure-table runs
         all_segments: List[_Segment] = []
         for unit in content_units:
             all_segments.extend(_segment_unit(unit))
@@ -319,18 +308,42 @@ class IntelligentChunker:
         text_segs  = [s for s in all_segments if s.kind == "text"]
         table_segs = [s for s in all_segments if s.kind == "table"]
 
-        # Step 2: tables → single chunks
         table_chunks = [
             c for c in (_make_table_chunk(s) for s in table_segs)
             if c is not None
         ]
 
-        # Step 3: text → semantic parents → fixed children
         parent_chunks, child_chunks = self._parent_child(text_segs)
+
+        # Step 4: fallback for pages with no chunks
+        pages_with_chunks = {c["page"] for c in parent_chunks + child_chunks + table_chunks}
+        fallback_count = 0
+        for unit in content_units:
+            if unit.page in pages_with_chunks:
+                continue
+            text = (unit.text or "").strip()
+            if not text:
+                text = f"[Page {unit.page}]"
+            cid = _chunk_id(text, unit.page, "child")
+            child_chunks.append({
+                "id":   cid,
+                "text": text,
+                "page": unit.page,
+                "metadata": {
+                    **unit.metadata,
+                    "chunk_type":        "child",
+                    "chunk_size":        len(text),
+                    "parent_id":         "",
+                    "chunking_strategy": "page_fallback",
+                },
+            })
+            pages_with_chunks.add(unit.page)
+            fallback_count += 1
 
         logger.info(
             f"Chunking done: {len(parent_chunks)} parents, "
-            f"{len(child_chunks)} children, {len(table_chunks)} tables"
+            f"{len(child_chunks)} children ({fallback_count} page-fallback), "
+            f"{len(table_chunks)} tables"
         )
         return {
             "parent_chunks": parent_chunks,
