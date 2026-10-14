@@ -1,4 +1,4 @@
-import { View, ScrollView, StyleSheet, Text, Platform } from 'react-native';
+import { View, ScrollView, StyleSheet, Text, Image, Platform } from 'react-native';
 import { C } from '../theme';
 import { FEATURES } from './featureFlags';
 
@@ -40,5 +40,19 @@ export const makeMarkdownRules = (tableScrollStyle) => ({
     <ScrollView key={node.key} horizontal nestedScrollEnabled directionalLockEnabled showsHorizontalScrollIndicator style={tableScrollStyle}>
       <View>{children}</View>
     </ScrollView>
+  ),
+  // Injected figures from [[p:NNN]] citations. The library's default image
+  // renderer produces a zero-height element on RN — a bare <Image> with no
+  // intrinsic dimensions and no explicit style measures to 0x0. This rule
+  // gives every figure a fixed height and rounded corners, and turns the alt
+  // text into an accessibility label.
+  image: (node) => (
+    <Image
+      key={node.key}
+      source={{ uri: node.attributes.src }}
+      style={{ width: '100%', height: 220, borderRadius: 8, marginVertical: 10 }}
+      resizeMode="contain"
+      accessibilityLabel={node.attributes.alt || 'Manual figure'}
+    />
   ),
 });

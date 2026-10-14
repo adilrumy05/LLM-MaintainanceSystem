@@ -12,8 +12,60 @@ import { actionLabel } from '../utils/chatActions';
 import { FEATURES } from '../constants/featureFlags';
 import AnimationCard from './AnimationCard';
 import { answerView, answerViews, displayedAnswerText, detailFallbackMessage, answerDetailLabel } from '../utils/responseDetail';
+import { useState } from 'react';
+import { LayoutAnimation, Platform, UIManager } from 'react-native';
 
 const ACTION_ICONS = { retake: 'camera-outline', add_photo: 'add-circle-outline', retry: 'refresh-outline' };
+
+// LayoutAnimation is on by default on iOS but must be opted into on Android.
+// On web it is a no-op, so we simply skip it there.
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// Turns [[p:NNN]] citations into "(NNN)" and, when the cited page has a
+// figure in item.sources, injects that figure as markdown right after the
+// citation. Lives here rather than in a shared util because BotMessage is the
+// only consumer — the citation format and the source image shape are one
+// contract, and splitting them across files is how they drift.
+//
+// Matching is by page number alone because that is all the citation text
+// carries. Two documents never share a message's sources array, so within a
+// single answer the page number is unambiguous.
+const CITE_RE = /\[\[p:\s*(\d{1,4})\]\]/g;
+
+function renderCitationsWithImages(text, sources) {
+  if (typeof text !== 'string' || !text) return text;
+  CITE_RE.lastIndex = 0;
+  if (!CITE_RE.test(text)) return text;
+  CITE_RE.lastIndex = 0;   // .test() advances lastIndex on a /g regex
+
+  // page -> first image on that page. Later images stay in the sources panel;
+  // only the first is drawn inline, to keep the paragraph readable.
+  const imageByPage = new Map();
+  for (const src of sources || []) {
+    if (src?.page == null || !src.images?.length) continue;
+    if (imageByPage.has(src.page)) continue;
+    const img = src.images.find(i => i.url);
+    if (img) imageByPage.set(src.page, img);
+  }
+
+  const drawn = new Set();   // one inline figure per page per answer
+  return text.replace(CITE_RE, (_match, pageStr) => {
+    const page = Number(pageStr);
+    const visible = `(${page})`;
+    if (drawn.has(page)) return visible;
+    const img = imageByPage.get(page);
+    if (!img) return visible;
+    drawn.add(page);
+
+    const alt = String(img.caption || `Page ${page}`)
+      .replace(/[\[\]]/g, '')
+      .slice(0, 120);
+
+    return `${visible}\n\n![${alt}](${img.url})\n\n`;
+  });
+}
 
 // Replies that need the technician ("which model?", retake, retry) carry
 // `actions`. They must stay visible: without them a photo that needs model
@@ -25,6 +77,12 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
   const detailLabel = answerDetailLabel(item, FEATURES.EFFORT_LEVELS);
   const procedureState = item.procedureState || { currentStep: 0, completedSteps: [], overviewOpen: false };
   const markdownRules  = makeMarkdownRules(s.tableScroll);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+
+  const toggleSources = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setSourcesOpen(o => !o);
+  };
 
   const setViewMode = (nextView) =>
     updateMessage(item.id, m => ({ ...m, procedureView: nextView }));
@@ -69,7 +127,12 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
             onChange={setProcedureState}
             onTimerComplete={onTimerComplete}
           />
-        : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>{viewMode === 'full' ? item.fullText : item.text}</Markdown>
+        : <Markdown style={markdownStyles} rules={markdownRules} mergeStyle>
+            {renderCitationsWithImages(
+              viewMode === 'full' ? item.fullText : item.text,
+              item.sources,
+            )}
+          </Markdown>
       }
 
       {/* Full Text has no step cards to host a countdown, so the timers are
@@ -88,11 +151,31 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
 
       {item.sources?.length > 0 && (
         <View style={s.sourcesBox}>
-          <View style={s.sourcesLabelRow}>
-            <Ionicons name="attach-outline" size={10} color="#7c3aed" />
-            <Text style={s.sourcesLabel}> SOURCES</Text>
-          </View>
-          {item.sources.map((src, i) => <SourceItem key={i} source={src} />)}
+          <TouchableOpacity
+            style={s.sourcesHeader}
+            onPress={toggleSources}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: sourcesOpen }}
+            accessibilityLabel={
+              `${sourcesOpen ? 'Hide' : 'Show'} ${item.sources.length} manual source` +
+              (item.sources.length === 1 ? '' : 's')
+            }
+          >
+            <Ionicons name="attach-outline" size={11} color="#7c3aed" />
+            <Text style={s.sourcesLabel}>SOURCES ({item.sources.length})</Text>
+            <Ionicons
+              name={sourcesOpen ? 'chevron-up' : 'chevron-down'}
+              size={15}
+              color={C.textSub}
+            />
+          </TouchableOpacity>
+
+          {sourcesOpen && (
+            <View style={s.sourcesBody}>
+              {item.sources.map((src, i) => <SourceItem key={i} source={src} />)}
+            </View>
+          )}
         </View>
       )}
 
@@ -143,8 +226,9 @@ const s = StyleSheet.create({
   bubbleBot:        { backgroundColor: C.card, borderWidth: 1, borderColor: C.cardBorder, borderRadius: 18, borderBottomLeftRadius: 4, padding: 12, maxWidth: '88%' },
   timersBox:        { marginTop: 4 },
   sourcesBox:       { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: '#ddd6fe' },
-  sourcesLabelRow:  { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  sourcesLabel:     { fontSize: 9, fontWeight: '700', color: '#7c3aed', letterSpacing: 1 },
+  sourcesHeader:    { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 32, paddingVertical: 4 },
+  sourcesLabel:     { flex: 1, fontSize: 9, fontWeight: '700', color: '#7c3aed', letterSpacing: 1 },
+  sourcesBody:      { marginTop: 4 },
   // A manual answer takes the full bubble width. Left to size itself, a bubble
   // holding only a bulleted list collapses to a narrow column.
   bubbleBotWide:    { width: '88%' },

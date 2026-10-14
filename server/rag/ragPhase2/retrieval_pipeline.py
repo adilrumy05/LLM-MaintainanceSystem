@@ -488,56 +488,64 @@ def _deduplicate_sources(blocks: List[ContextBlock]) -> List[Dict[str, Any]]:
 
 def _enrich_sources_with_images(sources: List[Dict], blocks: List[ContextBlock]) -> List[Dict]:
     from collections import defaultdict
-    key_to_images = defaultdict(list)
-    seen_keys = defaultdict(set)
 
-    def build_url(abs_path, src_path):
-        if abs_path and "/output/" in abs_path:
-            rel_path = "output/" + abs_path.split("/output/")[-1]
-        elif src_path:
-            rel_path = f"output/{src_path}"
-        else:
+    key_to_images = defaultdict(list)
+    seen_urls     = defaultdict(set)
+
+    def build_url(abs_path: str, src_path: str) -> Optional[str]:
+        """Rebuild a Firebase URL from a path. Only used when 'url' is absent."""
+        rel_path = None
+        for p in (abs_path, src_path):
+            if not p:
+                continue
+            p = p.replace("\\", "/")
+            if p.startswith("output/"):
+                rel_path = p
+                break
+            if "/output/" in p:
+                rel_path = "output/" + p.split("/output/")[-1]
+                break
+        if not rel_path:
             return None
         encoded = rel_path.replace("/", "%2F")
-        return f"https://firebasestorage.googleapis.com/v0/b/{FIREBASE_BUCKET}/o/{encoded}?alt=media"
+        return (
+            f"https://firebasestorage.googleapis.com/v0/b/"
+            f"{FIREBASE_BUCKET}/o/{encoded}?alt=media"
+        )
 
     for b in blocks:
         key = (b.document_group_id, b.filename, b.page)
-        images = b.metadata.get("images", [])
+        images = b.metadata.get("images") or []
 
         if images:
-            # Scenario 1: images list has entries — use them
             for img in images:
-                src_path = img.get("src_path", "")
-                abs_path = img.get("abs_path", "")
-                if src_path in seen_keys[key]:
+                # Prefer the ingest-provided URL. Rebuild only as a fallback.
+                url = img.get("url") or build_url(
+                    img.get("abs_path", ""), img.get("src_path", "")
+                )
+                if not url:
+                    logger.warning(
+                        "image entry has no usable url on "
+                        f"{b.document_group_id}/{b.filename} p{b.page}: {img!r}"
+                    )
                     continue
-                seen_keys[key].add(src_path)
-                url = build_url(abs_path, src_path)
+                if url in seen_urls[key]:
+                    continue
+                seen_urls[key].add(url)
+                key_to_images[key].append({
+                    "caption": img.get("caption", ""),
+                    "url":     url,
+                })
+        else:
+            page_image_path = b.metadata.get("page_image_path", "")
+            if page_image_path and "__page_fallback__" not in seen_urls[key]:
+                seen_urls[key].add("__page_fallback__")
+                url = build_url(page_image_path, "")
                 if url:
                     key_to_images[key].append({
-                        "caption": img.get("caption", ""),
-                        "url": url,
-                    })
-        else:
-            # Scenario 2: images empty — try page_image_path as fallback
-            page_image_path = b.metadata.get("page_image_path", "")
-            fallback_key = "__page_fallback__"
-            if page_image_path and fallback_key not in seen_keys[key]:
-                seen_keys[key].add(fallback_key)
-                # page.png lives at output/.../page_N/images/page.png
-                if "/output/" in page_image_path:
-                    page_dir = page_image_path.split("/output/")[-1]
-                    page_dir = page_dir.replace("/page.png", "/images/page.png")
-                    rel_path = "output/" + page_dir
-                    encoded = rel_path.replace("/", "%2F")
-                    url = f"https://firebasestorage.googleapis.com/v0/b/{FIREBASE_BUCKET}/o/{encoded}?alt=media"
-                    key_to_images[key].append({
                         "caption": f"Page {b.page}",
-                        "url": url,
+                        "url":     url,
                     })
-                    print(f"DEBUG: page.png fallback -> {url}")
-            # Scenario 3: both empty — nothing added
 
     for src in sources:
         key = (src["document_group_id"], src["filename"], src["page"])

@@ -116,6 +116,26 @@ Test to apply: is the technician being told to stop and wait right now? Marker. 
 If a range is given, use the LONGER value and say so in the label ("Pressure hold, 10 min max").
 Use whole seconds. Never more than 3 markers in one response.`;
 
+
+// Page citations must be distinguishable from every other parenthesised
+// number in the source material. Manuals are full of "(122)" that means
+// torque, ohms, quantity, or a drawing reference. A wrapper makes the
+// citation machine-readable on the client, which injects the page's figure
+// inline, and human-readable after the client strips the wrapper back to
+// the parenthetical form the technician already expects.
+const CITATION_INSTRUCTION = `
+
+PAGE CITATIONS:
+When you reference a specific manual page, write the citation as [[p:NNN]] —
+for example [[p:122]]. Do not write (122), page 122, or p. 122. Do not add
+punctuation or spacing inside the tag. Do not put more than one page number
+in a single tag; write [[p:122]] [[p:123]] instead.
+
+The tag renders as "(122)" to the user, so it belongs in the same position a
+parenthetical would: immediately after the sentence or clause that references
+the page.
+`;
+
 const DEFAULT_SYSTEM_PROMPT = `You are a maintenance assistant. Give a clear, safe, step-by-step response to technical inspection and maintenance tasks. Base all guidance strictly on the retrieved manual content provided.`;
 
 // Timer markers must never reach a step card. A marker copied into a title or
@@ -227,7 +247,8 @@ function buildMergedPrompt(contextBlocks, question) {
 
   return (
     `You are a helpful technical assistant. Answer the question using ONLY the context provided below. ` +
-    `If the context does not contain enough information, say so. Cite page numbers where relevant.\n\n` +
+    `If the context does not contain enough information, say so. ` +
+    `Cite manual pages as [[p:NNN]] — never as (NNN) or "page NNN".\n\n` +
     `=== CONTEXT ===\n${contextStr}\n` +
     `=== QUESTION ===\n${question}\n\n=== ANSWER ===`
   );
@@ -510,7 +531,7 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
       });
     }
 
-    const systemPrompt = (ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT) + TIMER_INSTRUCTION + quoteRules;
+    const systemPrompt = (ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT) + TIMER_INSTRUCTION + CITATION_INSTRUCTION + quoteRules;
     // Standard adds nothing, so its request is what it was before response
     // detail existed. Brief is written separately, after the loop (below).
     const loopSystemPrompt = systemPrompt + detailRules(detailRequested === 'detailed' ? 'detailed' : 'standard');
@@ -592,6 +613,30 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
     }
 
     const retrievalData = { context_blocks: merged.context_blocks, sources: merged.sources };
+
+    // ── Mirror image-chunk URLs into their sources ────────────────────────────────
+    // A citation that came back as an image chunk carries its URL in context_blocks,
+    // never in sources[].images[]. Without this, an image-chunk source reaches the
+    // app with no picture and SourceItem renders a blank. Matching on
+    // (document_group_id, filename, page) guarantees the image and the page label
+    // shown next to it describe the same page.
+    {
+      const urlByKey = new Map();
+      for (const b of retrievalData.context_blocks || []) {
+        if (b.chunk_type === 'image' && b.image_url) {
+          const key = `${b.document_group_id}|${b.filename}|${b.page}`;
+          if (!urlByKey.has(key)) urlByKey.set(key, b.image_url);
+        }
+      }
+      for (const src of retrievalData.sources || []) {
+        const url = urlByKey.get(`${src.document_group_id}|${src.filename}|${src.page}`);
+        if (!url) continue;
+        src.images = src.images || [];
+        if (!src.images.some((i) => i.url === url)) {
+          src.images.push({ url, caption: '', description: '' });
+        }
+      }
+    }
 
     // `text` is what the technician sees, so the audit record matches the
     // screen. For a Brief answer, `fullText` is the Standard answer behind it:
