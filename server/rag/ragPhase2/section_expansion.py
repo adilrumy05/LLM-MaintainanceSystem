@@ -242,12 +242,33 @@ def embed_heading_prefix(page_headings: Optional[List[str]], section: Optional[s
 
 
 # ── query side ────────────────────────────────────────────────────────────────
-def merge_with_type_floor(hits: List[Dict[str, Any]], k: int, image_floor: int = IMAGE_FLOOR):
-    hits = sorted(hits, key=lambda h: h["score"], reverse=True)
-    images = [h for h in hits if h["payload"].get("chunk_type") == "image"]
-    others = [h for h in hits if h["payload"].get("chunk_type") != "image"]
+def merge_with_type_floor(
+    hits: List[Dict[str, Any]],
+    k: int,
+    image_floor: int = IMAGE_FLOOR,
+):
+    # Stable ordering for equal scores.
+    hits = sorted(
+        hits,
+        key=lambda h: (h["score"], str(h["id"])),
+        reverse=True,
+    )
+
+    images = [
+        h for h in hits
+        if h["payload"].get("chunk_type") == "image"
+    ]
+    others = [
+        h for h in hits
+        if h["payload"].get("chunk_type") != "image"
+    ]
+
     chosen = others[:k] + images[:image_floor]
-    chosen.sort(key=lambda h: h["score"], reverse=True)
+
+    chosen.sort(
+        key=lambda h: (h["score"], str(h["id"])),
+        reverse=True,
+    )
     return chosen
 
 
@@ -317,27 +338,47 @@ def _catalog(vs, group, filename) -> dict:
         _catalog_cache[ck] = (time.time(), cat)
     return cat
 
-
 def _match_headings(question: str, cat: dict, hit_keys: set):
-    """Headings whose wording overlaps the question. Rare words (h19, 'controller') count more."""
+    """Rank headings by wording, with a small bonus for top-hit sections."""
     q = _words(question)
+
+    # Interpret access/reach/get-to questions as removal intent.
+    if re.search(
+        r"\b(get to|access|reach|take (?:out|off)|open up|replace|change|"
+        r"dismantl\w*|disassembl\w*|detach)\b",
+        question.lower(),
+    ):
+        q.add(_stem("remove"))
+
     if not q or not cat["heads"]:
         return []
+
     n = cat["n"]
     thresh = 0.9 * math.log(n)
     scored = []
+
     for h, info in cat["heads"].items():
         shared = q & info["words"]
         if shared:
             score = sum(math.log(n / cat["df"][w]) for w in shared)
             if score >= thresh:
                 scored.append((score, h, info))
+
     if not scored:
         return []
+
     best = max(s[0] for s in scored)
     keep = [s for s in scored if s[0] >= 0.85 * best]
-    # prefer sections the top hit is in, then better wording match, then the more specific (deeper) section
-    keep.sort(key=lambda s: (s[2]["key"] in hit_keys, s[0] + 0.3 * s[2]["key"].count(".")), reverse=True)
+
+    # Wording matters most. Depth and top-hit membership are small bonuses.
+    keep.sort(
+        key=lambda s: (
+            s[0]
+            + 0.3 * s[2]["key"].count(".")
+            + (0.2 if s[2]["key"] in hit_keys else 0)
+        ),
+        reverse=True,
+    )
     return keep
 
 
@@ -374,53 +415,138 @@ def _neighbor_points(vs, group, filename, page):
     return _scroll_all(vs, flt, True)
 
 
-def expand_sections(vs, hits: List[Dict[str, Any]], question: str,
-                    document_group_id: Optional[str] = None, filename: Optional[str] = None):
+def expand_sections(
+    vs,
+    hits: List[Dict[str, Any]],
+    question: str,
+    document_group_id: Optional[str] = None,
+    filename: Optional[str] = None,
+):
     if not hits:
         return hits
+
     docs = []
-    for h in hits[:3]:                          # documents the best hits come from
+    for h in hits[:3]:
         pl = h["payload"]
-        d = (document_group_id or pl.get("document_group_id"), filename or pl.get("filename") or None)
+        d = (
+            document_group_id or pl.get("document_group_id"),
+            filename or pl.get("filename") or None,
+        )
         if d[0] and d not in docs:
             docs.append(d)
+
     docs = docs[:SECTION_MAX_DOCS]
 
     have = {h["id"] for h in hits}
     extra, chars = [], 0
+
     for di, (grp, fn) in enumerate(docs):
-        top = [h for h in hits if h["payload"].get("document_group_id") == grp
-               and (not fn or h["payload"].get("filename") == fn)][:SECTION_SEED_HITS]
-        hit_keys = {k for h in top for k in h["payload"].get("toc_parents") or []}
+        top = [
+            h for h in hits
+            if h["payload"].get("document_group_id") == grp
+            and (not fn or h["payload"].get("filename") == fn)
+        ][:SECTION_SEED_HITS]
+
+        hit_keys = {
+            k
+            for h in top
+            for k in (h["payload"].get("toc_parents") or [])
+        }
+
         seeds: Dict[str, set] = {}
-        for _, _, info in _match_headings(question, _catalog(vs, grp, fn), hit_keys):
+
+        # Seed sections matched by heading wording.
+        for _, _, info in _match_headings(
+            question, _catalog(vs, grp, fn), hit_keys
+        ):
             seeds.setdefault(info["key"], set()).update(info["pages"])
+
+        # Also seed sections containing the top retrieval hits.
         for h in top:
             pg = h["payload"].get("page")
             for k in h["payload"].get("toc_parents") or []:
                 seeds.setdefault(k, set())
                 if isinstance(pg, int):
                     seeds[k].add(pg)
-        keys = list(seeds)[:SECTION_MAX_PARENTS]
-        print(f"[SECTION] doc={grp}/{fn or '*'} sections={keys}"
-              + ("" if keys else f"  (no section tags; neighbour pages +/-{SECTION_NEIGHBOR_PAGES})"))
 
-        batches = [(r, _section_points(vs, grp, fn, k, seeds[k])) for r, k in enumerate(keys)]
-        if not keys and top and SECTION_NEIGHBOR_PAGES > 0 and isinstance(top[0]["payload"].get("page"), int):
-            batches.append((0, _neighbor_points(vs, grp, fn, top[0]["payload"]["page"])))
+        # Choose sections only after collecting all seeds.
+        keys = list(seeds)[:SECTION_MAX_PARENTS]
+
+        # Include parents of selected deep sections.
+        for k in list(keys):
+            if k.count(".") >= 3:
+                parent = k.rsplit(".", 1)[0]
+
+                if parent not in keys:
+                    keys.append(parent)
+
+                seeds.setdefault(parent, set()).update(seeds[k])
+
+        print(
+            f"[SECTION] doc={grp}/{fn or '*'} sections={keys}"
+            + (
+                ""
+                if keys
+                else f"  (no section tags; neighbour pages +/-{SECTION_NEIGHBOR_PAGES})"
+            )
+        )
+
+        batches = [
+            (rank, _section_points(vs, grp, fn, k, seeds[k]))
+            for rank, k in enumerate(keys)
+        ]
+
+        if (
+            not keys
+            and top
+            and SECTION_NEIGHBOR_PAGES > 0
+            and isinstance(top[0]["payload"].get("page"), int)
+        ):
+            batches.append(
+                (
+                    0,
+                    _neighbor_points(
+                        vs, grp, fn, top[0]["payload"]["page"]
+                    ),
+                )
+            )
 
         for rank, pts in batches:
             for p in pts:
                 pl = p.payload or {}
                 size = len(pl.get("text", "") or "")
+
                 if p.id in have or chars + size > SECTION_MAX_CHARS:
                     continue
+
                 have.add(p.id)
                 chars += size
-                order = {"parent": 0, "table": 1}.get(pl.get("chunk_type"), 2)
-                extra.append((di, rank, pl.get("page", 0), order,
-                              {"id": p.id, "score": 0.0, "payload": pl}))
 
-    extra.sort(key=lambda e: e[:4])              # document, section priority, page order
-    print(f"[SECTION] added {len(extra)} chunks, pages {sorted({e[2] for e in extra})}, {chars:,} chars")
+                order = {
+                    "parent": 0,
+                    "table": 1,
+                }.get(pl.get("chunk_type"), 2)
+
+                extra.append(
+                    (
+                        di,
+                        rank,
+                        pl.get("page", 0),
+                        order,
+                        {
+                            "id": p.id,
+                            "score": 0.0,
+                            "payload": pl,
+                        },
+                    )
+                )
+
+    extra.sort(key=lambda e: e[:4])
+
+    print(
+        f"[SECTION] added {len(extra)} chunks, "
+        f"pages {sorted({e[2] for e in extra})}, "
+        f"{chars:,} chars"
+    )
+
     return hits + [e[4] for e in extra]
