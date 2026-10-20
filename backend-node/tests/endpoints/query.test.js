@@ -176,3 +176,37 @@ describe('POST /api/query', () => {
     expect(res.body.alert).toBeNull();
   });
 });
+
+test.each([false, true])('matches manual figures while preserving timer extraction (timer: %s)', async (withTimer) => {
+  process.env.OPENAI_API_KEY = 'test-key';
+  let extractionContent;
+  global.fetch.mockImplementation(async (url, options) => {
+    if (url.includes('/filters')) return { ok: true, json: async () => ({}) };
+    if (url.includes('/retrieve')) return { ok: true, json: async () => ({
+      prompt: 'Insert the sleeve and seal it.',
+      context_blocks: [{ chunk_type: 'text', page: 50, document_group_id: 'aircon', text: 'Install the sleeve and seal the wall opening.' }],
+      sources: [{ document_group_id: 'aircon', page: 50, filename: 'manual', images: [{ url: 'https://example.com/sleeve.jpg' }] }],
+    }) };
+    const body = JSON.parse(options.body);
+    if (body.response_format?.json_schema?.name === 'step_extraction') {
+      extractionContent = body.messages[1].content;
+      const label = JSON.parse(extractionContent[1].text);
+      return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
+        is_procedural: true, steps: [{ title: 'Seal the sleeve', description: withTimer ? 'Seal with putty. [[TIMER:60|Seal wait]]' : 'Seal with putty.', timer_seconds: withTimer ? 60 : 0, timer_label: withTimer ? 'Seal wait' : '', image_id: label.image_id, image_match_reason: 'The cross-section shows the seal around the sleeve.', warning_level: 'none', tools_required: [], photo_required: true, photo_instruction: 'Photograph the finished seal.' }, { title: 'Inspect the bushing', description: 'Inspect the fitted bushing.', image_id: label.image_id, image_match_reason: 'The cross-section shows the bushing fitted to the sleeve.', warning_level: 'none', tools_required: [], photo_required: false, photo_instruction: '' }],
+      }) } }] }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: withTimer ? '1. Seal with putty. [[TIMER:60|Seal wait]] 2. Inspect the bushing.' : '1. Insert the sleeve. 2. Seal with putty.' } }] }) };
+  });
+  const res = await request(app).post('/api/query').send({ query: 'How do I install a piping sleeve?', role: 'beginner' });
+  expect(res.status).toBe(200);
+  expect(extractionContent[0].text.includes('[[TIMER:60|Seal wait]]')).toBe(withTimer);
+  expect(res.body.steps[0].timer_seconds).toBe(withTimer ? 60 : 0);
+  expect(res.body.steps[0].timer_label).toBe(withTimer ? 'Seal wait' : '');
+  expect(res.body.steps[0].description).not.toContain('[[TIMER:');
+  expect(res.body.steps[1].timer_seconds).toBe(0);
+  expect(extractionContent[2].image_url.url).toBe('https://example.com/sleeve.jpg');
+  expect(JSON.parse(extractionContent[1].text).page_context).toContain('seal the wall opening');
+  expect(res.body.steps[0].image_url).toBe('https://example.com/sleeve.jpg');
+  expect(res.body.steps[0].photo_required).toBe(true);
+  expect(res.body.steps[1].image_url).toBe('https://example.com/sleeve.jpg');
+});
