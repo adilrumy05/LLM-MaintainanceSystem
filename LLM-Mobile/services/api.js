@@ -51,6 +51,19 @@ const getApiUrl = () => {
     return `http://${expoHost}:8000/api`;
   }
 
+  // hostUri only exists while a dev server is serving the app, so reaching this
+  // point in a STANDALONE build means the build was made without
+  // EXPO_PUBLIC_API_URL. The app then points at localhost — which on a phone is
+  // the phone itself — and every request fails with nothing that explains why.
+  // Loud, because a build like this is a dud and should be caught before it
+  // reaches a tester rather than after.
+  if (Constants.executionEnvironment !== 'storeClient') {
+    console.error(
+      '[API] No EXPO_PUBLIC_API_URL in this build and no dev server to fall back on. ' +
+      'Every request will fail. Set env.EXPO_PUBLIC_API_URL on the build profile in eas.json.'
+    );
+  }
+
   console.warn('[API] Could not detect development PC IP. Using localhost.');
   return 'http://localhost:8000/api';
 };
