@@ -1,5 +1,5 @@
 import { Tabs, usePathname } from 'expo-router';
-import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import { createContext, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,6 +16,7 @@ export const useUser     = () => useContext(UserContext);
 /* eslint-enable react-refresh/only-export-components */
 
 export default function Layout() {
+  const { width } = useWindowDimensions();
   const [user, setUser]   = useState(null);
   const [loading, setLoading] = useState(true);
   const pathname              = usePathname();
@@ -113,19 +114,27 @@ export default function Layout() {
   );
 
   if (Platform.OS === 'web') {
+    const isPhone = width < 768;
+
+    if (isPhone) {
+      // Phone browser: full-screen, feels like the native app
+      return (
+        <UserContext.Provider value={{ user, setUser, role }}>
+          <View style={web.mobileFull}>
+            {loading ? spinner : tabNav}
+            <Toast />
+          </View>
+        </UserContext.Provider>
+      );
+    }
+
+    // Desktop browser: centered column
     return (
       <UserContext.Provider value={{ user, setUser, role }}>
-        <View style={web.container}>
-          <style>{`* { scrollbar-width: none !important; } *::-webkit-scrollbar { display: none !important; }`}</style>
-          <View style={web.device}>
-            <View style={web.btnLeft} />
-            <View style={web.btnLeft2} />
-            <View style={web.btnLeft3} />
-            <View style={web.btnRight} />
-            <View style={web.screen}>
-              {loading ? spinner : tabNav}
-              <Toast />
-            </View>
+        <View style={web.desktopBackdrop}>
+          <View style={web.desktopColumn}>
+            {loading ? spinner : tabNav}
+            <Toast />
           </View>
         </View>
       </UserContext.Provider>
@@ -142,37 +151,32 @@ export default function Layout() {
 }
 
 const web = StyleSheet.create({
-  container: {
+  mobileFull: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: C.bg,
+  },
+  desktopBackdrop: {
     flex: 1,
-    backgroundColor: '#d1d5db',
+    backgroundColor: '#e5e7eb',
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: '100vh',
-    overflow: 'hidden',
   },
-  device: {
-    width: 360,
-    height: '88vh',
-    maxHeight: 760,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 44,
-    padding: 8,
-    paddingBottom: 0,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: 0.5,
-    shadowRadius: 40,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  screen: {
-    flex: 1,
+  desktopColumn: {
+    width: '100%',
+    maxWidth: 480,
+    height: '100vh',
+    maxHeight: 900,
     backgroundColor: C.bg,
-    borderRadius: 38,
+    borderRadius: 16,
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
   },
-  btnLeft:  { position: 'absolute', left: -10, top: 120, width: 3, height: 30,  backgroundColor: '#333', borderRadius: 2 },
-  btnLeft2: { position: 'absolute', left: -10, top: 165, width: 3, height: 55,  backgroundColor: '#333', borderRadius: 2 },
-  btnLeft3: { position: 'absolute', left: -10, top: 232, width: 3, height: 55,  backgroundColor: '#333', borderRadius: 2 },
-  btnRight: { position: 'absolute', right: -10, top: 165, width: 3, height: 70, backgroundColor: '#333', borderRadius: 2 },
 });
