@@ -1,7 +1,7 @@
 import { View } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import { markdownStyles, makeMarkdownRules } from '../constants/markdownConfig';
-import ProcedureViewer from './ProcedureViewer';
+import ChecklistViewer from './ChecklistViewer';
 import SourceItem from './SourceItem';
 import ProcedureTimer from './ProcedureTimer';
 import { StyleSheet } from 'react-native';
@@ -121,7 +121,7 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
       )}
 
       {hasSteps && viewMode === 'procedure'
-        ? <ProcedureViewer
+        ? <ChecklistViewer
             steps={item.steps}
             state={procedureState}
             onChange={setProcedureState}

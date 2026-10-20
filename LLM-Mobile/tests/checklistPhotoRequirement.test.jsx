@@ -28,9 +28,10 @@ test('required step stays incomplete after cancellation, then completes after ne
 }, 15000);
 
 
-test('overview cannot skip an unfinished photo step', async () => {
+test('overview can navigate past an unfinished photo step', async () => {
   const ui = await render(<Harness />);
   await fireEvent.press(ui.getByText('View all steps'));
   await fireEvent.press(ui.getByText('Finish'));
-  expect(ui.getByText('Step 1 of 2')).toBeTruthy();
+  expect(ui.getByText('Step 2 of 2')).toBeTruthy();
+  expect(ui.getByText('0 of 2 completed')).toBeTruthy();
 });

@@ -20,8 +20,9 @@ test('APP-A1-2 Standard keeps opening on the guided procedure', () => {
   expect(textViewLabel({ ...message, responseDetail: 'standard' })).toBe('Full');
 });
 
-test('APP-A1-3 Detailed opens on the answer but respects a view the user chose', () => {
-  expect(answerView({ ...message, responseDetail: 'detailed' })).toBe('text');
+test('APP-A1-3 Detailed opens on the checklist but respects a view the user chose', () => {
+  expect(answerView({ ...message, responseDetail: 'detailed' })).toBe('procedure');
+  expect(answerView({ ...message, responseDetail: 'detailed', procedureView: 'text' })).toBe('text');
   expect(answerView({ ...message, responseDetail: 'detailed', procedureView: 'procedure' })).toBe('procedure');
 });
 
@@ -51,10 +52,10 @@ test('APP-A1-7 copy and selection both use the answer on screen', () => {
   expect(answerForClipboard(message)).toBe('Short answer.');
 });
 
-test('APP-A1-8 selecting in the procedure view uses the current step', () => {
+test('APP-A1-8 selecting in the checklist includes all visible steps', () => {
   const selected = { ...message, procedureView: 'procedure', procedureState: { currentStep: 1 } };
   expect(displayedAnswerText(selected)).toContain('Second description.');
-  expect(displayedAnswerText(selected)).not.toContain('First description.');
+  expect(displayedAnswerText(selected)).toContain('First description.');
   expect(displayedAnswerText({ ...selected, procedureState: { currentStep: 1, overviewOpen: true } })).toContain('First step');
 });
 

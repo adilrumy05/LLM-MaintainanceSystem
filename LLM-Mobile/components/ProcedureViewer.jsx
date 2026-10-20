@@ -6,7 +6,7 @@ import { WARNING_COLORS } from '../constants/warningColors';
 import { capturePhotos } from '../services/photo';
 import ProcedureTimer from './ProcedureTimer';
 
-export default function ProcedureViewer({ steps, state, onChange, onTimerComplete }) {
+export default function ProcedureViewer({ steps, state, onChange, onTimerComplete, embedded = false }) {
   const safeState = state || { currentStep: 0, completedSteps: [], overviewOpen: false };
   const current = Math.min(Math.max(safeState.currentStep || 0, 0), Math.max(steps.length - 1, 0));
   const completedSteps = Array.isArray(safeState.completedSteps) ? safeState.completedSteps : [];
@@ -86,18 +86,12 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
 
   const goToStep = (index) => {
     if (capturing) return;
-    const unfinished = steps.findIndex((candidate, candidateIndex) =>
-      (candidate.photoRequired ?? candidate.photo_required) === true &&
-      !completedSteps.includes(candidateIndex));
-    if (unfinished >= 0 && index > unfinished) {
-      Alert.alert('Photo required', `Complete step ${unfinished + 1} and take its required photo before continuing.`);
-      return;
-    }
     patchState({ currentStep: index, overviewOpen: false });
   };
 
   return (
     <View style={s.stepViewer}>
+      {!embedded && <>
       <View style={s.procedureTopRow}>
         <View>
           <Text style={s.procedureEyebrow}>GUIDED PROCEDURE</Text>
@@ -149,6 +143,7 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
         )}
       </View>
 
+      </>}
       <View style={[s.stepCard, { borderColor: warn.border }]}>
         {warn.icon && (
           <View
@@ -176,7 +171,62 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
           </View>
         )}
 
-        <Text style={s.stepTitle}>{step.title}</Text>
+        <TouchableOpacity
+          style={[
+            s.stepCompleteAction,
+            embedded && s.checklistAction,
+            currentCompleted && s.stepCompleteActionChecked,
+            photoBlocksCompletion && s.stepCompleteActionDisabled,
+          ]}
+          onPress={toggleCurrentStep}
+          accessibilityRole="checkbox"
+          accessibilityLabel={step.title}
+          accessibilityState={{ checked: currentCompleted, disabled: photoBlocksCompletion || capturing }}
+          disabled={photoBlocksCompletion || capturing}
+          activeOpacity={0.8}
+        >
+          <View
+            style={[
+              s.stepCheckbox,
+              currentCompleted && s.stepCheckboxChecked,
+            ]}
+          >
+            {currentCompleted && (
+              <Ionicons
+                name="checkmark"
+                size={15}
+                color="#fff"
+              />
+            )}
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <Text
+              style={[
+                s.stepCompleteActionTitle,
+                embedded && s.checklistTitle,
+                currentCompleted &&
+                  s.stepCompleteActionTitleChecked,
+              ]}
+            >
+              {embedded ? step.title : currentCompleted
+                ? 'Step completed'
+                : step.warningLevel === 'critical'
+                  ? 'I confirm this critical step is complete'
+                  : 'Mark this step as complete'}
+            </Text>
+
+            {!currentCompleted && (!embedded || photoBlocksCompletion) && (
+              <Text style={s.stepCompleteActionSub}>
+                {photoBlocksCompletion
+                  ? 'Take the required photo first, then confirm.'
+                  : 'Confirm after you have performed this instruction.'}
+              </Text>
+            )}
+          </View>
+        </TouchableOpacity>
+
+        {!embedded && <Text style={s.stepTitle}>{step.title}</Text>}
 
         {step.imageUrl && (
           <Image
@@ -288,57 +338,9 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
           </View>
         )}
 
-        <TouchableOpacity
-          style={[
-            s.stepCompleteAction,
-            currentCompleted && s.stepCompleteActionChecked,
-            photoBlocksCompletion && s.stepCompleteActionDisabled,
-          ]}
-          onPress={toggleCurrentStep}
-          disabled={photoBlocksCompletion || capturing}
-          activeOpacity={0.8}
-        >
-          <View
-            style={[
-              s.stepCheckbox,
-              currentCompleted && s.stepCheckboxChecked,
-            ]}
-          >
-            {currentCompleted && (
-              <Ionicons
-                name="checkmark"
-                size={15}
-                color="#fff"
-              />
-            )}
-          </View>
-
-          <View style={{ flex: 1 }}>
-            <Text
-              style={[
-                s.stepCompleteActionTitle,
-                currentCompleted &&
-                  s.stepCompleteActionTitleChecked,
-              ]}
-            >
-              {currentCompleted
-                ? 'Step completed'
-                : step.warningLevel === 'critical'
-                  ? 'I confirm this critical step is complete'
-                  : 'Mark this step as complete'}
-            </Text>
-
-            {!currentCompleted && (
-              <Text style={s.stepCompleteActionSub}>
-                {photoBlocksCompletion
-                  ? 'Take the required photo first, then confirm.'
-                  : 'Confirm after you have performed this instruction.'}
-              </Text>
-            )}
-          </View>
-        </TouchableOpacity>
       </View>
 
+      {!embedded && <>
       <View style={s.stepNavRow}>
         <TouchableOpacity
           style={[
@@ -371,18 +373,18 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
         <TouchableOpacity
           style={[
             s.stepNavBtn,
-            (!currentCompleted || isLast) &&
+            isLast &&
               s.stepNavBtnDisabled,
           ]}
           onPress={() =>
             goToStep(Math.min(steps.length - 1, current + 1))
           }
-          disabled={!currentCompleted || isLast || capturing}
+          disabled={isLast || capturing}
         >
           <Text
             style={[
               s.stepNavText,
-              (!currentCompleted || isLast) && {
+              isLast && {
                 color: C.textMuted,
               },
             ]}
@@ -395,9 +397,7 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
               name="chevron-forward-outline"
               size={16}
               color={
-                !currentCompleted
-                  ? C.textMuted
-                  : C.primary
+                isLast ? C.textMuted : C.primary
               }
             />
           )}
@@ -413,9 +413,7 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
           />
 
           <Text style={s.nextHintText}>
-            {photoBlocksCompletion
-              ? 'Take the required photo and complete the step to continue.'
-              : 'Complete the current step to continue.'}
+            Continue at your own pace. Unchecked steps stay incomplete.
           </Text>
         </View>
       )}
@@ -529,6 +527,7 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
           })}
         </View>
       )}
+      </>}
     </View>
   );
 }
@@ -577,8 +576,10 @@ const s = StyleSheet.create({
   timerBadge:               { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, backgroundColor: '#fef3c7' },
   timerBadgeText:           { fontSize: 9, fontWeight: '800', letterSpacing: 0.5, color: '#b45309' },
   timerHint:                { fontSize: 11, lineHeight: 16, color: '#92400e', marginBottom: 2 },
-  stepCheckbox:             { width: 23, height: 23, borderRadius: 7, borderWidth: 2, borderColor: '#7c3aed', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
-  stepCheckboxChecked:      { backgroundColor: '#16a34a', borderColor: '#16a34a' },
+  checklistAction:          { marginTop: 0, marginBottom: 10, minHeight: 44, borderWidth: 0, backgroundColor: 'transparent', paddingHorizontal: 0 },
+  checklistTitle:           { fontSize: 15, lineHeight: 21, fontWeight: '600' },
+  stepCheckbox:             { width: 28, height: 28, borderRadius: 7, borderWidth: 2, borderColor: '#7c3aed', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  stepCheckboxChecked:      { backgroundColor: '#7c3aed', borderColor: '#7c3aed' },
   stepCompleteActionTitle:  { fontSize: 11, fontWeight: '800' },
   stepCompleteActionTitleChecked: { color: '#166534' },
   stepCompleteActionSub:    { fontSize: 9, lineHeight: 13, color: '#6b7280', marginTop: 2 },

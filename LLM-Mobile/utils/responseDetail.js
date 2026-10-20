@@ -28,14 +28,14 @@ export function detailRequestFields({ detail, voice = false, enabled = true }) {
   return enabled && !voice && value !== 'standard' ? { detail: value } : {};
 }
 
-// Brief and Detailed open on the written answer, since that is what was asked
-// for; Standard keeps opening on the guided procedure when there is one.
+// Procedural answers open on the interactive checklist; Brief retains its
+// concise written answer. Explicit saved view choices are respected.
 export function answerView(message, enabled = true) {
   const hasSteps = message.isProcedural && message.steps?.length > 0;
   const saved = message.procedureView;
   if (saved === 'text' || (saved === 'procedure' && hasSteps) || (saved === 'full' && hasFull(message, enabled))) return saved;
   const applied = appliedDetail(message, enabled);
-  if (applied === 'brief' || applied === 'detailed') return 'text';
+  if (applied === 'brief') return 'text';
   return hasSteps ? 'procedure' : 'text';
 }
 
@@ -55,22 +55,17 @@ export function answerViews(message, enabled = true) {
   ];
 }
 
-// Selection follows what is on screen: the answer, or the current guided step.
+// Selection includes every visible checklist item, not only the old guided step.
 export function displayedAnswerText(message, enabled = true) {
   const view = answerView(message, enabled);
   if (view === 'full') return message.fullText;
   if (view === 'text') return message.text || '';
-  const steps = message.steps;
-  const current = Math.min(Math.max(message.procedureState?.currentStep || 0, 0), steps.length - 1);
-  const step = steps[current];
-  const parts = [
-    `Step ${current + 1} of ${steps.length}`,
+  return message.steps.map((step, index) => [
+    `${index + 1}. ${step.title}`,
     step.warningLevel === 'critical' ? 'CRITICAL' : step.warningLevel === 'caution' ? 'CAUTION' : '',
-    step.title, step.description,
+    step.description,
     step.toolsRequired?.length ? `Tools required: ${step.toolsRequired.join(', ')}` : '',
-  ];
-  if (message.procedureState?.overviewOpen) parts.push('All steps', ...steps.map(s => s.title));
-  return parts.filter(Boolean).join('\n');
+  ].filter(Boolean).join('\n')).join('\n\n');
 }
 
 export function detailFallbackMessage(reason) {

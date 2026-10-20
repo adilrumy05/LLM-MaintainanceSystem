@@ -43,9 +43,11 @@ test('APP-A4-2 a Brief request answered in Standard says so and is not labelled 
   expect(screen.queryByText('Brief answer')).toBeNull();
 });
 
-test('APP-A4-3 a Detailed answer is labelled and opens on the full text', async () => {
+test('APP-A4-3 a Detailed answer opens on the checklist and retains full text', async () => {
   await render(<Harness initial={{ ...base, text: 'Long answer.', responseDetail: 'detailed' }} />);
   expect(screen.getByText('Detailed answer')).toBeTruthy();
+  expect(screen.getByText('Step-by-step checklist')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Show full answer'));
   expect(screen.getByText('Long answer.')).toBeTruthy();
   expect(screen.getByLabelText('Show full answer')).toBeTruthy();
 });
@@ -78,4 +80,18 @@ test('APP-A4-6 a Brief answer with no guided steps still shows the Brief / Full 
   expect(screen.getByLabelText('Show brief answer')).toBeTruthy();
   expect(screen.getByLabelText('Show full answer')).toBeTruthy();
   expect(screen.queryByLabelText('Show procedure answer')).toBeNull();
+});
+
+test('checklist progress survives switching to Full and back', async () => {
+  await render(<Harness initial={{ ...base, responseDetail: 'standard' }} />);
+  await fireEvent.press(screen.getByRole('checkbox', { name: 'First step' }));
+  expect(screen.getByText('1/1 completed')).toBeTruthy();
+  expect(screen.getByText('All items completed')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Show full answer'));
+  expect(screen.getByText('Short answer.')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText('Show procedure answer'));
+  expect(screen.getByText('1/1 completed')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('checkbox', { name: 'First step' }));
+  expect(screen.getByText('0/1 completed')).toBeTruthy();
+  expect(screen.queryByText('All items completed')).toBeNull();
 });
