@@ -26,7 +26,28 @@ const KEY_PATHS = [
   path.join(__dirname, '..', '..', 'serviceAccountKey.json'),
 ];
 
-function loadServiceAccount() {
+// On a host such as Railway there is no key file: the file is gitignored, so it
+// never reaches the build. The key can instead be given as an environment
+// variable holding the JSON, either as it is or base64-encoded. The variable
+// wins over a file, so a deployment never silently picks up a stale local key.
+function parseServiceAccount(raw) {
+  const text = raw.trim().startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8');
+  const account = JSON.parse(text);
+  // Pasting the JSON into a single-line variable often leaves the private key's
+  // line breaks as the two characters "\n", which the PEM parser rejects.
+  if (typeof account.private_key === 'string') {
+    account.private_key = account.private_key.replace(/\\n/g, '\n');
+  }
+  if (!account.project_id || !account.client_email || !account.private_key) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT is missing project_id, client_email or private_key');
+  }
+  return account;
+}
+
+function loadServiceAccount(env = process.env) {
+  if (env.FIREBASE_SERVICE_ACCOUNT && env.FIREBASE_SERVICE_ACCOUNT.trim()) {
+    return parseServiceAccount(env.FIREBASE_SERVICE_ACCOUNT);
+  }
   for (const candidate of KEY_PATHS) {
     if (fs.existsSync(candidate)) return require(candidate);
   }
@@ -51,11 +72,11 @@ try {
   // API breakage above for as long as it did.
   if (err.code === 'MODULE_NOT_FOUND') {
     console.warn(
-      '[Firebase] serviceAccountKey.json not found at the repository root — audit logging disabled'
+      '[Firebase] No admin key: set FIREBASE_SERVICE_ACCOUNT or put serviceAccountKey.json at the repository root — audit logging disabled'
     );
   } else {
     console.warn(`[Firebase] initialisation failed — audit logging disabled: ${err.message}`);
   }
 }
 
-module.exports = { db };
+module.exports = { db, loadServiceAccount, parseServiceAccount };
