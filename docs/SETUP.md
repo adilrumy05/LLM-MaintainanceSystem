@@ -565,6 +565,17 @@ Generating a key does **not** invalidate existing ones, so nobody else's setup
 breaks. If you lack console access, ask to be added to the project rather than
 asking for the file — then the next person can self-serve too.
 
+### On Railway (or any host without the file)
+
+The key file never reaches a deployment, because it is gitignored. Give the
+Node backend the key as a variable instead: in Railway, open the **Node Server**
+service → **Variables** → add `FIREBASE_SERVICE_ACCOUNT`, and paste the whole
+contents of `serviceAccountKey.json` as the value (or the JSON base64-encoded).
+The variable takes priority over the file. After the redeploy the log should
+show `[Firebase] Connected to Firestore`; until then it shows
+`[AUDIT] Skipped — Firebase not configured`, and reports, the priority agent,
+admin user management and animations do not work.
+
 > **Rename it immediately.** Firebase Console downloads the key as something
 > like `rbacfyp-firebase-adminsdk-ab12c-1234567890.json`. `.gitignore` now
 > covers that pattern too, but the safe habit is to rename first.
