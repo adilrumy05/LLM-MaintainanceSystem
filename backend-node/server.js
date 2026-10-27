@@ -304,8 +304,8 @@ Before answering, judge whether the context above is actually enough to fully an
         { role: 'system', content: fullSystemPrompt },
         { role: 'user', content: userContent },
       ],
-      reasoning_effort: 'high',
-      max_completion_tokens: 8192,
+      reasoning_effort: 'medium',
+      max_completion_tokens: 2048,
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -963,30 +963,16 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
     if (briefText) text = briefText;
     timing.stepsEnd = Date.now();
 
-    // ── Step 3: Fire the Audit Logger (Session Based) ────────────────────────
-    try {
-      await logAuditRecord(
-        query,
-        text,
-        retrievalData.sources,
-        userId || 'anonymous',
-        sessionId
-      );
-    } catch (auditErr) {
-      console.error('[AUDIT LOGGING FAILED]:', auditErr);
-    }
-
-    // ── Step 4: Alert Agent — detect safety-critical content ─────────────────
+    // ── Step 3+4: Audit log and priority agent run in parallel ───────────────
+    // Both depend only on `text`, which is final at this point. Running them
+    // serially paid the slower of the two twice.
     const alert = detectAlerts(query, text, role);
-    const priorityResult = await runPriorityAdjustmentAgent(
-      alert,
-      query,
-      role,
-      userId,
-      userEmail,
-      sessionId,
-      retrievalData.sources
-    );
+
+    const [, priorityResult] = await Promise.all([
+      logAuditRecord(query, text, retrievalData.sources, userId || 'anonymous', sessionId)
+        .catch((auditErr) => { console.error('[AUDIT LOGGING FAILED]:', auditErr); }),
+      runPriorityAdjustmentAgent(alert, query, role, userId, userEmail, sessionId, retrievalData.sources),
+    ]);
 
     // ── Step 5: Spoken form for hands-free mode ───────────────────────────────
     // Only when asked for, and only if it passes validation against the full
