@@ -304,7 +304,7 @@ Before answering, judge whether the context above is actually enough to fully an
         { role: 'system', content: fullSystemPrompt },
         { role: 'user', content: userContent },
       ],
-      reasoning_effort: 'medium',
+      reasoning_effort: 'low',
       max_completion_tokens: 2048,
       response_format: {
         type: 'json_schema',
@@ -827,7 +827,7 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
 
             { role: 'user', content: stepUserContent },
           ],
-          reasoning_effort: 'medium',
+          reasoning_effort: 'low',
           // Raised from 1500: each step now carries two extra fields, and a
           // truncated response would break JSON.parse.
           max_completion_tokens: 6144,
@@ -1106,7 +1106,7 @@ Reply with the title and nothing else.`,
             content: `Question: ${String(question).slice(0, 500)}\n\nAnswer: ${String(answer || '').slice(0, 500)}`,
           },
         ],
-        reasoning_effort: 'low',
+        reasoning_effort: 'none',
         max_completion_tokens: 100,
       }),
     });
