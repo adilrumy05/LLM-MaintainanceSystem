@@ -5,6 +5,9 @@ import { C } from '../theme';
 import { WARNING_COLORS } from '../constants/warningColors';
 import { capturePhotos } from '../services/photo';
 import ProcedureTimer from './ProcedureTimer';
+import ExpandableImage from './ExpandableImage';
+import { imageCaption } from '../utils/imageCaption';
+import { FEATURES } from '../constants/featureFlags';
 
 export default function ProcedureViewer({ steps, state, onChange, onTimerComplete, embedded = false }) {
   const safeState = state || { currentStep: 0, completedSteps: [], overviewOpen: false };
@@ -69,6 +72,30 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
       Alert.alert('Photo not captured', err?.message || 'Something went wrong. Please try again.');
     } finally {
       setCapturing(false);
+    }
+  };
+
+  // Pictures reported as not matching the unit, by URL, so the link is
+  // replaced by a thank-you and the same picture is not reported twice.
+  const [reportedImages, setReportedImages] = useState({});
+  const [reporting, setReporting] = useState(false);
+
+  const handleReportImage = async () => {
+    if (reporting || !step.imageUrl) return;
+    setReporting(true);
+    try {
+      // Loaded on tap: it brings in Firebase and the API client, which a step
+      // card has no other need for.
+      const { reportImageMismatch } = require('../services/imageReports');
+      await reportImageMismatch({
+        imageUrl: step.imageUrl, document: step.imageDocument,
+        page: step.imagePage, model: step.imageModel, stepTitle: step.title,
+      });
+      setReportedImages((prev) => ({ ...prev, [step.imageUrl]: true }));
+    } catch (err) {
+      Alert.alert('Not sent', 'Could not send the report. Please try again.');
+    } finally {
+      setReporting(false);
     }
   };
 
@@ -229,11 +256,26 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
         {!embedded && <Text style={s.stepTitle}>{step.title}</Text>}
 
         {step.imageUrl && (
-          <Image
-            source={{ uri: step.imageUrl }}
-            style={s.stepImage}
-            resizeMode="contain"
-          />
+          <View>
+            <ExpandableImage
+              uri={step.imageUrl}
+              style={s.stepImage}
+              accessibilityLabel={`Manual picture for ${step.title}`}
+            />
+            <Text style={s.stepImageCaption}>
+              {imageCaption({ document: step.imageDocument, page: step.imagePage, model: step.imageModel })}
+            </Text>
+            {FEATURES.IMAGE_REPORTS && (
+              reportedImages[step.imageUrl]
+                ? <Text style={s.stepImageReported}>Reported. Thank you.</Text>
+                : (
+                  <TouchableOpacity onPress={handleReportImage} disabled={reporting}
+                    accessibilityRole="button" accessibilityLabel="Report that this picture doesn't match my unit" hitSlop={6}>
+                    <Text style={s.stepImageReport}>Doesn't match my unit</Text>
+                  </TouchableOpacity>
+                )
+            )}
+          </View>
         )}
 
         <Text style={s.stepDescription}>
@@ -552,7 +594,10 @@ const s = StyleSheet.create({
   stepWarningBanner:        { flexDirection: 'row', alignItems: 'center', borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 9, alignSelf: 'flex-start' },
   stepWarningText:          { fontSize: 10, fontWeight: '800' },
   stepTitle:                { fontSize: 15, fontWeight: '800', marginBottom: 7 },
-  stepImage:                { width: '100%', height: 220, borderRadius: 10, marginBottom: 10, backgroundColor: '#f3f4f6' },
+  stepImage:                { width: '100%', height: 220, borderRadius: 10, marginBottom: 4, backgroundColor: '#f3f4f6' },
+  stepImageCaption:         { fontSize: 11, color: C.textMuted, lineHeight: 15 },
+  stepImageReport:          { fontSize: 12, color: C.primary, fontWeight: '600', marginTop: 4, marginBottom: 10, minHeight: 24 },
+  stepImageReported:        { fontSize: 12, color: '#15803d', fontWeight: '600', marginTop: 4, marginBottom: 10 },
   stepDescription:          { fontSize: 13, lineHeight: 19 },
   stepToolsRow:             { flexDirection: 'row', alignItems: 'flex-start', gap: 7, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderColor: '#e5e7eb' },
   stepToolsLabel:           { fontSize: 9, fontWeight: '800', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 },
