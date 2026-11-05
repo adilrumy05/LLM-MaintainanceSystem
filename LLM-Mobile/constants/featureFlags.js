@@ -7,4 +7,6 @@ export const FEATURES = {
   CHAT_COPY:   true,  // copy a whole answer
   CHAT_SELECT: true,  // select part of an answer (inline on Android/web, sheet everywhere)
   CHAT_QUOTE:  true,  // reply to a selected passage
+  EXPLAIN_SIMPLER: true, // "Explain more simply" under an answer (user testing, Nov 2026)
+  IMAGE_REPORTS:   true, // "Doesn't match my unit" under a step's manual picture
 };
