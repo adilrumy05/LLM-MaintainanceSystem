@@ -39,3 +39,26 @@ test('unknown and unexplained selections have no fallback image', () => {
   expect(resolveStepImage({ image_id: 'sleeve', image_match_reason: '   ' }, images)).toBeNull();
   expect(resolveStepImage({ image_id: '', image_match_reason: '' }, images)).toBeNull();
 });
+
+const { citedPages, scopeImagesToAnswer } = require('../../server/services/stepImages');
+const ours = { id: 'a', filename: 'CS-S10TKH.pdf', page: 56, url: 'ours.jpg' };
+const theirs = { id: 'b', filename: 'FTXM25.pdf', page: 56, url: 'theirs.jpg' };
+const blocks = [
+  { filename: 'FTXM25.pdf', page: 12 },
+  { filename: 'CS-S10TKH.pdf', page: 56 },
+];
+test('cited pages are read from [[p:NNN]] tags only', () => {
+  expect([...citedPages('Fit it [[p:56]] then [[ p:7 ]] (torque 122)')]).toEqual(['56', '7']);
+});
+test('images from a manual the answer does not cite are dropped', () => {
+  expect(scopeImagesToAnswer([ours, theirs], 'Clamp the cable [[p:56]].', [blocks[1], { filename: 'FTXM25.pdf', page: 3 }])).toEqual([ours]);
+});
+test('a cited page number found in two manuals keeps both', () => {
+  expect(scopeImagesToAnswer([ours, theirs], 'See [[p:56]].', [blocks[1], { filename: 'FTXM25.pdf', page: 56 }])).toEqual([ours, theirs]);
+});
+test('an answer without citations keeps the top-ranked manual only', () => {
+  expect(scopeImagesToAnswer([ours, theirs], 'No citations here.', blocks)).toEqual([theirs]);
+});
+test('no blocks means no images', () => {
+  expect(scopeImagesToAnswer([ours], 'Text [[p:56]]', [])).toEqual([]);
+});

@@ -184,7 +184,7 @@ test.each([false, true])('matches manual figures while preserving timer extracti
     if (url.includes('/filters')) return { ok: true, json: async () => ({}) };
     if (url.includes('/retrieve')) return { ok: true, json: async () => ({
       prompt: 'Insert the sleeve and seal it.',
-      context_blocks: [{ chunk_type: 'text', page: 50, document_group_id: 'aircon', text: 'Install the sleeve and seal the wall opening.' }],
+      context_blocks: [{ chunk_type: 'text', page: 50, document_group_id: 'aircon', filename: 'manual', text: 'Install the sleeve and seal the wall opening.' }],
       sources: [{ document_group_id: 'aircon', page: 50, filename: 'manual', images: [{ url: 'https://example.com/sleeve.jpg' }] }],
     }) };
     const body = JSON.parse(options.body);
@@ -209,4 +209,7 @@ test.each([false, true])('matches manual figures while preserving timer extracti
   expect(res.body.steps[0].image_url).toBe('https://example.com/sleeve.jpg');
   expect(res.body.steps[0].photo_required).toBe(true);
   expect(res.body.steps[1].image_url).toBe('https://example.com/sleeve.jpg');
+  // Labelled with where the picture comes from.
+  expect(res.body.steps[0].image_document).toBe('manual');
+  expect(res.body.steps[0].image_page).toBe(50);
 });
