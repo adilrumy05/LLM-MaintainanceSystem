@@ -77,3 +77,9 @@ test('a chosen filter is named and can be cleared; hands-free shows Stop while r
   expect(given.filter.onClear).toHaveBeenCalled();
   expect(screen.getByLabelText('Stop hands-free')).toBeTruthy();
 });
+
+test('no hands-free row when the mic starts hands-free instead', async () => {
+  await render(<ChatOptionsSheet {...props({ handsFree: null })} />);
+  expect(screen.queryByLabelText('Start hands-free')).toBeNull();
+  expect(screen.getByLabelText('Report a problem')).toBeTruthy();
+});

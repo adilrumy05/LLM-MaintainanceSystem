@@ -1293,7 +1293,8 @@ export default function Dashboard() {
             <TouchableOpacity style={s.iconBtn} onPress={handleAttachPhoto} disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}>
               {isPhotoBusy ? <ActivityIndicator size="small" color={C.primary} /> : <Ionicons name="camera-outline" size={20} color={C.primary} />}
             </TouchableOpacity>
-            <MicButton style={s.iconBtn} disabled={isProcessing || handsFree.active} onTranscript={(text) => setInputValue(text)} />
+            <MicButton style={s.iconBtn} disabled={isProcessing || handsFree.active} onTranscript={(text) => setInputValue(text)}
+              onHandsFree={FEATURES.MIC_HANDS_FREE && !isPhotoBusy ? handsFree.start : undefined} />
             <TextInput
               style={s.input}
               placeholder={pendingPhotos.length ? 'Ask about these photos...' : 'Ask a maintenance question...'}
@@ -1322,7 +1323,7 @@ export default function Dashboard() {
           detail={FEATURES.EFFORT_LEVELS ? { value: preferences.detail, onChange: preferences.setDetail } : null}
           settingsDisabled={!preferences.ready || handsFree.active}
           filter={{ label: activeChat?.filter?.label || null, onOpen: () => setShowFilterPicker(true), onClear: () => handleSelectFilter(null) }}
-          handsFree={{ active: handsFree.active, disabled: !handsFree.active && (isProcessing || isPhotoBusy), onToggle: toggleHandsFree }}
+          handsFree={FEATURES.MIC_HANDS_FREE ? null : { active: handsFree.active, disabled: !handsFree.active && (isProcessing || isPhotoBusy), onToggle: toggleHandsFree }}
           onReport={() => setShowReportModal(true)}
         />
 
