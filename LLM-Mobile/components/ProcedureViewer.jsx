@@ -88,7 +88,7 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
       // card has no other need for.
       const { reportImageMismatch } = require('../services/imageReports');
       await reportImageMismatch({
-        imageUrl: step.imageUrl, document: step.imageDocument,
+        imageUrl: step.imageUrl, document: step.imageDocument, group: step.imageGroup,
         page: step.imagePage, model: step.imageModel, stepTitle: step.title,
       });
       setReportedImages((prev) => ({ ...prev, [step.imageUrl]: true }));
@@ -263,7 +263,7 @@ export default function ProcedureViewer({ steps, state, onChange, onTimerComplet
               accessibilityLabel={`Manual picture for ${step.title}`}
             />
             <Text style={s.stepImageCaption}>
-              {imageCaption({ document: step.imageDocument, page: step.imagePage, model: step.imageModel })}
+              {imageCaption({ group: step.imageGroup, document: step.imageDocument, page: step.imagePage, model: step.imageModel })}
             </Text>
             {FEATURES.IMAGE_REPORTS && (
               reportedImages[step.imageUrl]

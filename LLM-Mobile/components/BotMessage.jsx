@@ -48,7 +48,7 @@ function renderCitationsWithImages(text, sources) {
     if (src?.page == null || !src.images?.length) continue;
     if (imageByPage.has(src.page)) continue;
     const img = src.images.find(i => i.url);
-    if (img) imageByPage.set(src.page, { ...img, document: src.filename });
+    if (img) imageByPage.set(src.page, { ...img, document: src.filename, group: src.document_group_id });
   }
 
   const drawn = new Set();   // one inline figure per page per answer
@@ -64,7 +64,7 @@ function renderCitationsWithImages(text, sources) {
       .replace(/[\[\]]/g, '')
       .slice(0, 120);
 
-    const caption = imageCaption({ document: img.document, page });
+    const caption = imageCaption({ group: img.group, document: img.document, page });
     return `${visible}\n\n![${alt}](${img.url})\n\n*${caption}*\n\n`;
   });
 }

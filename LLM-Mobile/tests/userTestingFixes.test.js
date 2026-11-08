@@ -174,3 +174,36 @@ describe('answers from more than one manual', () => {
     expect(screen.queryByText(/different manuals/)).toBeNull();
   });
 });
+
+describe('iOS polish (Nov 2026)', () => {
+  const { groupLabel, filenameForGroup } = require('../utils/imageCaption');
+  const { StyleSheet } = require('react-native');
+
+  test('captions name the manual by its model, not its file code', () => {
+    expect(groupLabel('panasonic_aircon_CS-S10TKH')).toBe('Panasonic Aircon CS-S10TKH');
+    expect(imageCaption({ group: 'panasonic_aircon_CS-S10TKH', document: 'CS-s10-13-18-24-28tkh_cu-s10.pdf', page: 56 }))
+      .toBe('From the Panasonic Aircon CS-S10TKH manual, p.56. Your unit may look different.');
+  });
+
+  test('a file name is only shown under the model it belongs to', () => {
+    const files = ['CS-E7JKEW_SM_PHAAM0810051C2', 'CS-PW24KE_service_manual_PHAAM0810057C2', 'CS-s10-13-18-24-28tkh_cu-s10-13-18-24-28tkh'];
+    expect(filenameForGroup('panasonic_aircon_CS-PW24KE', files)).toBe('CS-PW24KE_service_manual_PHAAM0810057C2');
+    expect(filenameForGroup('panasonic_aircon_E7JKEW', files)).toBe('CS-E7JKEW_SM_PHAAM0810051C2');
+    expect(filenameForGroup('panasonic_aircon_CS-S10TKH', files)).toBe('');
+  });
+
+  test('a full-width picture gives its width to the tappable frame and fills it', async () => {
+    await render(<ExpandableImage uri="https://example.com/a.jpg" style={{ width: '100%', height: 220, marginVertical: 10, borderRadius: 8 }} accessibilityLabel="Fig" />);
+    const frame = StyleSheet.flatten(screen.getByLabelText('Fig. Tap to enlarge').props.style);
+    expect(frame).toMatchObject({ width: '100%', marginVertical: 10 });
+  });
+
+  test('an inline figure is captioned with the manual model name', async () => {
+    const item = {
+      id: 'b1', from: 'bot', isProcedural: false, text: 'Remove the filter [[p:56]].',
+      sources: [{ filename: 'CS-s10-13-18-24-28tkh_cu-s10.pdf', document_group_id: 'panasonic_aircon_CS-S10TKH', page: 56, images: [{ url: 'https://example.com/f.jpg', caption: 'Filter' }] }],
+    };
+    await render(<BotMessage item={item} updateMessage={jest.fn()} />);
+    expect(screen.getByText('From the Panasonic Aircon CS-S10TKH manual, p.56. Your unit may look different.')).toBeTruthy();
+  });
+});

@@ -1,7 +1,7 @@
 // app/(tabs)/index.js
 
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
-import {View, Text, TextInput, TouchableOpacity, FlatList, Modal, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Animated, Dimensions, Easing,} from 'react-native';
+import {View, Text, TextInput, TouchableOpacity, FlatList, Modal, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Keyboard, Platform, Image, ScrollView, Animated, Dimensions, Easing,} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -35,6 +35,7 @@ import WaitStatus from '../components/WaitStatus';
 import usePreferences from '../hooks/usePreferences';
 import { normaliseDetail, answerView, isResponseDetail } from '../utils/responseDetail';
 import { previousExchange, SIMPLER_QUESTION } from '../utils/followUp';
+import { groupLabel, filenameForGroup } from '../utils/imageCaption';
 
 const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
 
@@ -283,6 +284,7 @@ export default function Dashboard() {
             imageUrl: st.image_url || null,
             // Where the manual picture comes from, for its caption.
             imageDocument: st.image_url ? decodeEntities(st.image_document || '') || null : null,
+            imageGroup: st.image_url ? st.image_group || null : null,
             imagePage: st.image_url && st.image_page != null ? st.image_page : null,
             imageModel: st.image_url ? decodeEntities(st.image_model || '') || null : null,
             photoRequired: st.photo_required === true,
@@ -470,18 +472,10 @@ export default function Dashboard() {
     else handsFree.start();
   };
 
-  const prettifyFilterLabel = (id) => {
-    if (!id) return '';
-    const parts = id.split('_');
-    const model = parts.pop();
-    const rest = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-    return `${rest} ${model}`;
-  };
-
-  const filterOptions = (allFilters?.document_group_ids || []).map((id, idx) => ({
+  const filterOptions = (allFilters?.document_group_ids || []).map((id) => ({
     id,
-    label: prettifyFilterLabel(id),
-    filename: allFilters?.filenames?.[idx] || '',
+    label: groupLabel(id),
+    filename: filenameForGroup(id, allFilters?.filenames),
   }));
 
   const filteredOptions = filterOptions.filter(opt => {
@@ -1071,7 +1065,9 @@ export default function Dashboard() {
         </Modal>
 
         <Modal visible={showFilterPicker} animationType="slide" onRequestClose={() => setShowFilterPicker(false)}>
-          <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+          {/* Insets read directly, as for the repair report: SafeAreaView
+              inside a Modal gets a top inset of 0 on iOS. */}
+          <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom }}>
             <View style={s.filterModalHeader}>
               <Text style={s.filterModalTitle}>Ground to a model</Text>
               <TouchableOpacity onPress={() => setShowFilterPicker(false)}>
@@ -1086,7 +1082,8 @@ export default function Dashboard() {
                 placeholderTextColor={C.textMuted}
                 value={filterSearchText}
                 onChangeText={setFilterSearchText}
-                autoFocus
+                returnKeyType="search"
+                onSubmitEditing={Keyboard.dismiss}
               />
             </View>
             <TouchableOpacity style={s.filterAllOption} onPress={() => handleSelectFilter(null)}>
@@ -1097,6 +1094,7 @@ export default function Dashboard() {
               data={filteredOptions}
               keyExtractor={item => item.id}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
               renderItem={({ item }) => (
                 <TouchableOpacity style={s.filterOptionRow} onPress={() => handleSelectFilter(item)}>
                   <View style={{ flex: 1 }}>
@@ -1108,7 +1106,7 @@ export default function Dashboard() {
               )}
               ListEmptyComponent={<Text style={s.filterEmptyText}>No models match "{filterSearchText}"</Text>}
             />
-          </SafeAreaView>
+          </View>
         </Modal>
 
         {/* ─── Header ──────────────────────────────────────────────── */}
