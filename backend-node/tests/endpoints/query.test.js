@@ -212,4 +212,5 @@ test.each([false, true])('matches manual figures while preserving timer extracti
   // Labelled with where the picture comes from.
   expect(res.body.steps[0].image_document).toBe('manual');
   expect(res.body.steps[0].image_page).toBe(50);
+  expect(res.body.steps[0].image_group).toBe('aircon');
 });

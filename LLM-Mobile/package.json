@@ -13,6 +13,9 @@
     "preset": "jest-expo",
     "testMatch": [
       "<rootDir>/tests/**/*.test.[jt]s?(x)"
+    ],
+    "setupFiles": [
+      "<rootDir>/tests/setup/safeArea.js"
     ]
   },
   "dependencies": {

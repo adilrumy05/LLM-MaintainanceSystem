@@ -975,6 +975,7 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
               // plus where it comes from, so it can be labelled.
               image_url: imageUrl,
               image_document: image?.filename || null,
+              image_group: image?.documentGroupId || null,
               image_page: image?.page ?? null,
               image_model: image ? retrievalFilters.model_number || null : null,
               // Technician's own verification photo.

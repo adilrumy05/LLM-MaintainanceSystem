@@ -47,7 +47,7 @@ Submits a maintenance query. Retrieves relevant document chunks via the RAG pipe
 | `confirmedModel` | string | No | Photo-and-ask. The model the technician confirmed for this chat, sent after an `ask_model` or `conflict` reply. |
 | `previous` | object | No | A follow-up to the chat's previous answer: `{ "question": string, "answer": string }`. The new question is searched on its own and together with the previous one, and the previous answer (first 4,000 characters used; over 20,000 is rejected) goes into the prompt, so "explain that more simply" rewrites it. Ignored when `quote` or a photo is sent. |
 
-Each step in `steps` names the manual picture it shows with `image_url`, `image_document` (the manual's file name), `image_page` and `image_model` (the chat's model, when one is confirmed), so the app can label it. Step pictures only come from the manual(s) the answer cites.
+Each step in `steps` names the manual picture it shows with `image_url`, `image_document` (the manual's file name), `image_group` (its document group, e.g. `panasonic_aircon_CS-S10TKH`), `image_page` and `image_model` (the chat's model, when one is confirmed), so the app can label it. Step pictures only come from the manual(s) the answer cites.
 
 **Example request**
 ```json

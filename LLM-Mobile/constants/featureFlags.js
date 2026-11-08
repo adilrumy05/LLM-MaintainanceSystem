@@ -9,5 +9,5 @@ export const FEATURES = {
   CHAT_QUOTE:  true,  // reply to a selected passage
   EXPLAIN_SIMPLER: true, // "Explain more simply" under an answer (user testing, Nov 2026)
   IMAGE_REPORTS:   true, // "Doesn't match my unit" under a step's manual picture
-  MIC_HANDS_FREE:  true, // hold the mic for hands-free; the Options sheet's hands-free row is hidden
+  MIC_HANDS_FREE:  true, // the mic offers Dictate or Hands-free (hold = hands-free); the Options sheet's hands-free row is hidden
 };
