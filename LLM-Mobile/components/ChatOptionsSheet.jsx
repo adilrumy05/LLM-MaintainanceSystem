@@ -1,6 +1,6 @@
 // Everything that changes how the next question is asked or answered, in one
 // sheet, so the chat screen itself stays clear: animations, response detail,
-// the manual filter, hands-free and reporting a problem.
+// the manual filter, hands-free (unless the mic starts it) and reporting a problem.
 import { Modal, View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../theme';
@@ -30,7 +30,7 @@ const Switch = ({ on }) => <View style={[s.switch, on && s.switchOn]}><View styl
  * @param {object|null} props.detail    { value, onChange }, or null when response detail is switched off
  * @param {boolean} props.settingsDisabled  saved settings not loaded yet, or hands-free is running
  * @param {object} props.filter         { label, onOpen, onClear }; label is null with no filter
- * @param {object} props.handsFree      { active, disabled, onToggle }
+ * @param {object} [props.handsFree]    { active, disabled, onToggle }; no row when omitted
  * @param {Function} props.onReport
  */
 export default function ChatOptionsSheet({ visible, onClose, animate, detail, settingsDisabled = false, filter, handsFree, onReport }) {
@@ -74,9 +74,9 @@ export default function ChatOptionsSheet({ visible, onClose, animate, detail, se
                 </TouchableOpacity>
                 : <Ionicons name="chevron-forward" size={18} color={C.textMuted} />} />
 
-            <Row icon="headset-outline" title={handsFree.active ? 'Stop hands-free' : 'Start hands-free'}
+            {handsFree && <Row icon="headset-outline" title={handsFree.active ? 'Stop hands-free' : 'Start hands-free'}
               subtitle="Ask by voice and hear the answer, without touching the phone."
-              onPress={closeThen(handsFree.onToggle)} disabled={handsFree.disabled} />
+              onPress={closeThen(handsFree.onToggle)} disabled={handsFree.disabled} />}
 
             <Row icon="bug-outline" title="Report a problem" subtitle="Tell the team about a wrong answer or a fault in the app."
               onPress={closeThen(onReport)} />

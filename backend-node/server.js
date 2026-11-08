@@ -2,7 +2,8 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const { buildStepImageContent, referenceImageId, resolveStepImage } = require('./server/services/stepImages');
+const { buildStepImageContent, referenceImageId, resolveStepImage, scopeImagesToAnswer } = require('./server/services/stepImages');
+const { followUpRetrievalQuery, followUpRules } = require('./server/services/followUp');
 const { logAuditRecord, logTimerEvent } = require('./server/services/auditLogger');
 const firebaseAdmin = require('./server/config/firebaseAdmin');
 const { runPriorityAdjustmentAgent } = require('./server/agents/priorityAdjustmentAgent');
@@ -60,11 +61,20 @@ const MAX_RETRIEVAL_ROUNDS = parseInt(process.env.MAX_RETRIEVAL_ROUNDS || '2', 1
 const ANSWER_MODEL = process.env.ANSWER_MODEL || 'gpt-6-luna';
 const DEFAULT_TOP_K = parseInt(process.env.RETRIEVAL_TOP_K || '10', 10);
 
+// How long each model call may think. Most of an answer's wait is here, and
+// user testers found answers slow. Both default to 'low' (Oct 2026); a Railway
+// variable changes them, and an unknown value falls back to the default.
+const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high'];
+const reasoningEffort = (name, fallback) =>
+  REASONING_EFFORTS.includes(process.env[name]) ? process.env[name] : fallback;
+
 const ROLE_SYSTEM_PROMPTS = {
   beginner: `You are a Guidance Helper for a junior maintenance technician.
 Use plain, everyday language. Never use jargon without explaining it.
+The first time you use a technical term, explain it in brackets, e.g. "the drain pan (the tray that catches water)".
 Always prioritise safety: flag any step requiring LOTO or PPE with a clear WARNING.
-Structure every response as a numbered step-by-step list.
+Structure every response as a numbered step-by-step list, with one action per step.
+In each step, say where the part is on the unit and exactly what to do with it: which way to move it, how far, and what the technician should see or feel when it is done. Never write vague directions such as "gently move" or "adjust as needed". Never invent a direction or distance the manual extracts do not give: leave it out of the step, and end the answer with one short "Not in the manual:" line listing what is missing.
 End with: "If you are unsure about any step, stop and contact a senior technician."
 Base all guidance strictly on the retrieved manual content provided.`,
 
@@ -304,7 +314,7 @@ Before answering, judge whether the context above is actually enough to fully an
         { role: 'system', content: fullSystemPrompt },
         { role: 'user', content: userContent },
       ],
-      reasoning_effort: 'low',
+      reasoning_effort: reasoningEffort('ANSWER_REASONING_EFFORT', 'low'),
       max_completion_tokens: 2048,
       response_format: {
         type: 'json_schema',
@@ -351,6 +361,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       quote,
       detail,
       animate,
+      previous,
     } = req.body;
 
     // How much to explain, not who is asking: the role prompt is unchanged.
@@ -384,6 +395,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
 
     // ── Get filters from retrieval service ────────────────────────────────────
     const known = await getKnownFilters();
+    timing.filtersEnd = Date.now();
 
     const {
       matchedGroup,
@@ -463,6 +475,7 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
       retrievalQuery = intake.retrievalQuery;
       console.log(`[VISION] model=${visualModel} fault=${visualReading?.faultCode || '-'}`);
     }
+    timing.visionEnd = Date.now();
 
     // A reply to a passage from an earlier answer. The backend keeps no chat
     // history, so the passage travels with the question. It goes into the text
@@ -476,6 +489,11 @@ app.post('/api/query', sanitize, validate, outputSanitize, async (req, res) => {
 The user is asking about this passage from an earlier answer: "${quoteText}".
 Treat their question as being about that passage. Answer only from the manual
 extracts above and cite pages as normal; if the extracts do not cover it, say so.` : '';
+
+    // A follow-up to the chat's previous answer. A quoted passage is the more
+    // specific context, so it wins when both are sent.
+    const followUp = !quoteText && !imageBase64 && previous ? previous : null;
+    const followUpPrompt = followUpRules(followUp);
 
     // ── Steps 1+2: iterative retrieve -> answer loop ───────────────────────────
     // Round 1 uses the photo/query-derived retrievalQuery exactly as before.
@@ -496,7 +514,16 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
     };
 
     console.log(`Calling retrieval service for: "${query}"`);
-    const round1 = await fetchRetrievalRound(retrievalQuery, retrievalFilters);
+    // A follow-up is searched on its own and together with the previous
+    // question, in parallel, so both a new topic ("and the drain?") and a
+    // reference to the last answer ("explain that more simply") find their
+    // pages. Its own results come first.
+    const searches = followUp
+      ? [retrievalQuery, followUpRetrievalQuery(retrievalQuery, followUp)]
+      : [retrievalQuery];
+    const found = (await Promise.all(searches.map((q) => fetchRetrievalRound(q, retrievalFilters)))).filter(Boolean);
+    const round1 = found.length > 1 ? mergeRetrievalRounds(found) : found[0] || null;
+    timing.retrievalEnd = Date.now();
 
     if (!round1) {
       // The raw upstream body stays in the server log. The app shows `error`
@@ -532,7 +559,7 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
       });
     }
 
-    const systemPrompt = (ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT) + TIMER_INSTRUCTION + CITATION_INSTRUCTION + quoteRules;
+    const systemPrompt = (ROLE_SYSTEM_PROMPTS[role] || DEFAULT_SYSTEM_PROMPT) + TIMER_INSTRUCTION + CITATION_INSTRUCTION + quoteRules + followUpPrompt;
     // Standard adds nothing, so its request is what it was before response
     // detail existed. Brief is written separately, after the loop (below).
     const loopSystemPrompt = systemPrompt + detailRules(detailRequested === 'detailed' ? 'detailed' : 'standard');
@@ -723,6 +750,7 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
         availableImages.push({
           id: referenceImageId(b.image_url),
           documentGroupId: b.document_group_id,
+          filename: b.filename,
           page: b.page,
           caption: (b.text || '').slice(0, 150),
           url: b.image_url,
@@ -745,6 +773,7 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
           availableImages.push({
             id: imageId,
             documentGroupId: src.document_group_id,
+            filename: src.filename,
             page: src.page,
             caption: img.caption || img.description || `Reference image from page ${src.page}`,
             url: img.url,
@@ -766,10 +795,15 @@ extracts above and cite pages as normal; if the extracts do not cover it, say so
     });
     console.log('===============================================\n');
 
+    // Only pictures from the manual the answer was written from can illustrate
+    // a step. Fewer pictures also make the extraction call quicker.
+    const answerImages = scopeImagesToAnswer(availableImages, text, merged.context_blocks);
+    console.log(`[STEP IMAGE] ${answerImages.length} of ${availableImages.length} image(s) are from the answer's manual`);
+
     const stepsDone = (async () => { try {
       // Preserve timer markers for extraction; display fields are cleaned below.
       const stepUserContent = buildStepImageContent(
-        text, availableImages, merged.context_blocks
+        text, answerImages, merged.context_blocks
       );
 
       const stepResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -827,7 +861,7 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
 
             { role: 'user', content: stepUserContent },
           ],
-          reasoning_effort: 'low',
+          reasoning_effort: reasoningEffort('STEPS_REASONING_EFFORT', 'low'),
           // Raised from 1500: each step now carries two extra fields, and a
           // truncated response would break JSON.parse.
           max_completion_tokens: 6144,
@@ -884,12 +918,14 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
       });
 
       const stepData = await stepResponse.json();
+      timing.stepsCallEnd = Date.now();
       const parsed = JSON.parse(stepData?.choices?.[0]?.message?.content || '{}');
       isProcedural = !!parsed.is_procedural;
 
       // Translate the internal image_id to a direct URL here — the client
       // never needs to know chunk ids exist.
-      const imageUrlById = new Map(availableImages.map((img) => [img.id, img.url]));
+      const imageUrlById = new Map(answerImages.map((img) => [img.id, img.url]));
+      const imageByUrl = new Map(answerImages.map((img) => [img.url, img]));
 
       steps = Array.isArray(parsed.steps)
         ? parsed.steps.map((st) => {
@@ -900,6 +936,7 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
             const matchReason = typeof st.image_match_reason === 'string' ? st.image_match_reason.trim() : '';
             console.log('[STEP IMAGE] Match reason:', matchReason || 'NONE');
             const imageUrl = resolveStepImage(st, imageUrlById);
+            const image = imageUrl ? imageByUrl.get(imageUrl) : null;
 
             // Normalise the verification-photo fields so the mobile app
             // always receives a boolean and a string.
@@ -934,8 +971,13 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
               description: stripTimerMarkers(st.description),
               warning_level: st.warning_level,
               tools_required: st.tools_required,
-              // Manual/reference image: the app only receives the actual URL.
+              // Manual/reference image: the app only receives the actual URL,
+              // plus where it comes from, so it can be labelled.
               image_url: imageUrl,
+              image_document: image?.filename || null,
+              image_group: image?.documentGroupId || null,
+              image_page: image?.page ?? null,
+              image_model: image ? retrievalFilters.model_number || null : null,
               // Technician's own verification photo.
               photo_required: photoRequired,
               photo_instruction: photoInstruction,
@@ -965,14 +1007,29 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
 
     // ── Step 3+4: Audit log and priority agent run in parallel ───────────────
     // Both depend only on `text`, which is final at this point. Running them
-    // serially paid the slower of the two twice.
+    // serially paid the slower of the two twice. Both finish before the reply.
     const alert = detectAlerts(query, text, role);
-
     const [, priorityResult] = await Promise.all([
-      logAuditRecord(query, text, retrievalData.sources, userId || 'anonymous', sessionId)
-        .catch((auditErr) => { console.error('[AUDIT LOGGING FAILED]:', auditErr); }),
-      runPriorityAdjustmentAgent(alert, query, role, userId, userEmail, sessionId, retrievalData.sources),
+      Promise.resolve()
+        .then(() => logAuditRecord(
+          query,
+          text,
+          retrievalData.sources,
+          userId || 'anonymous',
+          sessionId
+        ))
+        .catch((auditErr) => console.error('[AUDIT LOGGING FAILED]:', auditErr)),
+      runPriorityAdjustmentAgent(
+        alert,
+        query,
+        role,
+        userId,
+        userEmail,
+        sessionId,
+        retrievalData.sources
+      ),
     ]);
+    timing.recordsEnd = Date.now();
 
     // ── Step 5: Spoken form for hands-free mode ───────────────────────────────
     // Only when asked for, and only if it passes validation against the full
@@ -1000,7 +1057,17 @@ If a marker sits between two steps, it belongs to the EARLIER one — the wait h
         })
       : null;
 
-    console.info('[TIMING]', JSON.stringify({ detail: detailRequested, shown: responseDetail, rounds: round, answerMs: timing.answerEnd - timing.start, stepsAndBriefMs: timing.stepsEnd - timing.answerEnd, totalMs: Date.now() - timing.start }));
+    const since = (from, to) => (timing[from] && timing[to] ? timing[to] - timing[from] : null);
+    console.info('[TIMING]', JSON.stringify({
+      detail: detailRequested, shown: responseDetail, rounds: round,
+      effort: reasoningEffort('ANSWER_REASONING_EFFORT', 'low'),
+      stepsEffort: reasoningEffort('STEPS_REASONING_EFFORT', 'low'),
+      stepImages: answerImages.length, followUp: Boolean(followUp),
+      filtersMs: since('start', 'filtersEnd'), visionMs: since('filtersEnd', 'visionEnd'),
+      retrievalMs: since('visionEnd', 'retrievalEnd'), answerMs: since('retrievalEnd', 'answerEnd'),
+      stepsMs: since('answerEnd', 'stepsCallEnd'), stepsAndBriefMs: since('answerEnd', 'stepsEnd'),
+      recordsMs: since('stepsEnd', 'recordsEnd'), totalMs: Date.now() - timing.start,
+    }));
     res.json({
       text,
       // The detail this answer was actually written in; `detailFallback` is set

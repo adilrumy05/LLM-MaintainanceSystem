@@ -1,6 +1,7 @@
 // middleware/validate.js
 
 const MAX_QUOTE_CHARS = 500;
+const MAX_PREVIOUS_ANSWER_CHARS = 20000;
 const MAX_PHOTOS = 4;
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
 const MAX_TOTAL_PHOTO_BYTES = 8 * 1024 * 1024;
@@ -81,6 +82,20 @@ const validate = (req, res, next) => {
     }
     if (quote.messageId !== undefined && (typeof quote.messageId !== 'string' || quote.messageId.length > 100)) {
       return res.status(400).json({ error: "quote.messageId must be a string.", code: "invalid_request" });
+    }
+  }
+
+  // Optional previous question and answer in this chat, for a follow-up.
+  // The answer is cut to MAX_PREVIOUS_ANSWER_CHARS where it is used.
+  const { previous } = req.body;
+  if (previous !== undefined && previous !== null) {
+    if (typeof previous !== 'object' || Array.isArray(previous) ||
+        typeof previous.question !== 'string' || !previous.question.trim() ||
+        typeof previous.answer !== 'string' || !previous.answer.trim()) {
+      return res.status(400).json({ error: "previous must include the earlier question and answer.", code: "invalid_request" });
+    }
+    if (previous.answer.length > MAX_PREVIOUS_ANSWER_CHARS) {
+      return res.status(400).json({ error: "The previous answer is too long.", code: "invalid_request" });
     }
   }
 

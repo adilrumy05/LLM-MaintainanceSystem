@@ -31,6 +31,21 @@ function getOpenAI() {
   return openai;
 }
 
+// The language Whisper writes in. Left to detect it, Whisper heard some
+// Malaysian-accented English as Malay and wrote the question in Malay ("hello
+// hello ujian 1 2 3"), so it is told to expect English. TRANSCRIBE_LANGUAGE
+// (an ISO-639-1 code) changes it; "auto" goes back to detection.
+const transcribeLanguage = () => {
+  const lang = (process.env.TRANSCRIBE_LANGUAGE || 'en').trim().toLowerCase();
+  return lang === 'auto' ? null : /^[a-z]{2}$/.test(lang) ? lang : 'en';
+};
+
+// Spelling hints for the words technicians use. Whisper treats the prompt as
+// earlier speech, so it is a plain list rather than an instruction.
+const TRANSCRIBE_PROMPT =
+  'Air conditioner maintenance: indoor unit, outdoor unit, air filter, drain pan, '
+  + 'drain hose, front grille, PCB, compressor, refrigerant, error code H11, Panasonic, Toshiba.';
+
 router.post('/transcribe', upload.single('audio'), async (req, res) => {
   console.log('[transcribe] request received, file:', req.file?.originalname, req.file?.size);
   if (!req.file) {
@@ -41,6 +56,8 @@ router.post('/transcribe', upload.single('audio'), async (req, res) => {
     const transcription = await getOpenAI().audio.transcriptions.create({
       file: fileForOpenAI,
       model: 'whisper-1',
+      ...(transcribeLanguage() ? { language: transcribeLanguage() } : {}),
+      prompt: TRANSCRIBE_PROMPT,
     });
     res.json({ text: transcription.text });
   } catch (err) {
