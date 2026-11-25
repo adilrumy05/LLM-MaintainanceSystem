@@ -10,15 +10,17 @@ lerna-debug.log*
 node_modules/
 
 # Python
-# Virtual environments
+# Virtual environments (covers .venv, .venv_cu12_Maintaince-copilot, etc.)
 fyp/
 venv/
 env/
-.venv/
+.venv*
 
 # Cache files
 __pycache__/
 *.pyc
+**/__pycache__/
+*.cpython-*.pyc
 
 # Build outputs
 dist/
@@ -27,7 +29,6 @@ build/
 server/rag/ragPhase2/last_retrieval_debug.json
 server/rag/ragPhase2/last_retrieval_prompt.txt
 server/rag/ragPhase2/check_missing_pages.py
-
 server/rag/ragPhase2/check_page.py
 
 # Environment variables
@@ -47,7 +48,10 @@ Thumbs.db
 # Netlify
 .netlify/
 
+# ==========================================
 # Project-specific ML / RAG
+# ==========================================
+# Phase 2
 server/rag/ragPhase2/models/
 checkpoint/
 # per-model ingest checkpoints, e.g. checkpoint_bgem3/
@@ -55,7 +59,20 @@ checkpoint_*/
 models/
 server/rag/ragPhase2/vlm_review/
 
+# Phase 1: MonkeyOCR (Never commit the repo or 3GB+ model weights)
+MonkeyOCR/
+model_weight/
+weights/
+
+# Phase 1: Generated Outputs
+# (Note: data/, checkpoint/, and output/ are already covered by existing rules)
+content_extraction/
+_smoke_test/
+smoke_report.json
+
+# ==========================================
 # Firebase / Secrets
+# ==========================================
 # Canonical location is the repo root; both uploads/ scripts read ../ from there.
 # No leading slash, so this also catches stray copies in subfolders.
 serviceAccountKey.json
@@ -75,20 +92,15 @@ Activate.ps1
 activate
 activate.*
 
-# Python bytecode (stronger coverage)
-**/__pycache__/
-*.cpython-*.pyc
-
 # accidental project-generated scripts
 *fypScripts*
 
-#Image Migration Scripts/Checkpoints
+# Image Migration Scripts/Checkpoints
 # copy_checkpoint.json
 # migrateImages.js
 # upload_checkpoint.json
 # uploadToFirebase.js
 output/
-
 uploads/audio/
 
 # Expo local state (machine-specific device history, dev server settings)
@@ -112,18 +124,11 @@ data/
 test-results/
 .gstack/
 
-
 # Node backend
 backend-node/node_modules/
 backend-node/serviceAccountKey.json
 backend-node/uploads/
 
-# Python
-server/**/__pycache__/
-__pycache__/
-*.pyc
-
 # Shared secrets
-
 LLM-Mobile/package-lock.json
 .env
