@@ -1,42 +1,54 @@
 @echo off
+setlocal enabledelayedexpansion
 set ROOT=%~dp0
 
 :: Quoted, space-safe working directories.
 :: %~dp0 ends in a backslash, and "C:\path\" lets the trailing backslash escape
-:: the closing quote — appending "." gives a valid directory that quotes cleanly.
+:: the closing quote - appending "." gives a valid directory that quotes cleanly.
 :: Needed because the repo path may contain spaces (e.g. "...\SEM 6\...").
 set "ROOTDIR=%~dp0."
 set "MOBILEDIR=%~dp0LLM-Mobile"
+set "BACKENDDIR=%~dp0backend-node"
 
 echo ============================================
 echo  Maintenance Copilot - Pre-flight Checks
 echo ============================================
 
-:: ── Docker check ─────────────────────────────────────────────────
-:: Verifies Docker Desktop is running before attempting to use Qdrant.
-:: Qdrant runs as a Docker container on port 6333.
-:: If Docker is not running, Qdrant will be unavailable and
-:: document retrieval will fail on all AI queries.
-docker info > nul 2>&1
-if errorlevel 1 (
-    echo.
-    echo  [WARNING] Docker Desktop does not appear to be running.
-    echo  Qdrant vector database may be unavailable.
-    echo  Start Docker Desktop and re-run this script.
-    echo.
-    pause
-    exit /b 1
+:: Reads QDRANT_URL from .env to decide whether this run needs local
+:: Docker at all. Qdrant Cloud deployments don't - only a bare
+:: localhost/127.0.0.1 URL (or no .env yet) does.
+:: Pulls only the single QDRANT_URL line via findstr into a temp file
+:: first, rather than looping every line of .env in a batch block -
+:: .env holds raw API keys that can contain characters the batch
+:: parser chokes on when processed inside a block.
+set "QDRANT_URL="
+if exist "%ROOT%.env" (
+    findstr /b /i "QDRANT_URL=" "%ROOT%.env" > "%TEMP%\mc_qdrant_url.tmp" 2>nul
+    for /f "usebackq tokens=1,* delims==" %%A in ("%TEMP%\mc_qdrant_url.tmp") do set "QDRANT_URL=%%B"
+    del "%TEMP%\mc_qdrant_url.tmp" 2>nul
 )
 
+set "NEEDS_DOCKER=1"
+if defined QDRANT_URL (
+    echo !QDRANT_URL! | findstr /i "localhost 127.0.0.1" >nul
+    if errorlevel 1 set "NEEDS_DOCKER=0"
+)
 
-
-echo  [OK] Docker is running.
-
-:: ── Port conflict checks ─────────────────────────────────────────
-:: Checks whether ports 8000, 8001, and 6333 are already in use.
-:: A port conflict will prevent a service from starting correctly.
-:: If a conflict is found, identify and close the process using
-:: that port before re-running this script.
+if "!NEEDS_DOCKER!"=="0" (
+    echo  [OK] QDRANT_URL points to Qdrant Cloud - skipping Docker check.
+) else (
+    docker info > nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo  [WARNING] Docker Desktop does not appear to be running.
+        echo  Qdrant vector database may be unavailable.
+        echo  Start Docker Desktop and re-run this script.
+        echo.
+        pause
+        exit /b 1
+    )
+    echo  [OK] Docker is running.
+)
 
 netstat -ano | findstr ":8000 " > nul 2>&1
 if not errorlevel 1 (
@@ -52,12 +64,14 @@ if not errorlevel 1 (
     echo  [OK] Port 8001 is free.
 )
 
-netstat -ano | findstr ":6333 " > nul 2>&1
-if not errorlevel 1 (
-    echo  [OK] Port 6333 is in use - Qdrant appears to be running.
-) else (
-    echo  [WARNING] Port 6333 is not active. Qdrant may not be running.
-    echo  Run: docker start qdrant
+if "!NEEDS_DOCKER!"=="1" (
+    netstat -ano | findstr ":6333 " > nul 2>&1
+    if not errorlevel 1 (
+        echo  [OK] Port 6333 is in use - Qdrant appears to be running.
+    ) else (
+        echo  [WARNING] Port 6333 is not active. Qdrant may not be running.
+        echo  Run: docker start qdrant
+    )
 )
 
 echo.
@@ -65,35 +79,11 @@ echo ============================================
 echo  Starting Maintenance Copilot Services...
 echo ============================================
 
-:: ── Service descriptions ─────────────────────────────────────────
-::
-::  FastAPI  (port 8001)
-::    Python retrieval service built with FastAPI.
-::    Handles document embedding, semantic search via Qdrant,
-::    and returns the most relevant manual chunks for each query.
-::
-::  Node Backend  (port 8000)
-::    Express.js server handling all API routes.
-::    Manages Firebase auth, HITL approve/reject endpoints,
-::    input sanitisation middleware, and the main /api/query route
-::    that connects the mobile app to FastAPI and the LLM.
-::
-::  Expo  (LAN mode)
-::    React Native mobile app served over the local network.
-::    Use Expo Go on your phone or press W to open in browser.
-::    Requires EXPO_PUBLIC_API_URL in .env to match your current IP.
-::
-::  Qdrant  (port 6333)
-::    Vector database running as a Docker container.
-::    Stores document embeddings used by the FastAPI retrieval service.
-::    Must be started manually via Docker before running this script.
-:: ─────────────────────────────────────────────────────────────────
+:: FastAPI (port 8001): Python retrieval service - embeds and searches
+:: Node Backend (port 8000, backend-node/server.js): Express API routes
+:: Expo (LAN mode): mobile app, served over local network
+:: Qdrant (port 6333, local Docker only): skipped when QDRANT_URL is cloud
 
-:: Step 1: FastAPI
-:: Uses the project virtualenv interpreter directly rather than bare "python".
-:: A shell without .venv activated would otherwise fall back to system Python
-:: and fail on missing packages (torch, FlagEmbedding, qdrant-client).
-:: Falls back to bare "python" only if .venv has not been created yet.
 if exist "%ROOT%venv\Scripts\python.exe" (
     set "PYEXE=%ROOT%venv\Scripts\python.exe"
 ) else (
@@ -104,25 +94,31 @@ if exist "%ROOT%venv\Scripts\python.exe" (
 start "FastAPI" /D "%ROOTDIR%" cmd /k ""%PYEXE%" -m uvicorn server.rag.retrieval.retrieval_service:app --reload --port 8001 --host 0.0.0.0"
 timeout /t 8 /nobreak > nul
 
-:: Step 2: Node backend
-start "Backend" /D "%ROOTDIR%" cmd /k "node server.js"
+start "Backend" /D "%BACKENDDIR%" cmd /k "node server.js"
 timeout /t 3 /nobreak > nul
 
-:: Step 3: Expo
 start "Expo" /D "%MOBILEDIR%" cmd /k "npx expo start --lan --clear"
 
 echo.
 echo ============================================
 echo  All services started!
 echo ============================================
-echo  Qdrant     : http://localhost:6333
+if "!NEEDS_DOCKER!"=="1" (
+    echo  Qdrant     : http://localhost:6333
+) else (
+    echo  Qdrant     : Qdrant Cloud ^(see QDRANT_URL in .env^)
+)
 echo  FastAPI    : http://localhost:8001
 echo  Backend    : http://localhost:8000
 echo  Expo Web   : Press W in the Expo terminal
 echo ============================================
 echo.
 echo IMPORTANT:
-echo 1. Docker Desktop must be running (Qdrant needs it).
+if "!NEEDS_DOCKER!"=="1" (
+    echo 1. Docker Desktop must be running ^(Qdrant needs it^).
+) else (
+    echo 1. Using Qdrant Cloud - Docker is not required.
+)
 echo 2. Update EXPO_PUBLIC_API_URL in .env with your current IP.
 echo 3. Phone and PC must be on the same WiFi for Expo Go.
 echo 4. Press W in the Expo terminal to open the web demo.

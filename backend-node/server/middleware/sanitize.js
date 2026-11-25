@@ -17,6 +17,8 @@ const injectionPatterns = [
   /--/i,                // block SQL comments
 ];
 
+const answerPatterns = injectionPatterns.filter((pattern) => pattern.source !== '--');
+
 function stripTags(str) {
   return str.replace(/<[^>]*>?/gm, '');
 }
@@ -74,6 +76,26 @@ const sanitize = (req, res, next) => {
       }
     }
     req.body.quote = { ...quote, text: value };
+  }
+
+  // The previous question and answer for a follow-up reach the prompt too. The
+  // question is screened like `query`. The answer is our own earlier output, so
+  // the SQL-comment rule is skipped for it: a markdown table row is "---".
+  const previous = req.body.previous;
+  if (previous && typeof previous === 'object' &&
+      typeof previous.question === 'string' && typeof previous.answer === 'string') {
+    const question = stripTags(previous.question);
+    const answer = stripTags(previous.answer);
+    if (question.length > 1000) {
+      return res.status(400).json({ error: "Input too long" });
+    }
+    const screened = [[question, injectionPatterns], [answer, answerPatterns]];
+    for (const [value, patterns] of screened) {
+      if (patterns.some((pattern) => pattern.test(value))) {
+        return res.status(400).json({ error: "Malicious input detected" });
+      }
+    }
+    req.body.previous = { question, answer };
   }
 
   next();

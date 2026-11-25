@@ -136,3 +136,15 @@ After each `run-all-tests.ps1` run, add one row per layer to the table above wit
 | Live | 2 animations through the service with gpt-6-sol | cable 9 steps 18 s $0.042; TIMER 7 steps 13 s $0.030; login check not exercised live |
 | Live | 30 response-detail requests | see docs/RESPONSE_DETAIL.md |
 | Not done | iPhone check of the animation player; RAG pytest (no Python changed) | |
+
+## 3 Nov 2026: user-testing fixes (speed, beginner wording, follow-ups, pictures)
+
+| Layer | Result | Notes |
+|---|---|---|
+| Backend Jest | 381 tests, 23 suites passed | 26 in tests/endpoints/query.usertesting.test.js, 5 new in tests/unit/stepImages.test.js |
+| App Jest | 143 tests, 21 suites passed | 24 in tests/userTestingFixes.test.js |
+| Bundles | ios, android, web built | |
+| Live speed | 5 questions, local, gpt-6-luna, answer/steps effort medium/low vs high/medium (main now defaults to low/low, Andrei, 27-28 Oct; not measured here) | 14.9, 15.4, 16.6, 20.8, 34.2 s vs 17.0, 17.1, 19.3, 24.0, 64.3 s; median 16.6 vs 19.3 s, total 102 vs 142 s. Warnings, measurements and citations matched on hand check |
+| Live follow-up | "Explain more simply" on the H11 answer | 199 words vs 257; all six causes and the warning kept |
+| Live finding | Without a confirmed model, the wiring and drain answers drew on 2 to 4 different manuals | The app now says so under the answer; testers confirm the unit first |
+| Not done | Railway timings; iPhone check of pictures, caption, report link, Explain button, wait message | |

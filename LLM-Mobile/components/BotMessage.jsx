@@ -9,6 +9,7 @@ import { C } from '../theme';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TouchableOpacity } from 'react-native';
 import { actionLabel } from '../utils/chatActions';
+import { imageCaption } from '../utils/imageCaption';
 import { FEATURES } from '../constants/featureFlags';
 import AnimationCard from './AnimationCard';
 import { answerView, answerViews, displayedAnswerText, detailFallbackMessage, answerDetailLabel } from '../utils/responseDetail';
@@ -47,7 +48,7 @@ function renderCitationsWithImages(text, sources) {
     if (src?.page == null || !src.images?.length) continue;
     if (imageByPage.has(src.page)) continue;
     const img = src.images.find(i => i.url);
-    if (img) imageByPage.set(src.page, img);
+    if (img) imageByPage.set(src.page, { ...img, document: src.filename, group: src.document_group_id });
   }
 
   const drawn = new Set();   // one inline figure per page per answer
@@ -63,14 +64,15 @@ function renderCitationsWithImages(text, sources) {
       .replace(/[\[\]]/g, '')
       .slice(0, 120);
 
-    return `${visible}\n\n![${alt}](${img.url})\n\n`;
+    const caption = imageCaption({ group: img.group, document: img.document, page });
+    return `${visible}\n\n![${alt}](${img.url})\n\n*${caption}*\n\n`;
   });
 }
 
 // Replies that need the technician ("which model?", retake, retry) carry
 // `actions`. They must stay visible: without them a photo that needs model
 // confirmation leaves the conversation with no way forward.
-export default function BotMessage({ item, updateMessage, onAction, actionsDisabled = false, onCopy, onSelectText, onTimerComplete, animating = false, onRetryAnimation, onCancelAnimation }) {
+export default function BotMessage({ item, updateMessage, onAction, actionsDisabled = false, onCopy, onSelectText, onExplainSimpler, onTimerComplete, animating = false, onRetryAnimation, onCancelAnimation }) {
   const hasSteps  = item.isProcedural && item.steps?.length > 0;
   const viewMode = answerView(item, FEATURES.EFFORT_LEVELS);
   const views = answerViews(item, FEATURES.EFFORT_LEVELS);
@@ -98,6 +100,15 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
   const stepsOwnTimers = hasSteps && item.steps.some(
     st => (Number(st.timerSeconds ?? st.timer_seconds) || 0) > 0
   );
+  // Only a manual answer can be explained again, not a prompt or an error.
+  const canExplain = !!onExplainSimpler && typeof item.isProcedural === 'boolean';
+
+  // Without a confirmed model, retrieval can mix several units' manuals into
+  // one answer, which is how testers got steps and pictures for a different
+  // unit. Once the model is confirmed, every source is from its manual.
+  const manualCount = new Set((item.sources || []).map(src => src?.filename).filter(Boolean)).size;
+  const mixedManuals = typeof item.isProcedural === 'boolean' && manualCount > 1;
+
   const showLooseTimers =
     item.timers?.length > 0 && !(viewMode === 'procedure' && stepsOwnTimers);
 
@@ -113,6 +124,15 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
               <Text style={[s.viewToggleText, viewMode === view.value && s.viewToggleTextActive]}>{view.label}</Text>
             </TouchableOpacity>
           ))}
+        </View>
+      )}
+
+      {mixedManuals && (
+        <View style={s.mixedNote} accessibilityRole="text">
+          <Ionicons name="information-circle-outline" size={14} color="#b45309" />
+          <Text style={s.mixedNoteText}>
+            This answer uses {manualCount} different manuals. Photograph the unit's nameplate or pick its model so the steps match your unit.
+          </Text>
         </View>
       )}
 
@@ -179,7 +199,7 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
         </View>
       )}
 
-      {(onCopy || onSelectText) && !!item.text?.trim() && (
+      {(onCopy || onSelectText || canExplain) && !!item.text?.trim() && (
         <View style={s.toolRow}>
           {onCopy && (
             <TouchableOpacity style={s.toolBtn} onPress={() => onCopy(viewMode === 'full' ? { ...item, text: item.fullText } : item)} accessibilityRole="button" accessibilityLabel="Copy answer" hitSlop={6}>
@@ -191,6 +211,12 @@ export default function BotMessage({ item, updateMessage, onAction, actionsDisab
             <TouchableOpacity style={s.toolBtn} onPress={() => onSelectText(item, displayedAnswerText(item, FEATURES.EFFORT_LEVELS))} accessibilityRole="button" accessibilityLabel="Select text to copy or reply to" hitSlop={6}>
               <Ionicons name="text-outline" size={14} color={C.textMuted} />
               <Text style={s.toolText}>Select text</Text>
+            </TouchableOpacity>
+          )}
+          {canExplain && (
+            <TouchableOpacity style={s.toolBtn} onPress={() => onExplainSimpler(item)} accessibilityRole="button" accessibilityLabel="Explain this answer more simply" hitSlop={6}>
+              <Ionicons name="bulb-outline" size={14} color={C.textMuted} />
+              <Text style={s.toolText}>Explain more simply</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -238,9 +264,11 @@ const s = StyleSheet.create({
   viewToggleBtnActive: { backgroundColor: C.card, borderWidth: 1, borderColor: '#ddd6fe' },
   viewToggleText:   { fontSize: 11, color: C.textMuted, fontWeight: '700' },
   viewToggleTextActive: { color: C.primary, fontWeight: '800' },
-  toolRow:          { flexDirection: 'row', gap: 14, marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: C.cardBorder },
+  toolRow:          { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 6, marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderColor: C.cardBorder },
   toolBtn:          { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 28 },
   toolText:         { fontSize: 12, color: C.textMuted, fontWeight: '600' },
+  mixedNote:        { flexDirection: 'row', gap: 6, alignItems: 'flex-start', backgroundColor: '#fffbeb', borderRadius: 8, padding: 8, marginBottom: 10 },
+  mixedNoteText:    { flex: 1, color: '#92400e', fontSize: 12, lineHeight: 17 },
   fallbackNote:     { color: C.textMuted, fontSize: 12, lineHeight: 18, marginBottom: 10 },
   actionsRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   actionChip:       { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 36, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, backgroundColor: C.primaryLight, borderWidth: 1, borderColor: '#ddd6fe' },

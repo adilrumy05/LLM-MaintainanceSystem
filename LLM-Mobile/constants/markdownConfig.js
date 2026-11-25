@@ -1,4 +1,5 @@
-import { View, ScrollView, StyleSheet, Text, Image, Platform } from 'react-native';
+import { View, ScrollView, StyleSheet, Text, Platform } from 'react-native';
+import ExpandableImage from '../components/ExpandableImage';
 import { C } from '../theme';
 import { FEATURES } from './featureFlags';
 
@@ -46,12 +47,12 @@ export const makeMarkdownRules = (tableScrollStyle) => ({
   // intrinsic dimensions and no explicit style measures to 0x0. This rule
   // gives every figure a fixed height and rounded corners, and turns the alt
   // text into an accessibility label.
+  // Tapping a figure opens it full screen.
   image: (node) => (
-    <Image
+    <ExpandableImage
       key={node.key}
-      source={{ uri: node.attributes.src }}
+      uri={node.attributes.src}
       style={{ width: '100%', height: 220, borderRadius: 8, marginVertical: 10 }}
-      resizeMode="contain"
       accessibilityLabel={node.attributes.alt || 'Manual figure'}
     />
   ),

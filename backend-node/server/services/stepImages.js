@@ -30,4 +30,21 @@ function resolveStepImage(step, imageUrlById) {
     ? imageUrlById.get(step.image_id) : null;
 }
 
-module.exports = { buildStepImageContent, referenceImageId, resolveStepImage };
+// Pages the answer cites as [[p:NNN]].
+function citedPages(answer) {
+  return new Set([...String(answer || '').matchAll(/\[\[\s*p:\s*(\d+)\s*\]\]/gi)].map(m => m[1]));
+}
+
+// Keep only pictures from the manual(s) the answer was written from. Without a
+// confirmed model, retrieval can return several units' manuals, and testers
+// were shown a diagram of a different unit beside the steps for theirs. The
+// manuals are the ones holding a cited page; an answer with no citations is
+// taken to come from the top-ranked block's manual.
+function scopeImagesToAnswer(images, answer, blocks = []) {
+  const pages = citedPages(answer);
+  const manuals = new Set(blocks.filter(b => pages.has(String(b.page))).map(b => b.filename));
+  if (!manuals.size && blocks[0]) manuals.add(blocks[0].filename);
+  return images.filter(img => manuals.has(img.filename));
+}
+
+module.exports = { buildStepImageContent, referenceImageId, resolveStepImage, citedPages, scopeImagesToAnswer };

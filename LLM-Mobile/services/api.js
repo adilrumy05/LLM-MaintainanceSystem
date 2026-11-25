@@ -224,6 +224,7 @@ export const submitQuery = async (query, options = {}) => {
     detail = 'standard',
     quote = null,
     animate = false,
+    previous = null,
     signal = undefined,
   } = opts;
   const images = imageList?.length ? imageList : singleImage ? [singleImage] : [];
@@ -292,6 +293,10 @@ export const submitQuery = async (query, options = {}) => {
           ...detailRequestFields({ detail, voice, enabled: FEATURES.EFFORT_LEVELS }),
           ...(animate && !voice && FEATURES.ANIMATIONS ? { animate: true } : {}),
           ...(quote?.text ? { quote: { text: quote.text, ...(quote.messageId ? { messageId: String(quote.messageId) } : {}) } } : {}),
+          // A follow-up to the previous answer. Not with a quote, a photo or
+          // hands-free, where the backend would ignore it anyway.
+          ...(previous?.question && previous?.answer && !quote?.text && !imageBase64 && !voice
+            ? { previous: { question: previous.question, answer: previous.answer } } : {}),
         }),
         signal,
       },

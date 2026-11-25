@@ -1,7 +1,7 @@
 // app/(tabs)/index.js
 
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
-import {View, Text, TextInput, TouchableOpacity, FlatList, Modal, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Platform, Image, ScrollView, Animated, Dimensions, Easing,} from 'react-native';
+import {View, Text, TextInput, TouchableOpacity, FlatList, Modal, ActivityIndicator, Alert, StyleSheet, KeyboardAvoidingView, Keyboard, Platform, Image, ScrollView, Animated, Dimensions, Easing,} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -31,8 +31,11 @@ import { FEATURES } from '../constants/featureFlags';
 import { answerForClipboard, toPlainText, toQuote } from '../utils/messageText';
 import { createRequestGuard } from '../utils/requestGuard';
 import ChatOptionsSheet from '../components/ChatOptionsSheet';
+import WaitStatus from '../components/WaitStatus';
 import usePreferences from '../hooks/usePreferences';
 import { normaliseDetail, answerView, isResponseDetail } from '../utils/responseDetail';
+import { previousExchange, SIMPLER_QUESTION } from '../utils/followUp';
+import { groupLabel, filenameForGroup } from '../utils/imageCaption';
 
 const DEFAULT_PHOTO_QUESTION = 'What is this, and what should I check?';
 
@@ -234,15 +237,19 @@ export default function Dashboard() {
   const markActionsUsed   = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, true),  [setActionsUsed]);
   const markActionsUnused = useCallback((chatId, messageId) => setActionsUsed(chatId, messageId, false), [setActionsUsed]);
 
-  const runQuery = useCallback(async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null, detail, animate }) => {
+  const runQuery = useCallback(async ({ text, photos = [], confirmedModel, docGroup, voice = false, quote: quoted = null, detail, animate, previous: previousArg }) => {
     const chatId = activeChatIdRef.current;
     const chat   = chatsRef.current.find(c => c.id === chatId);
+    // The chat's last answer travels with a typed follow-up, since the backend
+    // keeps no history. Captured with the request, so Retry sends the same one.
+    const previous = previousArg !== undefined ? previousArg
+      : voice || photos.length || quoted ? null : previousExchange(chat?.messages);
     const model  = confirmedModel !== undefined ? confirmedModel : chat?.confirmedModel || null;
     const group  = docGroup !== undefined ? docGroup : chat?.filter?.id || null;
     const requestedDetail = voice || !FEATURES.EFFORT_LEVELS ? 'standard' : normaliseDetail(detail ?? preferences.detail);
     // Captured with the request, like the detail, so Retry asks for the same thing.
     const requestedAnimate = !voice && FEATURES.ANIMATIONS && (animate ?? preferences.animate) === true;
-    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group, quote: quoted, voice, detail: requestedDetail, animate: requestedAnimate };
+    lastRequestRef.current[chatId] = { text, photos, confirmedModel: model, docGroup: group, quote: quoted, voice, detail: requestedDetail, animate: requestedAnimate, previous };
     const hasPhotos = photos.length > 0;
 
     // Only the latest request may write to the chat; starting one aborts the last.
@@ -251,7 +258,7 @@ export default function Dashboard() {
     try {
       const result = await submitQuery(text, {
         docGroup: group, images: photos.map(p => p.base64), confirmedModel: model, voice,
-        quote: quoted, signal, detail: requestedDetail, animate: requestedAnimate,
+        quote: quoted, signal, detail: requestedDetail, animate: requestedAnimate, previous,
       });
       if (!requestGuard.isCurrent(requestId)) return { cancelled: true };
 
@@ -275,6 +282,11 @@ export default function Dashboard() {
             warningLevel: st.warning_level,
             toolsRequired: st.tools_required || [],
             imageUrl: st.image_url || null,
+            // Where the manual picture comes from, for its caption.
+            imageDocument: st.image_url ? decodeEntities(st.image_document || '') || null : null,
+            imageGroup: st.image_url ? st.image_group || null : null,
+            imagePage: st.image_url && st.image_page != null ? st.image_page : null,
+            imageModel: st.image_url ? decodeEntities(st.image_model || '') || null : null,
             photoRequired: st.photo_required === true,
             photoInstruction: decodeEntities(st.photo_instruction || ''),
             // A wait the technician must observe before leaving THIS step, so
@@ -335,6 +347,17 @@ export default function Dashboard() {
       ...(quoted ? { quote: quoted } : {}),
     });
     await runQuery({ text: queryText, photos, quote: quoted, detail: requestedDetail });
+  };
+
+  // Rewrites one answer in plainer words. That answer is sent with the
+  // request, so the backend explains it rather than answering a new question.
+  const handleExplainSimpler = async (message) => {
+    if (isProcessing || isPhotoBusy) return;
+    const chat = chatsRef.current.find(c => c.id === activeChatIdRef.current);
+    const previous = previousExchange(chat?.messages, message.id);
+    if (!previous) return;
+    addMessage('user', SIMPLER_QUESTION);
+    await runQuery({ text: SIMPLER_QUESTION, previous, detail: FEATURES.EFFORT_LEVELS ? preferences.detail : 'standard' });
   };
 
   // ─── Copy, select and reply ───────────────────────────────────────────────
@@ -449,18 +472,10 @@ export default function Dashboard() {
     else handsFree.start();
   };
 
-  const prettifyFilterLabel = (id) => {
-    if (!id) return '';
-    const parts = id.split('_');
-    const model = parts.pop();
-    const rest = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-    return `${rest} ${model}`;
-  };
-
-  const filterOptions = (allFilters?.document_group_ids || []).map((id, idx) => ({
+  const filterOptions = (allFilters?.document_group_ids || []).map((id) => ({
     id,
-    label: prettifyFilterLabel(id),
-    filename: allFilters?.filenames?.[idx] || '',
+    label: groupLabel(id),
+    filename: filenameForGroup(id, allFilters?.filenames),
   }));
 
   const filteredOptions = filterOptions.filter(opt => {
@@ -736,6 +751,7 @@ export default function Dashboard() {
             onCopy={FEATURES.CHAT_COPY ? handleCopyAnswer : undefined}
             onSelectText={FEATURES.CHAT_SELECT ? (message, text) => setSelectFor({ ...message, text }) : undefined}
             onTimerComplete={handleTimerComplete}
+            onExplainSimpler={FEATURES.EXPLAIN_SIMPLER && !disabled ? handleExplainSimpler : undefined}
             animating={animating.includes(item.id)}
             onRetryAnimation={() => requestAnimation(activeChatIdRef.current, item.id, item.animation?.ref)}
             onCancelAnimation={() => cancelAnimation(activeChatIdRef.current, item.id)}
@@ -1049,7 +1065,9 @@ export default function Dashboard() {
         </Modal>
 
         <Modal visible={showFilterPicker} animationType="slide" onRequestClose={() => setShowFilterPicker(false)}>
-          <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+          {/* Insets read directly, as for the repair report: SafeAreaView
+              inside a Modal gets a top inset of 0 on iOS. */}
+          <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: Math.max(insets.top, 20), paddingBottom: insets.bottom }}>
             <View style={s.filterModalHeader}>
               <Text style={s.filterModalTitle}>Ground to a model</Text>
               <TouchableOpacity onPress={() => setShowFilterPicker(false)}>
@@ -1064,7 +1082,8 @@ export default function Dashboard() {
                 placeholderTextColor={C.textMuted}
                 value={filterSearchText}
                 onChangeText={setFilterSearchText}
-                autoFocus
+                returnKeyType="search"
+                onSubmitEditing={Keyboard.dismiss}
               />
             </View>
             <TouchableOpacity style={s.filterAllOption} onPress={() => handleSelectFilter(null)}>
@@ -1075,6 +1094,7 @@ export default function Dashboard() {
               data={filteredOptions}
               keyExtractor={item => item.id}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
               renderItem={({ item }) => (
                 <TouchableOpacity style={s.filterOptionRow} onPress={() => handleSelectFilter(item)}>
                   <View style={{ flex: 1 }}>
@@ -1086,7 +1106,7 @@ export default function Dashboard() {
               )}
               ListEmptyComponent={<Text style={s.filterEmptyText}>No models match "{filterSearchText}"</Text>}
             />
-          </SafeAreaView>
+          </View>
         </Modal>
 
         {/* ─── Header ──────────────────────────────────────────────── */}
@@ -1179,7 +1199,7 @@ export default function Dashboard() {
             <View style={s.typingRow}>
               <View style={s.typingBubble}>
                 <ActivityIndicator size="small" color={C.primary} />
-                <Text style={s.typingText}>Analyzing...</Text>
+                <WaitStatus style={s.typingText} />
               </View>
               <TouchableOpacity style={s.cancelBtn} onPress={handleCancel}>
                 <Ionicons name="close-circle-outline" size={14} color="#f87171" />
@@ -1271,7 +1291,8 @@ export default function Dashboard() {
             <TouchableOpacity style={s.iconBtn} onPress={handleAttachPhoto} disabled={isProcessing || isPhotoBusy || handsFree.active || pendingPhotos.length >= MAX_PHOTOS}>
               {isPhotoBusy ? <ActivityIndicator size="small" color={C.primary} /> : <Ionicons name="camera-outline" size={20} color={C.primary} />}
             </TouchableOpacity>
-            <MicButton style={s.iconBtn} disabled={isProcessing || handsFree.active} onTranscript={(text) => setInputValue(text)} />
+            <MicButton style={s.iconBtn} disabled={isProcessing || handsFree.active} onTranscript={(text) => setInputValue(text)}
+              onHandsFree={FEATURES.MIC_HANDS_FREE && !isPhotoBusy ? handsFree.start : undefined} />
             <TextInput
               style={s.input}
               placeholder={pendingPhotos.length ? 'Ask about these photos...' : 'Ask a maintenance question...'}
@@ -1300,7 +1321,7 @@ export default function Dashboard() {
           detail={FEATURES.EFFORT_LEVELS ? { value: preferences.detail, onChange: preferences.setDetail } : null}
           settingsDisabled={!preferences.ready || handsFree.active}
           filter={{ label: activeChat?.filter?.label || null, onOpen: () => setShowFilterPicker(true), onClear: () => handleSelectFilter(null) }}
-          handsFree={{ active: handsFree.active, disabled: !handsFree.active && (isProcessing || isPhotoBusy), onToggle: toggleHandsFree }}
+          handsFree={FEATURES.MIC_HANDS_FREE ? null : { active: handsFree.active, disabled: !handsFree.active && (isProcessing || isPhotoBusy), onToggle: toggleHandsFree }}
           onReport={() => setShowReportModal(true)}
         />
 
@@ -1425,7 +1446,7 @@ const s = StyleSheet.create({
   msgPhotoGrid:       { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 6, maxWidth: 196 },
   typingRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
   typingBubble:       { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderRadius: 16, padding: 10, gap: 8, borderWidth: 1, borderColor: C.cardBorder, flex: 1 },
-  typingText:         { color: C.textMuted, fontSize: 12 },
+  typingText:         { color: C.textMuted, fontSize: 12, flexShrink: 1 },
   cancelBtn:          { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   cancelText:         { color: '#f87171', fontSize: 12, fontWeight: '700' },
   inputWrapper:       { backgroundColor: C.card, borderTopWidth: 1, borderColor: C.cardBorder, paddingBottom: 0 },
