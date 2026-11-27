@@ -92,12 +92,13 @@ export function useHandsFree({ ask, onNotice }) {
     clearTick();
     Speech.stop().catch(() => {});
     await stopRecorder({ preparePlayback: true });
+    recording.release?.();            // <-- add (web only; undefined on native)
     setPhase('off');
     setLevel(null);
     setFloor(null);
     if (wasActive && reason) notice(reason);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recording.stopRecording, recording.prepareForPlayback]);
+  }, [recording.stopRecording, recording.prepareForPlayback, recording.release]);
 
   const speak = useCallback(async (text, turn, { then = 'listen' } = {}) => {
     if (!isCurrent(turn)) return;

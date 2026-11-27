@@ -444,11 +444,11 @@ export const transcribeAudio = async (localUri) => {
   // which expo-file-system's File does. The server renames the upload to
   // audio.m4a before transcription, so the part's filename is not load-bearing.
   if (Platform.OS === 'web') {
-    formData.append('audio', {
-      uri: localUri,
-      name: 'recording.m4a',
-      type: 'audio/m4a',
-    });
+    const blob = await (await fetch(localUri)).blob();
+    if (!blob.size) throw new Error('The recording is empty. Try speaking a little longer.');
+    const ext = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
+    formData.append('audio', blob, `recording.${ext}`);
+    URL.revokeObjectURL(localUri);
   } else {
     const recording = new File(localUri);
     // Fail with a clear message if the recorder produced nothing, rather than
