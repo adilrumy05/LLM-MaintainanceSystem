@@ -1,0 +1,191 @@
+{
+  "started_at": 1795886909.6822858,
+  "os": "Windows-10-10.0.19045-SP0",
+  "python": "3.12.4",
+  "cuda_profile": 13,
+  "forced_profile": true,
+  "windows_filtered_install": true,
+  "stages": {
+    "install": {
+      "ok": true,
+      "failed_step": null
+    },
+    "imports": {
+      "ok": true,
+      "required_failed": [],
+      "details": {
+        "numpy": {
+          "ok": true,
+          "version": "1.26.4"
+        },
+        "torch": {
+          "ok": true,
+          "version": "2.10.0+cu130"
+        },
+        "torchvision": {
+          "ok": true,
+          "version": "0.25.0+cu130"
+        },
+        "torchaudio": {
+          "ok": true,
+          "version": "2.10.0+cu130"
+        },
+        "paddlex": {
+          "ok": true,
+          "version": "3.4.3"
+        },
+        "cv2": {
+          "ok": true,
+          "version": "4.13.0"
+        },
+        "pymupdf": {
+          "ok": true,
+          "version": "1.24.14"
+        },
+        "bs4": {
+          "ok": true,
+          "version": "4.15.0"
+        },
+        "pandas": {
+          "ok": true,
+          "version": "2.2.2"
+        },
+        "transformers": {
+          "ok": true,
+          "version": "4.57.6"
+        },
+        "lmdeploy": {
+          "ok": true,
+          "version": "0.9.2"
+        },
+        "qwen_vl_utils": {
+          "ok": true,
+          "version": "?"
+        },
+        "huggingface_hub": {
+          "ok": true,
+          "version": "0.36.2"
+        },
+        "openai": {
+          "ok": true,
+          "version": "2.30.0"
+        },
+        "qdrant_client": {
+          "ok": true,
+          "version": "?"
+        },
+        "pdf2image": {
+          "ok": true,
+          "version": "?"
+        },
+        "pypdfium2": {
+          "ok": true,
+          "version": "?"
+        },
+        "accelerate": {
+          "ok": true,
+          "version": "1.13.0"
+        },
+        "peft": {
+          "ok": true,
+          "version": "0.14.0"
+        },
+        "nbformat": {
+          "ok": true,
+          "version": "5.11.1"
+        },
+        "nbconvert": {
+          "ok": true,
+          "version": "7.17.2"
+        },
+        "ipykernel": {
+          "ok": true,
+          "version": "7.4.0"
+        },
+        "doclayout_yolo": {
+          "ok": true,
+          "version": "0.0.2b1"
+        },
+        "albumentations": {
+          "ok": true,
+          "version": "2.0.8"
+        },
+        "jupyter_kernel_python3": {
+          "ok": true,
+          "version": "python3"
+        },
+        "paddle_alone": {
+          "ok": true,
+          "version": "3.3.0",
+          "error": ""
+        },
+        "torch_alone": {
+          "ok": true,
+          "version": "2.10.0+cu130",
+          "error": ""
+        },
+        "torch->paddle": {
+          "ok": true,
+          "version": "ok",
+          "error": ""
+        },
+        "paddle->torch": {
+          "ok": false,
+          "version": "",
+          "error": "OSError: [WinError 127] The specified procedure could not be found. Error loading \"C:\\Users\\Noobmaster\\Downloads\\FYP\\LLM-MaintainanceSystem\\server\\rag\\phase1\\.venv_cu13_Maintaince-copilot_installtest\\Lib\\site-packages\\torch\\lib\\shm.dll\" or one of its dependencies."
+        }
+      },
+      "info": {
+        "torch_cuda_build": "13.0",
+        "cuda_available": false,
+        "gpu": null,
+        "kernelspecs": [
+          "python3"
+        ]
+      }
+    },
+    "pip_check": {
+      "ok": true,
+      "informational": true,
+      "output": "grpcio-tools 1.78.0 has requirement protobuf<7.0.0,>=6.31.1, but you have protobuf 5.29.6.\nlmdeploy 0.9.2 has requirement torch<=2.7.1,>=2.0.0, but you have torch 2.10.0+cu130.\nlmdeploy 0.9.2 has requirement torchvision<=0.22.1,>=0.15.0, but you have torchvision 0.25.0+cu130.\nopencv-contrib-python 4.13.0.92 has requirement numpy>=2; python_version >= \"3.9\", but you have numpy 1.26.4.\nopencv-python 4.13.0.92 has requirement numpy>=2; python_version >= \"3.9\", but you have numpy 1.26.4.\nopencv-python-headless 4.13.0.92 has requirement numpy>=2; python_version >= \"3.9\", but you have numpy 1.26.4.\npaddlepaddle-gpu 3.3.0 has requirement nvidia-cudnn-cu12==9.9.0.52, but you have nvidia-cudnn-cu12 9.12.0.46."
+    },
+    "gpu": {
+      "ok": true,
+      "available": false,
+      "enforced": false
+    }
+  },
+  "steps": [
+    "upgrade pip",
+    "remaining packages",
+    "paddlepaddle-gpu (cu130)",
+    "paddlex",
+    "uninstall torch stack",
+    "torch (cu130)",
+    "extra notebook tools"
+  ],
+  "dll_order": {
+    "paddle_alone": {
+      "ok": true,
+      "version": "3.3.0",
+      "error": ""
+    },
+    "torch_alone": {
+      "ok": true,
+      "version": "2.10.0+cu130",
+      "error": ""
+    },
+    "torch->paddle": {
+      "ok": true,
+      "version": "ok",
+      "error": ""
+    },
+    "paddle->torch": {
+      "ok": false,
+      "version": "",
+      "error": "OSError: [WinError 127] The specified procedure could not be found. Error loading \"C:\\Users\\Noobmaster\\Downloads\\FYP\\LLM-MaintainanceSystem\\server\\rag\\phase1\\.venv_cu13_Maintaince-copilot_installtest\\Lib\\site-packages\\torch\\lib\\shm.dll\" or one of its dependencies."
+    }
+  },
+  "overall": "PASS",
+  "finished_at": 1795887460.6959085
+}

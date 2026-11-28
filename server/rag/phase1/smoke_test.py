@@ -43,8 +43,12 @@ CSV_REQUIRED_COLUMNS = ["document_group_id", "filename", "classification"]
 # Not in the Colab freeze but needed to run the notebooks locally.
 EXTRA_PACKAGES = ["ipykernel", "nbformat", "nbconvert", "beautifulsoup4"]
 
-PADDLE_INDEX = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"  # has Blackwell (RTX 50) support
 PYPI = "https://pypi.org/simple"
+
+# Known-good PyTorch stack for the cu130 index. cu130 wheels only exist for
+# torch >= 2.9, so any older pin in a requirements_cu13.txt file is silently
+# bumped to this triple before the torch reinstall step runs.
+CU13_TORCH_DEFAULT = ("2.10.0", "0.25.0", "2.10.0")
 
 # ============================================================ venv & deps
 
@@ -75,7 +79,7 @@ def split_requirements(req_file: Path) -> dict:
             if m:
                 out["torch"][name] = m.group(1).rstrip(".")
         elif name.startswith("nvidia-"):
-            continue          # Linux-only; torch's own wheel brings the CUDA libs it needs
+            continue          # Linux-only; torch/paddle wheels bring the CUDA libs they need
         elif name == "triton" and IS_WIN:
             continue
         elif name == "paddlepaddle-gpu":
@@ -85,28 +89,46 @@ def split_requirements(req_file: Path) -> dict:
     return out
 
 
-def torch_index_for(cuda_ver: int, torch_ver: str) -> str:
-    """cu130 wheels only exist for torch >= 2.9. Older pins use cu128, which also
-    runs fine on CUDA 13 drivers and is required for RTX 50-series (Blackwell)."""
+def default_cuda_tags(cuda_ver: int, torch_ver: str) -> tuple[str, str]:
+    """(torch_tag, paddle_tag). torch and paddle each ship their own cublas64_12.dll on Windows;
+    if they are different CUDA minors (e.g. 12.8 vs 12.9) whichever is imported second fails with
+    WinError 127. So pick matching tags whenever a matching pair exists."""
     try:
-        major_minor = tuple(int(x) for x in torch_ver.split(".")[:2])
+        mm = tuple(int(x) for x in torch_ver.split(".")[:2])
     except ValueError:
-        major_minor = (0, 0)
-    tag = "cu130" if cuda_ver >= 13 and major_minor >= (2, 9) else "cu128"
-    return f"https://download.pytorch.org/whl/{tag}"
+        mm = (0, 0)
+    if cuda_ver >= 13 and mm >= (2, 9):
+        return "cu130", "cu130"
+    if mm >= (2, 8):
+        return "cu129", "cu129"      # torch 2.8+ has cu129; paddle 3.3.0 has cu129 (Blackwell-capable)
+    return "cu128", "cu129"          # torch <= 2.7 has no cu129 build -> unavoidable 12.8 vs 12.9 mismatch
 
 
-def _pip(venv_python: Path, args: list[str], log_fh) -> int:
+def torch_index_for(cuda_ver: int, torch_ver: str, tag: str | None = None) -> str:
+    if tag:
+        return f"https://download.pytorch.org/whl/{tag}"
+    return f"https://download.pytorch.org/whl/{default_cuda_tags(cuda_ver, torch_ver)[0]}"
+
+
+def _cuda_wheel_version(ver: str, tag: str) -> str:
+    """Return 'X.Y.Z+tag' unless the version already carries a local identifier."""
+    ver = ver.strip()
+    return ver if "+" in ver else f"{ver}+{tag}"
+
+
+def _pip(venv_python: Path, args: list[str], log_fh) -> tuple[int, str]:
     """Run `python -m pip ...`, streaming output to the console and a log file."""
     cmd = [str(venv_python), "-m", "pip", *args]
     print("  $ " + " ".join(cmd[2:])[:160])
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, encoding="utf-8", errors="replace")
+    captured: list[str] = []
     for line in proc.stdout:
         sys.stdout.write(line)
         log_fh.write(line)
+        captured.append(line)
     proc.wait()
-    return proc.returncode
+    return proc.returncode, "".join(captured[-200:])
 
 
 def _torch_cuda_ok(venv_python: Path) -> bool:
@@ -114,6 +136,201 @@ def _torch_cuda_ok(venv_python: Path) -> bool:
                         "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)"],
                        capture_output=True)
     return r.returncode == 0
+
+
+def build_install_steps(req_file: Path, cuda_ver: int, raw: bool, work_dir: Path,
+                        torch_tag: str | None = None, paddle_tag: str | None = None) -> list[tuple[str, list[str]]]:
+    """Ordered pip steps for this OS / CUDA profile. Shared with install_test.py."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    spec = split_requirements(req_file)
+    log_dir = work_dir
+    args_raw = raw
+    steps: list[tuple[str, list[str]]] = [("upgrade pip", ["install", "-q", "--upgrade", "pip"])]
+
+    if args_raw:
+        steps.append((f"{req_file.name} (verbatim)", ["install", "-r", str(req_file)]))
+        steps.append(("extra notebook tools", ["install", *EXTRA_PACKAGES]))
+        return steps
+
+    # ---------------------------------------------------------------- CUDA 13
+    if cuda_ver >= 13:
+        # Sequenced install, validated on Windows + RTX Blackwell:
+        #   1. misc packages          (lmdeploy/transformers may pull CPU torch)
+        #   2. paddlepaddle-gpu cu130 (declares paddle's nvidia-* cu13 deps)
+        #   3. paddlex                (after paddle, so it sees the right runtime)
+        #   4. uninstall torch stack  (removes any CPU wheel step 1 pulled in)
+        #   5. torch stack cu130      (torch+torchvision+torchaudio from one index)
+        #   6. extra notebook tools
+        #
+        # torch/torchvision/torchaudio pins in the file are IGNORED when torch < 2.9
+        # because there are no cu130 wheels for that line; CU13_TORCH_DEFAULT is used.
+        paddlex_pin = None
+        rest = []
+        for p in spec["rest"]:
+            if p.lower().replace("_", "").startswith("paddlex"):
+                paddlex_pin = p
+            else:
+                rest.append(p)
+
+        req_clean = log_dir / f"requirements_cu{cuda_ver}.filtered.txt"
+        req_clean.write_text("\n".join(rest) + "\n")
+        steps.append(("remaining packages", ["install", "-r", str(req_clean)]))
+
+        if spec["paddle"]:
+            ptag = paddle_tag or "cu130"
+            pidx = f"https://www.paddlepaddle.org.cn/packages/stable/{ptag}/"
+            steps.append((f"paddlepaddle-gpu ({ptag})", [
+                "install", spec["paddle"], "--index-url", pidx, "--extra-index-url", PYPI]))
+
+        steps.append(("paddlex", ["install", paddlex_pin or "paddlex"]))
+
+        # Remove whatever torch-shaped package landed transitively (usually a CPU wheel).
+        steps.append(("uninstall torch stack",
+                      ["uninstall", "-y", "torch", "torchvision", "torchaudio", "triton"]))
+
+        tv = spec["torch"]
+        file_torch = tv.get("torch")
+        try:
+            torch_ok_for_cu130 = (
+                file_torch is not None
+                and tuple(int(x) for x in file_torch.split(".")[:2]) >= (2, 9)
+            )
+        except ValueError:
+            torch_ok_for_cu130 = False
+
+        if torch_ok_for_cu130:
+            torch_ver = file_torch
+            tv_ver = tv.get("torchvision") or CU13_TORCH_DEFAULT[1]
+            ta_ver = tv.get("torchaudio") or CU13_TORCH_DEFAULT[2]
+        else:
+            if file_torch:
+                print(f"[venv] cu130 has no wheels for torch {file_torch}; "
+                      f"using {CU13_TORCH_DEFAULT[0]}.")
+            torch_ver, tv_ver, ta_ver = CU13_TORCH_DEFAULT
+
+        tag = torch_tag or "cu130"
+        idx = f"https://download.pytorch.org/whl/{tag}"
+        steps.append((f"torch ({tag})", [
+            "install",
+            f"torch=={_cuda_wheel_version(torch_ver, tag)}",
+            f"torchvision=={_cuda_wheel_version(tv_ver, tag)}",
+            f"torchaudio=={_cuda_wheel_version(ta_ver, tag)}",
+            "--index-url", idx,
+        ]))
+        steps.append(("extra notebook tools", ["install", *EXTRA_PACKAGES]))
+        return steps
+
+    # ------------------------------------------------------- CUDA 12 / Linux
+    if not IS_WIN:
+        # Linux / Colab-like: install the requirements file exactly as tested, no filtering.
+        steps.append((f"{req_file.name} (verbatim)", ["install", "-r", str(req_file)]))
+        steps.append(("extra notebook tools", ["install", *EXTRA_PACKAGES]))
+        return steps
+
+    # Windows CUDA 12: keep every pinned version, but skip the Linux-only wheels pip
+    # cannot install here (nvidia-*, triton) and fetch torch/paddle from their own indexes.
+    tv = spec["torch"]
+    if "torch" in tv:
+        idx = torch_index_for(cuda_ver, tv["torch"], torch_tag)
+        pkgs = [f"torch=={tv['torch']}"]
+        if "torchvision" in tv: pkgs.append(f"torchvision=={tv['torchvision']}")
+        if "torchaudio" in tv:  pkgs.append(f"torchaudio=={tv['torchaudio']}")
+        steps.append((f"torch ({idx.rsplit('/',1)[-1]})", ["install", *pkgs, "--index-url", idx]))
+    if spec["paddle"]:
+        ptag = paddle_tag or default_cuda_tags(cuda_ver, tv.get("torch", "0"))[1]
+        pidx = f"https://www.paddlepaddle.org.cn/packages/stable/{ptag}/"
+        steps.append((f"paddlepaddle-gpu ({ptag})", ["install", spec["paddle"], "--index-url", pidx,
+                                                     "--extra-index-url", PYPI]))
+    req_clean = log_dir / f"requirements_cu{cuda_ver}.filtered.txt"
+    req_clean.write_text("\n".join(spec["rest"]) + "\n")
+    steps.append(("remaining packages", ["install", "-r", str(req_clean)]))
+    steps.append(("extra notebook tools", ["install", *EXTRA_PACKAGES]))
+    return steps
+
+
+def align_cudnn(venv_python: Path, log_fh) -> None:
+    """Windows: torch (torch/lib) and paddle (site-packages/nvidia/cudnn*) each ship the cuDNN 9 DLL set.
+    cuDNN sub-libraries must match the main DLL exactly, so when the two copies differ (e.g. torch has
+    9.10.2, paddle pins 9.9.0) the second library to load fails with WinError 127 on
+    cudnn_engines_precompiled64_9.dll. Make paddle's copy match torch's.
+
+    Auto-detects whether the profile uses nvidia-cudnn-cu13 (cu13) or nvidia-cudnn-cu12 (cu12)."""
+    try:
+        r = subprocess.run([str(venv_python), "-c",
+                            "import torch;print(torch.backends.cudnn.version() or 0)"],
+                           capture_output=True, text=True, timeout=300)
+        v = int(r.stdout.strip().splitlines()[-1])
+        if v < 90000:
+            return
+        want = f"{v // 10000}.{(v // 100) % 100}.{v % 100}"          # 91002 -> 9.10.2
+
+        # Only one of these packages exists per profile; try cu13 first then cu12.
+        for pkg_name in ("nvidia-cudnn-cu13", "nvidia-cudnn-cu12"):
+            have = subprocess.run([str(venv_python), "-m", "pip", "show", pkg_name],
+                                  capture_output=True, text=True)
+            m = re.search(r"^Version:\s*(\S+)", have.stdout, re.M)
+            if not m:
+                continue
+            if m.group(1).startswith(want + ".") or m.group(1) == want:
+                log_fh.write(f"\n===== cuDNN already aligned ({pkg_name} {m.group(1)}) =====\n")
+                return
+            print(f"\n[venv] Aligning cuDNN ({pkg_name}): paddle copy is {m.group(1)}, "
+                  f"torch uses {want}. Installing {pkg_name}=={want}.*")
+            log_fh.write(f"\n===== align cuDNN {m.group(1)} -> {want}.* =====\n")
+            rc, _ = _pip(venv_python, ["install", f"{pkg_name}=={want}.*", "--no-deps"], log_fh)
+            if rc != 0:
+                print(f"[venv] WARNING: could not align cuDNN ({pkg_name}); torch+paddle may not coexist.")
+            return
+    except Exception as e:
+        log_fh.write(f"\nalign_cudnn skipped: {e!r}\n")
+
+
+def run_install_steps(venv_python: Path, steps: list[tuple[str, list[str]]], log_path: Path) -> str | None:
+    """Run the steps, streaming to console + log. Returns the failed step label, or None."""
+    failed = None
+    with open(log_path, "w", encoding="utf-8") as log_fh:
+        for label, args in steps:
+            print(f"\n[venv] Step: {label}")
+            log_fh.write(f"\n===== {label} =====\n")
+            rc, out = _pip(venv_python, args, log_fh)
+            if rc != 0 and "-r" in args and ("ResolutionImpossible" in out or "conflicting dependencies" in out):
+                # The requirements file is a full freeze: every transitive dependency is already
+                # pinned to the combination that was tested. pip's resolver rejects freezes whose
+                # metadata disagrees (e.g. numpy 1.26.4 vs opencv wanting numpy>=2) even though
+                # they run fine, so install exactly those pins without re-resolving.
+                print(f"\n[venv] Resolver conflict in '{label}'. Retrying with --no-deps to install your pins exactly as written...")
+                log_fh.write(f"\n===== {label} (retry --no-deps) =====\n")
+                rc, out = _pip(venv_python, [*args, "--no-deps"], log_fh)
+                if rc == 0:
+                    log_fh.write("\n===== pip check =====\n")
+                    _, chk = _pip(venv_python, ["check"], log_fh)
+                    # A Linux freeze lacks Windows-only deps (colorama, tzdata, pywin32, win32-setctime ...).
+                    # Install only the packages reported as *not installed*, constrained to your pins so
+                    # nothing already pinned (e.g. numpy) can move.
+                    missing = sorted({m.group(1) for m in re.finditer(
+                        r"requires ([A-Za-z0-9_.\-]+)(?:[<>=!~;][^,]*)?, which is not installed", chk)})
+                    if missing:
+                        cons = Path(log_path).parent / "pins.constraints.txt"
+                        req_arg = args[args.index("-r") + 1]
+                        cons.write_text(Path(req_arg).read_text())
+                        print(f"[venv] Installing dependencies the freeze was missing: {', '.join(missing)}")
+                        log_fh.write(f"\n===== missing deps: {missing} =====\n")
+                        rc, _ = _pip(venv_python, ["install", *missing, "-c", str(cons)], log_fh)
+            if rc != 0:
+                # `pip uninstall -y X` returns non-zero if X isn't installed on some pip
+                # versions; treat that as a no-op rather than a failed step.
+                if args and args[0] == "uninstall" and (
+                        "not installed" in out.lower()
+                        or "skipping" in out.lower()
+                        or "warning" in out.lower()):
+                    print("  [venv] (nothing to uninstall for this step, continuing)")
+                    log_fh.write("\n(no-op uninstall, continuing)\n")
+                else:
+                    failed = label
+                    break
+        if failed is None and IS_WIN:
+            align_cudnn(venv_python, log_fh)      # non-fatal; see docstring
+    return failed
 
 
 def setup_venv_and_restart(root: Path, report_path: Path, args_raw: bool = False):
@@ -146,41 +363,11 @@ def setup_venv_and_restart(root: Path, report_path: Path, args_raw: bool = False
         log_dir = root / "_smoke_test"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "pip_install.log"
-        spec = split_requirements(req_file)
         print(f"[venv] Installing dependencies from {req_file.name} (this will take several minutes)...")
         print(f"[venv] Full pip log: {log_path}")
 
-        steps: list[tuple[str, list[str]]] = [("upgrade pip", ["install", "-q", "--upgrade", "pip"])]
-        if args_raw or not IS_WIN:
-            # Linux / Colab-like: install the requirements file exactly as tested, no filtering.
-            steps.append((f"{req_file.name} (verbatim)", ["install", "-r", str(req_file)]))
-            if EXTRA_PACKAGES:
-                steps.append(("extra notebook tools", ["install", *EXTRA_PACKAGES]))
-        else:
-            # Windows: keep every pinned version, but skip the Linux-only wheels pip cannot
-            # install here (nvidia-*, triton) and fetch torch/paddle from their own indexes.
-            tv = spec["torch"]
-            if "torch" in tv:
-                idx = torch_index_for(cuda_ver, tv["torch"])
-                pkgs = [f"torch=={tv['torch']}"]
-                if "torchvision" in tv: pkgs.append(f"torchvision=={tv['torchvision']}")
-                if "torchaudio" in tv:  pkgs.append(f"torchaudio=={tv['torch']}")   # file's pin (2.10.0) cannot match torch {tv['torch']}
-                steps.append((f"torch ({idx.rsplit('/',1)[-1]})", ["install", *pkgs, "--index-url", idx]))
-            if spec["paddle"]:
-                steps.append(("paddlepaddle-gpu", ["install", spec["paddle"], "--index-url", PADDLE_INDEX,
-                                                   "--extra-index-url", PYPI]))
-            req_clean = log_dir / f"requirements_cu{cuda_ver}.filtered.txt"
-            req_clean.write_text("\n".join(spec["rest"] + EXTRA_PACKAGES) + "\n")
-            steps.append(("remaining packages", ["install", "-r", str(req_clean)]))
-
-        failed = None
-        with open(log_path, "w", encoding="utf-8") as log_fh:
-            for label, args in steps:
-                print(f"\n[venv] Step: {label}")
-                log_fh.write(f"\n===== {label} =====\n")
-                if _pip(venv_python, args, log_fh) != 0:
-                    failed = label
-                    break
+        steps = build_install_steps(req_file, cuda_ver, args_raw, log_dir)
+        failed = run_install_steps(venv_python, steps, log_path)
 
         if failed is None and not _torch_cuda_ok(venv_python):
             failed = "torch CUDA check"
@@ -406,6 +593,21 @@ def preflight(root: Path, pdf: Path, verify_script: Path | None = None) -> dict:
     except ImportError:
         pass
 
+
+        # torch and paddle must load in ONE process (MonkeyOCR uses both); import order matters on Windows
+    if importlib.util.find_spec("torch") and importlib.util.find_spec("paddle"):
+        for a, b in (("torch", "paddle"), ("paddle", "torch")):
+            r = subprocess.run([sys.executable, "-c", f"import {a}, {b}"], capture_output=True,
+                               text=True, timeout=300, env=_utf8_env())
+            label = f"import order {a} -> {b}"
+            if r.returncode == 0:
+                rep["ok"].append(label)
+            else:
+                msg = (r.stderr.strip().splitlines() or ["?"])[-1][:200]
+                # torch -> paddle is the order that has to work; the reverse is only a warning
+                (rep["fail"] if a == "torch" else rep["warn"]).append(f"{label} failed: {msg}")
+
+                
     if pdf.exists(): rep["ok"].append(f"test PDF: {pdf}")
     else: rep["fail"].append(f"test PDF not found: {pdf}")
     return rep
@@ -502,7 +704,13 @@ if not (MONKEYOCR_PATH / "model_weight").is_dir() and not (MONKEYOCR_PATH / "wei
 # ============================================================ runners
 
 def _utf8_env(extra: dict | None = None) -> dict:
-    return {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", **(extra or {})}
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", **(extra or {})}
+    # The notebooks call subprocess.run(["python", "parse.py", ...]); without this, "python" resolves
+    # to the system interpreter (no torch/paddle) instead of the venv.
+    venv_bin = str(Path(sys.executable).parent)
+    env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+    env["VIRTUAL_ENV"] = str(Path(sys.executable).parent.parent)
+    return env
 
 def run_notebook(nb_path: Path, workdir: Path, timeout: int = 1800) -> tuple[bool, str]:
     cmd = [sys.executable, "-m", "nbconvert", "--to", "notebook", "--execute", f"--ExecutePreprocessor.timeout={timeout}", "--output", nb_path.name, "--output-dir", str(workdir), str(nb_path)]
