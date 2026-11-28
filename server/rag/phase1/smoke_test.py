@@ -116,7 +116,7 @@ def _torch_cuda_ok(venv_python: Path) -> bool:
     return r.returncode == 0
 
 
-def setup_venv_and_restart(root: Path, report_path: Path):
+def setup_venv_and_restart(root: Path, report_path: Path, args_raw: bool = False):
     """Detect CUDA, create a named .venv, install deps, and restart inside it."""
     if sys.prefix != sys.base_prefix:      # already inside a venv
         return
@@ -151,19 +151,27 @@ def setup_venv_and_restart(root: Path, report_path: Path):
         print(f"[venv] Full pip log: {log_path}")
 
         steps: list[tuple[str, list[str]]] = [("upgrade pip", ["install", "-q", "--upgrade", "pip"])]
-        tv = spec["torch"]
-        if "torch" in tv:
-            idx = torch_index_for(cuda_ver, tv["torch"])
-            pkgs = [f"torch=={tv['torch']}"]
-            if "torchvision" in tv: pkgs.append(f"torchvision=={tv['torchvision']}")
-            if "torchaudio" in tv:  pkgs.append(f"torchaudio=={tv['torch']}")   # torchaudio version tracks torch
-            steps.append((f"torch ({idx.rsplit('/',1)[-1]})", ["install", *pkgs, "--index-url", idx]))
-        if spec["paddle"]:
-            steps.append(("paddlepaddle-gpu", ["install", spec["paddle"], "--index-url", PADDLE_INDEX,
-                                               "--extra-index-url", PYPI]))
-        req_clean = log_dir / f"requirements_cu{cuda_ver}.filtered.txt"
-        req_clean.write_text("\n".join(spec["rest"] + EXTRA_PACKAGES) + "\n")
-        steps.append(("remaining packages", ["install", "-r", str(req_clean)]))
+        if args_raw or not IS_WIN:
+            # Linux / Colab-like: install the requirements file exactly as tested, no filtering.
+            steps.append((f"{req_file.name} (verbatim)", ["install", "-r", str(req_file)]))
+            if EXTRA_PACKAGES:
+                steps.append(("extra notebook tools", ["install", *EXTRA_PACKAGES]))
+        else:
+            # Windows: keep every pinned version, but skip the Linux-only wheels pip cannot
+            # install here (nvidia-*, triton) and fetch torch/paddle from their own indexes.
+            tv = spec["torch"]
+            if "torch" in tv:
+                idx = torch_index_for(cuda_ver, tv["torch"])
+                pkgs = [f"torch=={tv['torch']}"]
+                if "torchvision" in tv: pkgs.append(f"torchvision=={tv['torchvision']}")
+                if "torchaudio" in tv:  pkgs.append(f"torchaudio=={tv['torch']}")   # file's pin (2.10.0) cannot match torch {tv['torch']}
+                steps.append((f"torch ({idx.rsplit('/',1)[-1]})", ["install", *pkgs, "--index-url", idx]))
+            if spec["paddle"]:
+                steps.append(("paddlepaddle-gpu", ["install", spec["paddle"], "--index-url", PADDLE_INDEX,
+                                                   "--extra-index-url", PYPI]))
+            req_clean = log_dir / f"requirements_cu{cuda_ver}.filtered.txt"
+            req_clean.write_text("\n".join(spec["rest"] + EXTRA_PACKAGES) + "\n")
+            steps.append(("remaining packages", ["install", "-r", str(req_clean)]))
 
         failed = None
         with open(log_path, "w", encoding="utf-8") as log_fh:
@@ -594,6 +602,7 @@ def main():
     ap.add_argument("--skip-parsing", action="store_true")
     ap.add_argument("--clean", action="store_true")
     ap.add_argument("--report", type=Path, default=None)
+    ap.add_argument("--raw-requirements", action="store_true", help="install requirements_cu*.txt verbatim even on Windows")
     args = ap.parse_args()
 
     root = args.root.resolve()
@@ -610,7 +619,7 @@ def main():
     report_path = args.report or workdir / "smoke_report.json"
 
     hide_from_git(root)
-    setup_venv_and_restart(root, report_path)   # restarts inside the venv; install failures still write a report
+    setup_venv_and_restart(root, report_path, args.raw_requirements)   # restarts inside the venv; install failures still write a report
 
     report = {"started_at": time.time(), "stages": {}}
 
