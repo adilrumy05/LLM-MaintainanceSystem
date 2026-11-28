@@ -1,16 +1,32 @@
 #!/usr/bin/env python3
 """
-smoke_test.py — Phase 1 bootstrap + smoke test.
-Handles automatic .venv creation, CUDA detection, dependency installation,
-MonkeyOCR setup, real-time downloads, and optional AI error diagnosis.
+smoke_test.py — Phase 1 bootstrap + smoke test (Windows/Linux, CUDA 12/13).
+
+Handles .venv creation, CUDA detection, dependency installation, MonkeyOCR
+setup, and optional AI error diagnosis.
+
+The requirements_cu*.txt files can stay as Colab `pip freeze` dumps: this
+script filters out what cannot be installed from PyPI (nvidia-* wheels, triton
+on Windows, torch/torchvision/torchaudio, paddlepaddle-gpu) and installs those
+from their own wheel indexes instead.
 """
 
 from __future__ import annotations
-import argparse, json, os, shutil, subprocess, sys, time, traceback
+import argparse, importlib.util, json, os, re, shutil, subprocess, sys, time, traceback
+import urllib.request
 from pathlib import Path
+
+# Windows consoles default to cp1252 and choke on emoji / non-ASCII log lines.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 SMOKE_GROUP = "smoke_test"
 APP_NAME = "Maintaince-copilot"
+IS_WIN = os.name == "nt"
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 REQUIRED_FILES = {
     "data/data_information.csv":                     "CSV manifest",
@@ -19,80 +35,192 @@ REQUIRED_FILES = {
     "scripts/html_table_converter.py":               "helper script",
     "phase1_ocr.ipynb":                              "OCR notebook",
     "phase1_llm_parsing.ipynb":                      "parsing notebook",
-    "verify_extraction.py":                          "structural verifier",
+    # verify_extraction.py is checked separately (it may live in ../ragPhase2/)
 }
 LLM_ONLY_FILES = {"scripts/llm_table_normalizer.py": "LLM table normalizer (LLM mode only)"}
 CSV_REQUIRED_COLUMNS = ["document_group_id", "filename", "classification"]
 
+# Not in the Colab freeze but needed to run the notebooks locally.
+EXTRA_PACKAGES = ["ipykernel", "nbformat", "nbconvert", "beautifulsoup4"]
+
+PADDLE_INDEX = "https://www.paddlepaddle.org.cn/packages/stable/cu129/"  # has Blackwell (RTX 50) support
+PYPI = "https://pypi.org/simple"
+
 # ============================================================ venv & deps
 
-def setup_venv_and_restart():
-    """Detect CUDA, create a named .venv, install deps, and restart."""
-    # If we are already inside a venv, don't loop
-    if sys.prefix != sys.base_prefix:
+def detect_cuda_major() -> int:
+    """Read the max CUDA version the driver supports from nvidia-smi.
+    Handles both 'CUDA Version: 12.8' and newer 'CUDA UMD Version: 13.4'."""
+    try:
+        smi = subprocess.check_output(["nvidia-smi"], text=True, stderr=subprocess.STDOUT)
+        m = re.search(r"CUDA\s+(?:UMD\s+)?Version:\s*(\d+)", smi)
+        if m:
+            return 13 if int(m.group(1)) >= 13 else 12
+        print("[venv] WARNING: could not find a CUDA version in nvidia-smi output. Defaulting to CUDA 12.")
+    except Exception:
+        print("[venv] WARNING: could not run nvidia-smi (no NVIDIA driver?). Defaulting to CUDA 12.")
+    return 12
+
+
+def split_requirements(req_file: Path) -> dict:
+    """Split a Colab-style freeze into what pip can install from PyPI and special cases."""
+    out = {"torch": {}, "paddle": None, "rest": []}
+    for line in req_file.read_text().splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        name = re.split(r"[=<>!~ \[;]", s, maxsplit=1)[0].lower().replace("_", "-")
+        if name in ("torch", "torchvision", "torchaudio"):
+            m = re.search(r"==\s*([0-9][0-9.]*)", s)          # drop local tag like +cu130
+            if m:
+                out["torch"][name] = m.group(1).rstrip(".")
+        elif name.startswith("nvidia-"):
+            continue          # Linux-only; torch's own wheel brings the CUDA libs it needs
+        elif name == "triton" and IS_WIN:
+            continue
+        elif name == "paddlepaddle-gpu":
+            out["paddle"] = s
+        else:
+            out["rest"].append(s)
+    return out
+
+
+def torch_index_for(cuda_ver: int, torch_ver: str) -> str:
+    """cu130 wheels only exist for torch >= 2.9. Older pins use cu128, which also
+    runs fine on CUDA 13 drivers and is required for RTX 50-series (Blackwell)."""
+    try:
+        major_minor = tuple(int(x) for x in torch_ver.split(".")[:2])
+    except ValueError:
+        major_minor = (0, 0)
+    tag = "cu130" if cuda_ver >= 13 and major_minor >= (2, 9) else "cu128"
+    return f"https://download.pytorch.org/whl/{tag}"
+
+
+def _pip(venv_python: Path, args: list[str], log_fh) -> int:
+    """Run `python -m pip ...`, streaming output to the console and a log file."""
+    cmd = [str(venv_python), "-m", "pip", *args]
+    print("  $ " + " ".join(cmd[2:])[:160])
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, encoding="utf-8", errors="replace")
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        log_fh.write(line)
+    proc.wait()
+    return proc.returncode
+
+
+def _torch_cuda_ok(venv_python: Path) -> bool:
+    r = subprocess.run([str(venv_python), "-c",
+                        "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)"],
+                       capture_output=True)
+    return r.returncode == 0
+
+
+def setup_venv_and_restart(root: Path, report_path: Path):
+    """Detect CUDA, create a named .venv, install deps, and restart inside it."""
+    if sys.prefix != sys.base_prefix:      # already inside a venv
         return
 
-    # 1. Detect CUDA version first
-    cuda_ver = 12 # Default
-    try:
-        smi = subprocess.check_output(["nvidia-smi"], text=True)
-        if "CUDA Version: 13" in smi:
-            cuda_ver = 13
-        elif "CUDA Version: 12" in smi:
-            cuda_ver = 12
-    except Exception:
-        print("[venv] WARNING: Could not run nvidia-smi. Defaulting to CUDA 12.")
-    
-    # 2. Set the venv name based on CUDA and App Name
+    cuda_ver = detect_cuda_major()
     venv_name = f".venv_cu{cuda_ver}_{APP_NAME}"
-    venv_path = Path(venv_name).resolve()
-    
+    venv_path = SCRIPT_DIR / venv_name
     print(f"\n[venv] Detected CUDA {cuda_ver}. Using environment: {venv_name}")
 
-    # 3. Create venv if it doesn't exist
     if not venv_path.exists():
         print(f"[venv] Creating virtual environment at {venv_path}...")
         subprocess.run([sys.executable, "-m", "venv", str(venv_path)], check=True)
 
-    # Determine python and pip paths based on OS
-    if os.name == "nt":
-        venv_python = venv_path / "Scripts" / "python.exe"
-        venv_pip = venv_path / "Scripts" / "pip.exe"
-    else:
-        venv_python = venv_path / "bin" / "python"
-        venv_pip = venv_path / "bin" / "pip"
+    venv_python = venv_path / ("Scripts/python.exe" if IS_WIN else "bin/python")
+    marker = venv_path / ".smoke_install_ok"
 
-    # 4. Check if requirements are already installed
-    try:
-        subprocess.run([str(venv_python), "-c", "import torch"], check=True, capture_output=True)
-        already_installed = True
-    except subprocess.CalledProcessError:
-        already_installed = False
+    req_file = SCRIPT_DIR / f"requirements_cu{cuda_ver}.txt"
+    if not req_file.exists():
+        print(f"\n[ERROR] {req_file} is missing! Keep requirements_cu12.txt and requirements_cu13.txt next to smoke_test.py.")
+        sys.exit(1)
+    req_stamp = f"{req_file.stat().st_size}:{int(req_file.stat().st_mtime)}"
 
-    # 5. Install requirements if needed
-    if not already_installed:
-        req_file = Path(f"requirements_cu{cuda_ver}.txt")
-        if not req_file.exists():
-            print(f"\n[ERROR] Detected CUDA {cuda_ver}, but {req_file} is missing!")
-            print(f"Please ensure both requirements_cu12.txt and requirements_cu13.txt are in {Path.cwd()}")
+    # "import torch works" is not enough: PyPI torch on Windows is CPU-only.
+    installed = marker.exists() and marker.read_text() == req_stamp and _torch_cuda_ok(venv_python)
+
+    if not installed:
+        log_dir = root / "_smoke_test"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "pip_install.log"
+        spec = split_requirements(req_file)
+        print(f"[venv] Installing dependencies from {req_file.name} (this will take several minutes)...")
+        print(f"[venv] Full pip log: {log_path}")
+
+        steps: list[tuple[str, list[str]]] = [("upgrade pip", ["install", "-q", "--upgrade", "pip"])]
+        tv = spec["torch"]
+        if "torch" in tv:
+            idx = torch_index_for(cuda_ver, tv["torch"])
+            pkgs = [f"torch=={tv['torch']}"]
+            if "torchvision" in tv: pkgs.append(f"torchvision=={tv['torchvision']}")
+            if "torchaudio" in tv:  pkgs.append(f"torchaudio=={tv['torch']}")   # torchaudio version tracks torch
+            steps.append((f"torch ({idx.rsplit('/',1)[-1]})", ["install", *pkgs, "--index-url", idx]))
+        if spec["paddle"]:
+            steps.append(("paddlepaddle-gpu", ["install", spec["paddle"], "--index-url", PADDLE_INDEX,
+                                               "--extra-index-url", PYPI]))
+        req_clean = log_dir / f"requirements_cu{cuda_ver}.filtered.txt"
+        req_clean.write_text("\n".join(spec["rest"] + EXTRA_PACKAGES) + "\n")
+        steps.append(("remaining packages", ["install", "-r", str(req_clean)]))
+
+        failed = None
+        with open(log_path, "w", encoding="utf-8") as log_fh:
+            for label, args in steps:
+                print(f"\n[venv] Step: {label}")
+                log_fh.write(f"\n===== {label} =====\n")
+                if _pip(venv_python, args, log_fh) != 0:
+                    failed = label
+                    break
+
+        if failed is None and not _torch_cuda_ok(venv_python):
+            failed = "torch CUDA check"
+            log_path.write_text(log_path.read_text(encoding="utf-8") +
+                                "\ntorch installed but torch.cuda.is_available() is False "
+                                "(wrong wheel, or GPU driver too old).\n", encoding="utf-8")
+
+        if failed:
+            tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-40:])
+            print(f"\n[ERROR] Install failed at step: {failed}. Log: {log_path}")
+            report = {"started_at": time.time(), "overall": "FAIL",
+                      "cuda_major": cuda_ver,
+                      "stages": {"install": {"ok": False, "step": failed, "log": tail}}}
+            _write(report, report_path)
+            explain_failure_with_ai(report)
             sys.exit(1)
+        marker.write_text(req_stamp)
 
-        print(f"[venv] Installing dependencies from {req_file} (this will take several minutes)...")
-        
-        proc = subprocess.Popen([str(venv_pip), "install", "-r", str(req_file)])
-        proc.wait()
-        
-        if proc.returncode != 0:
-            print(f"\n[ERROR] pip install failed. Please check the output above.")
-            sys.exit(1)
-
-    # 6. Restart the script inside the newly created environment
     print(f"\n[venv] Environment {venv_name} ready. Restarting script inside it...\n")
-    
     os.environ["SMOKE_TEST_VENV_ACTIVE"] = "1"
-    cmd = [str(venv_python), str(Path(__file__).resolve())] + sys.argv[1:]
-    proc = subprocess.run(cmd)
+    proc = subprocess.run([str(venv_python), str(Path(__file__).resolve())] + sys.argv[1:])
     sys.exit(proc.returncode)
+
+# ============================================================ git hygiene
+
+def hide_from_git(root: Path):
+    """Add generated folders to .git/info/exclude (local only; no tracked file is touched)."""
+    def git(*a):
+        return subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True)
+    try:
+        exclude = git("rev-parse", "--git-path", "info/exclude")
+        prefix = git("rev-parse", "--show-prefix")
+        if exclude.returncode != 0 or shutil.which("git") is None:
+            return
+        ex = Path(exclude.stdout.strip())
+        if not ex.is_absolute():
+            ex = (root / ex).resolve()
+        pre = prefix.stdout.strip()
+        entries = [f"/{pre}{p}" for p in ("MonkeyOCR/", "_smoke_test/", f"data/{SMOKE_GROUP}/",
+                                          "output/", "checkpoint/", "content_extraction/")]
+        ex.parent.mkdir(parents=True, exist_ok=True)
+        existing = ex.read_text().splitlines() if ex.exists() else []
+        new = [e for e in entries if e not in existing]
+        if new:
+            with open(ex, "a", encoding="utf-8") as f:
+                f.write("\n# smoke_test.py generated folders\n" + "\n".join(new) + "\n")
+    except Exception:
+        pass
 
 # ============================================================ bootstrap
 
@@ -194,8 +322,6 @@ def ensure_monkeyocr(root: Path, model_name: str, download: bool) -> dict:
         if not (monkey / "tools" / "download_model.py").exists():
             rep["fail"].append(f"download script missing: {monkey / 'tools' / 'download_model.py'}")
             return rep
-        print("  [pip] Ensuring huggingface_hub is installed...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "huggingface_hub"], stdout=sys.stdout, stderr=sys.stderr)
         print(f"\n  [download] Downloading {model_name} weights (~3GB).\n  Progress bars will appear below:")
         print("-" * 60)
         proc = subprocess.Popen([sys.executable, str(monkey / "tools" / "download_model.py"), "-n", model_name], cwd=str(monkey), stdout=sys.stdout, stderr=sys.stderr)
@@ -208,7 +334,7 @@ def ensure_monkeyocr(root: Path, model_name: str, download: bool) -> dict:
 
     if model_weight.is_dir() and not weights.exists():
         try:
-            if os.name == "nt":
+            if IS_WIN:
                 subprocess.run(["cmd", "/c", "mklink", "/J", str(weights), str(model_weight)], check=True, capture_output=True)
             else:
                 os.symlink(model_weight, weights, target_is_directory=True)
@@ -221,7 +347,14 @@ def ensure_monkeyocr(root: Path, model_name: str, download: bool) -> dict:
 
 # ============================================================ preflight
 
-def preflight(root: Path, pdf: Path) -> dict:
+def _resolve_verify(root: Path, override: Path | None) -> Path | None:
+    candidates = [override] if override else []
+    candidates += [root / "verify_extraction.py", root.parent / "ragPhase2" / "verify_extraction.py"]
+    for c in candidates:
+        if c and c.exists(): return c
+    return None
+
+def preflight(root: Path, pdf: Path, verify_script: Path | None = None) -> dict:
     rep = {"ok": [], "warn": [], "fail": []}
     v = sys.version_info
     (rep["fail"] if v < (3, 10) else rep["ok"]).append(f"Python {sys.version.split()[0]}")
@@ -229,6 +362,10 @@ def preflight(root: Path, pdf: Path) -> dict:
     for rel, desc in REQUIRED_FILES.items():
         p = root / rel
         (rep["ok"] if p.exists() else rep["fail"]).append(f"{desc}: {rel}" if p.exists() else f"Missing {desc}: {p}")
+
+    verify = _resolve_verify(root, verify_script)
+    if verify: rep["ok"].append(f"structural verifier: {verify}")
+    else: rep["fail"].append("verify_extraction.py not found (looked in root and ../ragPhase2/; or pass --verify-script)")
 
     for rel, desc in LLM_ONLY_FILES.items():
         p = root / rel
@@ -240,23 +377,24 @@ def preflight(root: Path, pdf: Path) -> dict:
     monkey = root / "MonkeyOCR"
     if not (monkey / "parse.py").exists():
         rep["fail"].append(f"MonkeyOCR repo missing: {monkey}")
+    elif not ((monkey / "model_weight").is_dir() or (monkey / "weights").is_dir()):
+        rep["fail"].append(f"MonkeyOCR weights missing: {monkey / 'model_weight'} and {monkey / 'weights'}")
     else:
-        model_weight = monkey / "model_weight"
-        weights = monkey / "weights"
-        if not (model_weight.is_dir() or weights.is_dir()):
-            rep["fail"].append(f"MonkeyOCR weights missing: {model_weight} and {weights}")
-        else:
-            rep["ok"].append(f"MonkeyOCR: {monkey}")
+        rep["ok"].append(f"MonkeyOCR: {monkey}")
 
-    for name in ["pymupdf", "bs4", "pandas", "nbformat", "nbconvert", "torch", "paddle"]:
-        rep["ok"].append(f"package: {name}")
+    # Really check the packages instead of assuming them.
+    for label, mods in [("pymupdf", ("pymupdf", "fitz")), ("bs4", ("bs4",)), ("pandas", ("pandas",)),
+                        ("nbformat", ("nbformat",)), ("nbconvert", ("nbconvert",)),
+                        ("ipykernel", ("ipykernel",)), ("torch", ("torch",)), ("paddle", ("paddle",))]:
+        if any(importlib.util.find_spec(m) for m in mods): rep["ok"].append(f"package: {label}")
+        else: rep["fail"].append(f"package missing: {label}")
 
     try:
         import torch
         if torch.cuda.is_available():
-            rep["ok"].append(f"CUDA: {torch.cuda.get_device_name(0)} (torch {torch.__version__})")
+            rep["ok"].append(f"CUDA: {torch.cuda.get_device_name(0)} (torch {torch.__version__}, CUDA {torch.version.cuda})")
         else:
-            rep["fail"].append("CUDA not available — OCR requires a GPU")
+            rep["fail"].append(f"CUDA not available (torch {torch.__version__}) — OCR requires a GPU build of torch")
     except ImportError:
         pass
 
@@ -355,10 +493,14 @@ if not (MONKEYOCR_PATH / "model_weight").is_dir() and not (MONKEYOCR_PATH / "wei
 
 # ============================================================ runners
 
+def _utf8_env(extra: dict | None = None) -> dict:
+    return {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", **(extra or {})}
+
 def run_notebook(nb_path: Path, workdir: Path, timeout: int = 1800) -> tuple[bool, str]:
     cmd = [sys.executable, "-m", "nbconvert", "--to", "notebook", "--execute", f"--ExecutePreprocessor.timeout={timeout}", "--output", nb_path.name, "--output-dir", str(workdir), str(nb_path)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 60)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout + 60, env=_utf8_env())
     except subprocess.TimeoutExpired:
         return False, f"timed out after {timeout}s"
     ok = proc.returncode == 0
@@ -374,19 +516,13 @@ def check_parsing_output(root: Path) -> tuple[bool, str]:
     if empty: return False, f"{len(empty)} empty processed_content.txt files"
     return True, f"{len(pages)} page(s) produced"
 
-def _resolve_verify(root: Path, override: Path | None) -> Path | None:
-    candidates = [override] if override else []
-    candidates += [root / "verify_extraction.py", root.parent / "ragPhase2" / "verify_extraction.py"]
-    for c in candidates:
-        if c and c.exists(): return c
-    return None
-
 def run_verify(root: Path, verify_script: Path | None) -> tuple[bool, str]:
     verify = _resolve_verify(root, verify_script)
     if verify is None: return False, "verify_extraction.py not found"
-    env = {**os.environ, "EXTRACTION_DIR": str(root / "content_extraction")}
+    env = _utf8_env({"EXTRACTION_DIR": str(root / "content_extraction")})
     try:
-        proc = subprocess.run([sys.executable, str(verify)], capture_output=True, text=True, timeout=120, env=env)
+        proc = subprocess.run([sys.executable, str(verify)], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=120, env=env)
     except subprocess.TimeoutExpired:
         return False, "verify_extraction.py timed out"
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()[-2000:]
@@ -394,38 +530,35 @@ def run_verify(root: Path, verify_script: Path | None) -> tuple[bool, str]:
 # ============================================================ AI Copilot
 
 def explain_failure_with_ai(report: dict):
-    """If the test fails, ask an LLM to explain the error to the client."""
+    """If the test fails, ask an LLM to explain the error. Uses plain HTTPS so it
+    also works before the venv (and the openai package) exists."""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return
-        
+
     print("\n[AI Copilot] Analyzing failure log to find a fix...")
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        
-        failure_context = "The following smoke test failed on a client PC:\n"
+        ctx = f"The following smoke test failed on a client PC ({sys.platform}, Python {sys.version.split()[0]}):\n"
         for stage, data in report.get("stages", {}).items():
             if not data.get("ok"):
-                failure_context += f"\nStage: {stage}\n"
-                failure_context += f"Log Tail:\n{data.get('log', 'No log available')}\n"
-                if data.get('error'):
-                    failure_context += f"Error: {data['error']}\n"
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
+                ctx += f"\nStage: {stage}\nLog Tail:\n{data.get('log', 'No log available')}\n"
+                if data.get("error"):
+                    ctx += f"Error: {data['error']}\n"
+        body = json.dumps({
+            "model": "gpt-4o-mini", "max_tokens": 300,
+            "messages": [
                 {"role": "system", "content": "You are an expert Python and DevOps assistant helping a non-technical user fix a RAG pipeline installation error. Look at the log tail provided and give 1-3 bullet points on exactly what they need to install or fix. Be concise and direct."},
-                {"role": "user", "content": failure_context}
-            ],
-            max_tokens=300
-        )
-        
-        print("\n" + "="*60)
-        print("🤖 AI COPILOT SUGGESTED FIX:")
-        print(response.choices[0].message.content.strip())
-        print("="*60 + "\n")
-        
+                {"role": "user", "content": ctx},
+            ]}).encode()
+        req = urllib.request.Request("https://api.openai.com/v1/chat/completions", data=body,
+                                     headers={"Content-Type": "application/json",
+                                              "Authorization": f"Bearer {api_key}"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            text = json.loads(r.read())["choices"][0]["message"]["content"].strip()
+        print("\n" + "=" * 60)
+        print("AI COPILOT SUGGESTED FIX:")
+        print(text)
+        print("=" * 60 + "\n")
     except Exception as e:
         print(f"  [AI Copilot] Could not analyze: {e}")
 
@@ -448,8 +581,6 @@ def cleanup(root: Path):
         manifest.write_text("\n".join(keep) + "\n")
 
 def main():
-    setup_venv_and_restart()
-
     ap = argparse.ArgumentParser(description="Phase 1 bootstrap + smoke test")
     ap.add_argument("--root", type=Path, default=Path("."), help="Phase 1 root (DRIVE_BASE)")
     ap.add_argument("--pdf", type=Path, default=None, help="test PDF (default: generate sample)")
@@ -466,7 +597,7 @@ def main():
     args = ap.parse_args()
 
     root = args.root.resolve()
-    
+
     # Guard against nested paths
     if (root / "server" / "rag" / "phase1").exists():
         print("\n[ERROR] You passed a relative path while already inside the target folder.")
@@ -476,6 +607,11 @@ def main():
 
     workdir = root / "_smoke_test"
     workdir.mkdir(parents=True, exist_ok=True)
+    report_path = args.report or workdir / "smoke_report.json"
+
+    hide_from_git(root)
+    setup_venv_and_restart(root, report_path)   # restarts inside the venv; install failures still write a report
+
     report = {"started_at": time.time(), "stages": {}}
 
     if not args.skip_bootstrap:
@@ -494,15 +630,17 @@ def main():
 
     pdf = args.pdf.resolve() if args.pdf else root / "data" / SMOKE_GROUP / "sample.pdf"
     print("\n=== Preflight ===")
-    pre = preflight(root, pdf)
+    pre = preflight(root, pdf, args.verify_script)
     report["preflight"] = pre
     for k in ("ok", "warn", "fail"):
         for line in pre[k]: print(f"  {k.upper():4s} {line}")
 
     if pre["fail"]:
         report["overall"] = "FAIL"
-        _write(report, args.report or workdir / "smoke_report.json")
+        report["stages"]["preflight"] = {"ok": False, "log": "\n".join(pre["fail"])}
+        _write(report, report_path)
         print("\n  OVERALL: FAIL (preflight)")
+        explain_failure_with_ai(report)
         return _finish(args, root, report)
 
     if not args.skip_ocr:
@@ -546,11 +684,10 @@ def main():
     print("\n=== Summary ===")
     for name, s in report["stages"].items(): print(f"  {name:8s} {'PASS' if s.get('ok') else 'FAIL'}")
     print(f"\n  OVERALL: {report['overall']}")
-    
-    if report['overall'] == "FAIL":
+
+    _write(report, report_path)
+    if report["overall"] == "FAIL":
         explain_failure_with_ai(report)
-        
-    _write(report, args.report or workdir / "smoke_report.json")
     return _finish(args, root, report)
 
 def _finish(args, root, report):
@@ -560,7 +697,9 @@ def _finish(args, root, report):
     return 0 if report["overall"] == "PASS" else 1
 
 def _write(report, path):
-    Path(path).write_text(json.dumps(report, indent=2, default=str))
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
 
 if __name__ == "__main__":
     sys.exit(main())
